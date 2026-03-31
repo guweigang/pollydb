@@ -1138,6 +1138,36 @@ pub fn (repo Repository) merge_branches(ours_branch string, theirs_branch string
 	return three_way_merge(base_commit, ours_commit, theirs_commit, base_tree, ours_tree, theirs_tree, cfg)
 }
 
+pub fn auto_merge_by_roots(base_root_cid string, ours_root_cid string, theirs_root_cid string, cfg ChunkConfig, mut node_store NodeStore) !MergeResult {
+	base_tree := Tree.load(base_root_cid, mut node_store)!
+	ours_tree := Tree.load(ours_root_cid, mut node_store)!
+	theirs_tree := Tree.load(theirs_root_cid, mut node_store)!
+	return three_way_merge(
+		Commit{
+			root_cid: base_root_cid
+			parent_cids: []string{}
+			meta: CommitMeta{}
+			virtual_roots: []VirtualRootRef{}
+		},
+		Commit{
+			root_cid: ours_root_cid
+			parent_cids: []string{}
+			meta: CommitMeta{}
+			virtual_roots: []VirtualRootRef{}
+		},
+		Commit{
+			root_cid: theirs_root_cid
+			parent_cids: []string{}
+			meta: CommitMeta{}
+			virtual_roots: []VirtualRootRef{}
+		},
+		base_tree,
+		ours_tree,
+		theirs_tree,
+		cfg,
+	)
+}
+
 pub fn (result MergeResult) resolve_conflicts(resolutions []ConflictResolution, cfg ChunkConfig) !MergeResolution {
 	mut resolution_map := map[string]ConflictResolution{}
 	for resolution in resolutions {

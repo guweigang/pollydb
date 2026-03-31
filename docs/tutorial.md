@@ -2,6 +2,7 @@
 
 Related architecture notes:
 - [Storage/Compute Separation](/Users/guweigang/Source/pollytree/docs/storage_compute_separation.md)
+- [Platform Roadmap](/Users/guweigang/Source/pollytree/docs/platform_roadmap.md)
 
 This tutorial shows the current `pollydb` workflow from the command line.
 It focuses on the storage/database surface that already exists today:

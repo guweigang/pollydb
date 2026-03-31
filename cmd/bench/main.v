@@ -1,6 +1,7 @@
 module main
 
 import flag
+import compress.zlib
 import os
 import time
 import storage
@@ -16,6 +17,7 @@ pub:
 	chunk_bytes  int = 10 * 1024 * 1024
 	chunk_buffer_kb int = 256
 	chunk_workers int = 4
+	sync_rtt_ms  int = 40
 	mode         string = 'all'
 }
 
@@ -104,7 +106,8 @@ fn BenchConfig.from_args() BenchConfig {
 	chunk_bytes := fp.int('chunk-bytes', `c`, defaults.chunk_bytes, 'payload size for CDC benchmark')
 	chunk_buffer_kb := fp.int('chunk-buffer-kb', 0, defaults.chunk_buffer_kb, 'streaming CDC file buffer size in KiB')
 	chunk_workers := fp.int('chunk-workers', 0, defaults.chunk_workers, 'worker count for parallel CDC hashing benchmarks')
-	mode := fp.string('mode', 0, defaults.mode, 'benchmark mode: all, cdc, typed, or aggregate')
+	sync_rtt_ms := fp.int('sync-rtt-ms', 0, defaults.sync_rtt_ms, 'simulated one-way sync negotiation RTT in milliseconds')
+	mode := fp.string('mode', 0, defaults.mode, 'benchmark mode: all, cdc, typed, aggregate, or sync')
 	fp.finalize() or { panic(err) }
 	return BenchConfig{
 		rows: rows
@@ -116,6 +119,7 @@ fn BenchConfig.from_args() BenchConfig {
 		chunk_bytes: chunk_bytes
 		chunk_buffer_kb: chunk_buffer_kb
 		chunk_workers: chunk_workers
+		sync_rtt_ms: sync_rtt_ms
 		mode: mode
 	}
 }
@@ -167,6 +171,36 @@ fn (suite BenchSuite) run() ![]BenchResult {
 		results << suite.run_database_table_count_parallel_bench()!
 		eprintln('==> running aggregate parallel sum benchmark')
 		results << suite.run_database_table_sum_parallel_bench()!
+	}
+	if suite.cfg.mode == 'all' || suite.cfg.mode == 'sync' {
+		eprintln('==> running polly-sync full push benchmark')
+		results << suite.run_sync_push_full_bench()!
+		eprintln('==> running polly-sync full push benchmark (manifest)')
+		results << suite.run_sync_push_full_manifest_bench()!
+		eprintln('==> running polly-sync tiny-change push benchmark')
+		results << suite.run_sync_push_tiny_change_bench()!
+		eprintln('==> running polly-sync tiny-change push benchmark (manifest)')
+		results << suite.run_sync_push_tiny_change_manifest_bench()!
+		eprintln('==> running polly-sync tiny-change push benchmark (manifest depth=2)')
+		results << suite.run_sync_push_tiny_change_manifest_depth2_bench()!
+		eprintln('==> running polly-sync json-field tiny-change push benchmark')
+		results << suite.run_sync_push_json_tiny_change_bench()!
+		eprintln('==> running polly-sync repeated micro-change push benchmark')
+		results << suite.run_sync_push_repeated_tiny_change_bench()!
+		eprintln('==> running polly-sync divergence auto-merge push benchmark')
+		results << suite.run_sync_push_divergence_auto_merge_bench()!
+		eprintln('==> running polly-sync full pull benchmark')
+		results << suite.run_sync_pull_full_bench()!
+		eprintln('==> running polly-sync full pull benchmark (manifest)')
+		results << suite.run_sync_pull_full_manifest_bench()!
+		eprintln('==> running polly-sync tiny-change pull benchmark')
+		results << suite.run_sync_pull_tiny_change_bench()!
+		eprintln('==> running polly-sync tiny-change pull benchmark (manifest)')
+		results << suite.run_sync_pull_tiny_change_manifest_bench()!
+		eprintln('==> running polly-sync tiny-change pull benchmark (manifest depth=2)')
+		results << suite.run_sync_pull_tiny_change_manifest_depth2_bench()!
+		eprintln('==> sweeping polly-sync tiny-change RTT crossover')
+		results << suite.run_sync_tiny_change_rtt_sweep_bench()!
 	}
 	if suite.cfg.mode == 'all' || suite.cfg.mode == 'typed' {
 		eprintln('==> building prolly random-update dataset')
@@ -241,6 +275,739 @@ fn (suite BenchSuite) run() ![]BenchResult {
 		results << suite.run_merge_bench(mut state)!
 	}
 	return results
+}
+
+fn packet_bytes(packets []storage.DataPacket) int {
+	mut total := 0
+	for packet in packets {
+		total += packet.data.len
+	}
+	return total
+}
+
+fn packet_compressed_bytes(packets []storage.DataPacket) !int {
+	mut total := 0
+	for packet in packets {
+		compressed := zlib.compress(packet.data)!
+		total += compressed.len
+	}
+	return total
+}
+
+fn packet_kind_counts(packets []storage.DataPacket) (int, int) {
+	mut commit_count := 0
+	mut node_count := 0
+	for packet in packets {
+		match packet.kind {
+			.commit { commit_count++ }
+			.node { node_count++ }
+		}
+	}
+	return commit_count, node_count
+}
+
+fn sync_tree_depth(tree storage.Tree) !int {
+	root := tree.root_node()!
+	return root.level + 1
+}
+
+fn regular_negotiation_rtts(tree_depth int) int {
+	return if tree_depth < 1 { 1 } else { tree_depth }
+}
+
+fn manifest_negotiation_rtts(tree_depth int, prediction_depth int) int {
+	if tree_depth < 1 {
+		return 1
+	}
+	depth := if prediction_depth < 1 { 1 } else { prediction_depth }
+	remaining := tree_depth - depth
+	return if remaining > 1 { remaining } else { 1 }
+}
+
+fn effective_sync_total_ms(duration_ms i64, negotiation_rtts int, rtt_ms int) i64 {
+	return duration_ms + i64(negotiation_rtts * rtt_ms)
+}
+
+fn sync_note(rows int, duration_ms i64, tree_depth int, prediction_depth int, negotiation_rtts int, rtt_ms int, commit_packets int, node_packets int, missing_commits int, missing_nodes int, compressed_bytes int) string {
+	mut parts := []string{}
+	parts << 'rows=${rows}'
+	if tree_depth > 0 {
+		parts << 'tree_depth=${tree_depth}'
+	}
+	if prediction_depth > 0 {
+		parts << 'prediction_depth=${prediction_depth}'
+	}
+	if negotiation_rtts > 0 {
+		parts << 'negotiation_rtts=${negotiation_rtts}'
+		parts << 'simulated_rtt_ms=${negotiation_rtts * rtt_ms}'
+	}
+	parts << 'effective_total_ms=${effective_sync_total_ms(duration_ms, negotiation_rtts, rtt_ms)}'
+	parts << 'commit_packets=${commit_packets}'
+	parts << 'node_packets=${node_packets}'
+	parts << 'missing_commits=${missing_commits}'
+	parts << 'missing_nodes=${missing_nodes}'
+	parts << 'compressed_bytes=${compressed_bytes}'
+	return parts.join(' ')
+}
+
+fn (suite BenchSuite) sync_bench_items() []storage.KVPair {
+	mut items := []storage.KVPair{cap: suite.cfg.rows}
+	for idx in 0 .. suite.cfg.rows {
+		items << storage.KVPair{
+			key: 'sync-${idx:08}'.bytes()
+			value: suite.prolly_bench_value(idx)
+		}
+	}
+	return items
+}
+
+fn (suite BenchSuite) sync_json_items() []storage.KVPair {
+	mut items := []storage.KVPair{cap: suite.cfg.rows}
+	for idx in 0 .. suite.cfg.rows {
+		value := '{"id":"sync-${idx:08}","title":"Document ${idx:08}","status":"draft","meta":{"kind":"note","version":1,"flag":false},"body":"${suite.prolly_bench_value(idx).bytestr()}"}'.bytes()
+		items << storage.KVPair{
+			key: 'json-${idx:08}'.bytes()
+			value: value
+		}
+	}
+	return items
+}
+
+fn (suite BenchSuite) sync_mutated_tree(base storage.Tree) !storage.Tree {
+	idx := if suite.cfg.rows > 0 { suite.cfg.rows / 2 } else { 0 }
+	key := 'sync-${idx:08}'.bytes()
+	mut value := suite.prolly_bench_value(idx)
+	if value.len == 0 {
+		value = [u8(`X`)]
+	} else {
+		mid := value.len / 2
+		value[mid] = value[mid] ^ u8(0x01)
+	}
+	return base.put(storage.KVPair{
+		key: key
+		value: value
+	}, suite.chunk_cfg)
+}
+
+fn (suite BenchSuite) sync_mutated_json_tree(base storage.Tree) !storage.Tree {
+	idx := if suite.cfg.rows > 0 { suite.cfg.rows / 2 } else { 0 }
+	key := 'json-${idx:08}'.bytes()
+	value := '{"id":"json-${idx:08}","title":"Document ${idx:08}","status":"published","meta":{"kind":"note","version":2,"flag":true},"body":"${suite.prolly_bench_value(idx).bytestr()}"}'.bytes()
+	return base.put(storage.KVPair{
+		key: key
+		value: value
+	}, suite.chunk_cfg)
+}
+
+fn (suite BenchSuite) init_sync_repo(prefix string) !storage.PersistentRepository {
+	root_dir := os.join_path(os.temp_dir(), '${prefix}-${os.getpid()}-${time.now().unix_micro()}')
+	return storage.PersistentRepository.init(root_dir, 'main')
+}
+
+fn sync_branch_tree_depth(mut repo storage.PersistentRepository, branch_name string) !int {
+	tree := repo.tree_at_branch(branch_name)!
+	return sync_tree_depth(tree)
+}
+
+fn (suite BenchSuite) run_sync_push_full_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-push-full-source')!
+	mut target := suite.init_sync_repo('polly-sync-push-full-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync full push'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.push_branch_to_repo(mut source, mut target, 'main')!
+	duration_ms := sw.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	negotiation_rtts := regular_negotiation_rtts(tree_depth)
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_push_full'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: sync_note(suite.cfg.rows, duration_ms, tree_depth, 0, negotiation_rtts, suite.cfg.sync_rtt_ms, commit_packets, node_packets, result.exchange.plan.missing_commit_cids.len, result.exchange.plan.missing_node_cids.len, compressed_bytes)
+	}
+}
+
+fn (suite BenchSuite) run_sync_push_full_manifest_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-push-full-manifest-source')!
+	mut target := suite.init_sync_repo('polly-sync-push-full-manifest-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync full push manifest'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.push_branch_to_repo_with_manifest(mut source, mut target, 'main')!
+	duration_ms := sw.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	negotiation_rtts := manifest_negotiation_rtts(tree_depth, 1)
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_push_full_manifest'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: sync_note(suite.cfg.rows, duration_ms, tree_depth, 1, negotiation_rtts, suite.cfg.sync_rtt_ms, commit_packets, node_packets, result.exchange.plan.missing_commit_cids.len, result.exchange.plan.missing_node_cids.len, compressed_bytes)
+	}
+}
+
+fn (suite BenchSuite) run_sync_push_tiny_change_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-push-tiny-source')!
+	mut target := suite.init_sync_repo('polly-sync-push-tiny-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	base_tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', base_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync base push'
+		timestamp: time.now().unix()
+	})!
+	_ = storage.push_branch_to_repo(mut source, mut target, 'main')!
+	next_tree := suite.sync_mutated_tree(base_tree)!
+	_ = source.commit_to_branch('main', next_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync tiny push'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.push_branch_to_repo(mut source, mut target, 'main')!
+	duration_ms := sw.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	negotiation_rtts := regular_negotiation_rtts(tree_depth)
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_push_tiny_change'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: sync_note(suite.cfg.rows, duration_ms, tree_depth, 0, negotiation_rtts, suite.cfg.sync_rtt_ms, commit_packets, node_packets, result.exchange.plan.missing_commit_cids.len, result.exchange.plan.missing_node_cids.len, compressed_bytes)
+	}
+}
+
+fn (suite BenchSuite) run_sync_push_tiny_change_manifest_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-push-tiny-manifest-source')!
+	mut target := suite.init_sync_repo('polly-sync-push-tiny-manifest-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	base_tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', base_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync base push manifest'
+		timestamp: time.now().unix()
+	})!
+	_ = storage.push_branch_to_repo_with_manifest(mut source, mut target, 'main')!
+	next_tree := suite.sync_mutated_tree(base_tree)!
+	_ = source.commit_to_branch('main', next_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync tiny push manifest'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.push_branch_to_repo_with_manifest(mut source, mut target, 'main')!
+	duration_ms := sw.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	negotiation_rtts := manifest_negotiation_rtts(tree_depth, 1)
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_push_tiny_change_manifest'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: sync_note(suite.cfg.rows, duration_ms, tree_depth, 1, negotiation_rtts, suite.cfg.sync_rtt_ms, commit_packets, node_packets, result.exchange.plan.missing_commit_cids.len, result.exchange.plan.missing_node_cids.len, compressed_bytes)
+	}
+}
+
+fn (suite BenchSuite) run_sync_push_tiny_change_manifest_depth2_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-push-tiny-manifest2-source')!
+	mut target := suite.init_sync_repo('polly-sync-push-tiny-manifest2-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	base_tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', base_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync base push manifest depth2'
+		timestamp: time.now().unix()
+	})!
+	_ = storage.push_branch_to_repo_with_manifest_depth(mut source, mut target, 'main', 2)!
+	next_tree := suite.sync_mutated_tree(base_tree)!
+	_ = source.commit_to_branch('main', next_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync tiny push manifest depth2'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.push_branch_to_repo_with_manifest_depth(mut source, mut target, 'main', 2)!
+	duration_ms := sw.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	negotiation_rtts := manifest_negotiation_rtts(tree_depth, 2)
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_push_tiny_change_manifest_depth2'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: sync_note(suite.cfg.rows, duration_ms, tree_depth, 2, negotiation_rtts, suite.cfg.sync_rtt_ms, commit_packets, node_packets, result.exchange.plan.missing_commit_cids.len, result.exchange.plan.missing_node_cids.len, compressed_bytes)
+	}
+}
+
+fn (suite BenchSuite) run_sync_push_json_tiny_change_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-push-json-source')!
+	mut target := suite.init_sync_repo('polly-sync-push-json-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	base_tree := storage.Tree.build(suite.sync_json_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', base_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync json base push'
+		timestamp: time.now().unix()
+	})!
+	_ = storage.push_branch_to_repo(mut source, mut target, 'main')!
+	next_tree := suite.sync_mutated_json_tree(base_tree)!
+	_ = source.commit_to_branch('main', next_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync json tiny push'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.push_branch_to_repo(mut source, mut target, 'main')!
+	duration_ms := sw.elapsed().milliseconds()
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_push_json_tiny_change'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: 'rows=${suite.cfg.rows} commit_packets=${commit_packets} node_packets=${node_packets} missing_commits=${result.exchange.plan.missing_commit_cids.len} missing_nodes=${result.exchange.plan.missing_node_cids.len} compressed_bytes=${compressed_bytes}'
+	}
+}
+
+fn (suite BenchSuite) run_sync_push_repeated_tiny_change_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-push-repeat-source')!
+	mut target := suite.init_sync_repo('polly-sync-push-repeat-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	mut tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync repeated base'
+		timestamp: time.now().unix()
+	})!
+	_ = storage.push_branch_to_repo(mut source, mut target, 'main')!
+	mut total_packets := 0
+	mut total_bytes := 0
+	mut total_compressed_bytes := 0
+	mut total_commits := 0
+	mut total_nodes := 0
+	mut sw := time.new_stopwatch()
+	for idx in 0 .. 10 {
+		mut value := suite.prolly_bench_value(suite.cfg.rows / 2 + idx)
+		if value.len > 0 {
+			value[idx % value.len] = value[idx % value.len] ^ u8(idx + 1)
+		}
+		tree = tree.put(storage.KVPair{
+			key: 'sync-${(suite.cfg.rows / 2 + idx):08}'.bytes()
+			value: value
+		}, suite.chunk_cfg)!
+		_ = source.commit_to_branch('main', tree, storage.CommitMeta{
+			author: 'bench'
+			message: 'sync repeated ${idx}'
+			timestamp: time.now().unix()
+		})!
+		result := storage.push_branch_to_repo(mut source, mut target, 'main')!
+		commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+		total_packets += result.exchange.packets.len
+		total_bytes += packet_bytes(result.exchange.packets)
+		total_compressed_bytes += packet_compressed_bytes(result.exchange.packets)!
+		total_commits += commit_packets
+		total_nodes += node_packets
+	}
+	duration_ms := sw.elapsed().milliseconds()
+	return BenchResult{
+		name: 'sync_push_repeated_tiny_change'
+		duration_ms: duration_ms
+		ops: total_packets
+		bytes: total_bytes
+		note: 'iterations=10 commit_packets=${total_commits} node_packets=${total_nodes} compressed_bytes=${total_compressed_bytes}'
+	}
+}
+
+fn (suite BenchSuite) run_sync_push_divergence_auto_merge_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-diverge-source')!
+	mut remote := suite.init_sync_repo('polly-sync-diverge-remote')!
+	defer {
+		source.close() or {}
+		remote.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(remote.path) or {}
+	}
+	base_tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', base_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync divergence base'
+		timestamp: time.now().unix()
+	})!
+	_ = storage.push_branch_to_repo(mut source, mut remote, 'main')!
+	source_tree := base_tree.put(storage.KVPair{
+		key: 'sync-00000010'.bytes()
+		value: 'ours-${suite.prolly_bench_value(10).bytestr()}'.bytes()
+	}, suite.chunk_cfg)!
+	source_update := source.commit_to_branch('main', source_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync divergence ours'
+		timestamp: time.now().unix()
+	})!
+	remote_tree := base_tree.put(storage.KVPair{
+		key: 'sync-00000020'.bytes()
+		value: 'theirs-${suite.prolly_bench_value(20).bytestr()}'.bytes()
+	}, suite.chunk_cfg)!
+	remote_update := remote.commit_to_branch('main', remote_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync divergence theirs'
+		timestamp: time.now().unix()
+	})!
+	remote_offer := storage.sync_offer_for_branch(mut remote, 'main')!
+	remote_exchange := storage.full_sync_exchange_for_offer(mut remote, remote_offer)!
+	storage.import_sync_exchange_objects(mut source, remote_exchange)!
+	mut sw := time.new_stopwatch()
+	merged_offer := storage.build_auto_merge_offer_for_remote_offer(mut source, 'main', 'main', remote_offer)!
+	merged_exchange := storage.full_sync_exchange_for_offer(mut source, merged_offer)!
+	_ = storage.apply_exchange_to_repo(mut remote, merged_exchange)!
+	duration_ms := sw.elapsed().milliseconds()
+	merged_tree := remote.tree_at_branch('main')!
+	merged_left := merged_tree.get('sync-00000010'.bytes()) or { return error(err.msg()) }
+	if !merged_left.value.bytestr().starts_with('ours-') {
+		return error('divergence merge lost local change')
+	}
+	merged_right := merged_tree.get('sync-00000020'.bytes()) or { return error(err.msg()) }
+	if !merged_right.value.bytestr().starts_with('theirs-') {
+		return error('divergence merge lost remote change')
+	}
+	merged_commit := remote.checkout('main')!
+	if merged_commit.parent_cids.len != 2 {
+		return error('divergence merge expected 2 parents, got ${merged_commit.parent_cids.len}')
+	}
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	commit_packets, node_packets := packet_kind_counts(merged_exchange.packets)
+	raw_bytes := packet_bytes(merged_exchange.packets)
+	compressed_bytes := packet_compressed_bytes(merged_exchange.packets)!
+	return BenchResult{
+		name: 'sync_push_divergence_auto_merge'
+		duration_ms: duration_ms
+		ops: merged_exchange.packets.len
+		bytes: raw_bytes
+		note: 'rows=${suite.cfg.rows} auto_merged=true tree_depth=${tree_depth} commit_packets=${commit_packets} node_packets=${node_packets} missing_commits=${merged_exchange.plan.missing_commit_cids.len} missing_nodes=${merged_exchange.plan.missing_node_cids.len} compressed_bytes=${compressed_bytes} source_commit=${source_update.snapshot.commit.cid} remote_commit=${remote_update.snapshot.commit.cid}'
+	}
+}
+
+fn (suite BenchSuite) run_sync_pull_full_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-pull-full-source')!
+	mut target := suite.init_sync_repo('polly-sync-pull-full-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync full pull'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.pull_branch_to_repo(mut target, mut source, 'main')!
+	duration_ms := sw.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	negotiation_rtts := regular_negotiation_rtts(tree_depth)
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_pull_full'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: sync_note(suite.cfg.rows, duration_ms, tree_depth, 0, negotiation_rtts, suite.cfg.sync_rtt_ms, commit_packets, node_packets, result.exchange.plan.missing_commit_cids.len, result.exchange.plan.missing_node_cids.len, compressed_bytes)
+	}
+}
+
+fn (suite BenchSuite) run_sync_pull_full_manifest_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-pull-full-manifest-source')!
+	mut target := suite.init_sync_repo('polly-sync-pull-full-manifest-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync full pull manifest'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.pull_branch_to_repo_with_manifest(mut target, mut source, 'main')!
+	duration_ms := sw.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	negotiation_rtts := manifest_negotiation_rtts(tree_depth, 1)
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_pull_full_manifest'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: sync_note(suite.cfg.rows, duration_ms, tree_depth, 1, negotiation_rtts, suite.cfg.sync_rtt_ms, commit_packets, node_packets, result.exchange.plan.missing_commit_cids.len, result.exchange.plan.missing_node_cids.len, compressed_bytes)
+	}
+}
+
+fn (suite BenchSuite) run_sync_pull_tiny_change_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-pull-tiny-source')!
+	mut target := suite.init_sync_repo('polly-sync-pull-tiny-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	base_tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', base_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync base pull'
+		timestamp: time.now().unix()
+	})!
+	_ = storage.pull_branch_to_repo(mut target, mut source, 'main')!
+	next_tree := suite.sync_mutated_tree(base_tree)!
+	_ = source.commit_to_branch('main', next_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync tiny pull'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.pull_branch_to_repo(mut target, mut source, 'main')!
+	duration_ms := sw.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	negotiation_rtts := regular_negotiation_rtts(tree_depth)
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_pull_tiny_change'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: sync_note(suite.cfg.rows, duration_ms, tree_depth, 0, negotiation_rtts, suite.cfg.sync_rtt_ms, commit_packets, node_packets, result.exchange.plan.missing_commit_cids.len, result.exchange.plan.missing_node_cids.len, compressed_bytes)
+	}
+}
+
+fn (suite BenchSuite) run_sync_pull_tiny_change_manifest_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-pull-tiny-manifest-source')!
+	mut target := suite.init_sync_repo('polly-sync-pull-tiny-manifest-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	base_tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', base_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync base pull manifest'
+		timestamp: time.now().unix()
+	})!
+	_ = storage.pull_branch_to_repo_with_manifest(mut target, mut source, 'main')!
+	next_tree := suite.sync_mutated_tree(base_tree)!
+	_ = source.commit_to_branch('main', next_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync tiny pull manifest'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.pull_branch_to_repo_with_manifest(mut target, mut source, 'main')!
+	duration_ms := sw.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	negotiation_rtts := manifest_negotiation_rtts(tree_depth, 1)
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_pull_tiny_change_manifest'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: sync_note(suite.cfg.rows, duration_ms, tree_depth, 1, negotiation_rtts, suite.cfg.sync_rtt_ms, commit_packets, node_packets, result.exchange.plan.missing_commit_cids.len, result.exchange.plan.missing_node_cids.len, compressed_bytes)
+	}
+}
+
+fn (suite BenchSuite) run_sync_pull_tiny_change_manifest_depth2_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-pull-tiny-manifest2-source')!
+	mut target := suite.init_sync_repo('polly-sync-pull-tiny-manifest2-target')!
+	defer {
+		source.close() or {}
+		target.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target.path) or {}
+	}
+	base_tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', base_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync base pull manifest depth2'
+		timestamp: time.now().unix()
+	})!
+	_ = storage.pull_branch_to_repo_with_manifest_depth(mut target, mut source, 'main', 2)!
+	next_tree := suite.sync_mutated_tree(base_tree)!
+	_ = source.commit_to_branch('main', next_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync tiny pull manifest depth2'
+		timestamp: time.now().unix()
+	})!
+	mut sw := time.new_stopwatch()
+	result := storage.pull_branch_to_repo_with_manifest_depth(mut target, mut source, 'main', 2)!
+	duration_ms := sw.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	negotiation_rtts := manifest_negotiation_rtts(tree_depth, 2)
+	commit_packets, node_packets := packet_kind_counts(result.exchange.packets)
+	raw_bytes := packet_bytes(result.exchange.packets)
+	compressed_bytes := packet_compressed_bytes(result.exchange.packets)!
+	return BenchResult{
+		name: 'sync_pull_tiny_change_manifest_depth2'
+		duration_ms: duration_ms
+		ops: result.exchange.packets.len
+		bytes: raw_bytes
+		note: sync_note(suite.cfg.rows, duration_ms, tree_depth, 2, negotiation_rtts, suite.cfg.sync_rtt_ms, commit_packets, node_packets, result.exchange.plan.missing_commit_cids.len, result.exchange.plan.missing_node_cids.len, compressed_bytes)
+	}
+}
+
+fn (suite BenchSuite) run_sync_tiny_change_rtt_sweep_bench() !BenchResult {
+	mut source := suite.init_sync_repo('polly-sync-rtt-sweep-source')!
+	mut target_regular := suite.init_sync_repo('polly-sync-rtt-sweep-target-regular')!
+	mut target_manifest1 := suite.init_sync_repo('polly-sync-rtt-sweep-target-manifest1')!
+	mut target_manifest2 := suite.init_sync_repo('polly-sync-rtt-sweep-target-manifest2')!
+	defer {
+		source.close() or {}
+		target_regular.close() or {}
+		target_manifest1.close() or {}
+		target_manifest2.close() or {}
+		os.rmdir_all(source.path) or {}
+		os.rmdir_all(target_regular.path) or {}
+		os.rmdir_all(target_manifest1.path) or {}
+		os.rmdir_all(target_manifest2.path) or {}
+	}
+	base_tree := storage.Tree.build(suite.sync_bench_items(), suite.chunk_cfg)!
+	_ = source.commit_to_branch('main', base_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync rtt sweep base'
+		timestamp: time.now().unix()
+	})!
+	_ = storage.push_branch_to_repo(mut source, mut target_regular, 'main')!
+	_ = storage.push_branch_to_repo_with_manifest(mut source, mut target_manifest1, 'main')!
+	_ = storage.push_branch_to_repo_with_manifest_depth(mut source, mut target_manifest2, 'main', 2)!
+	next_tree := suite.sync_mutated_tree(base_tree)!
+	_ = source.commit_to_branch('main', next_tree, storage.CommitMeta{
+		author: 'bench'
+		message: 'sync rtt sweep tiny'
+		timestamp: time.now().unix()
+	})!
+	mut sw_regular := time.new_stopwatch()
+	regular := storage.push_branch_to_repo(mut source, mut target_regular, 'main')!
+	regular_ms := sw_regular.elapsed().milliseconds()
+	mut sw_manifest1 := time.new_stopwatch()
+	manifest1 := storage.push_branch_to_repo_with_manifest(mut source, mut target_manifest1, 'main')!
+	manifest1_ms := sw_manifest1.elapsed().milliseconds()
+	mut sw_manifest2 := time.new_stopwatch()
+	manifest2 := storage.push_branch_to_repo_with_manifest_depth(mut source, mut target_manifest2, 'main', 2)!
+	manifest2_ms := sw_manifest2.elapsed().milliseconds()
+	tree_depth := sync_branch_tree_depth(mut source, 'main')!
+	regular_rtts := regular_negotiation_rtts(tree_depth)
+	manifest1_rtts := manifest_negotiation_rtts(tree_depth, 1)
+	manifest2_rtts := manifest_negotiation_rtts(tree_depth, 2)
+	rtt_values := [0, 20, 40, 80, 120, 200]
+	mut sweep_parts := []string{}
+	for rtt in rtt_values {
+		decision := storage.recommend_sync_negotiation_policy(tree_depth, rtt, regular_ms, manifest1_ms, manifest2_ms)
+		winner_ms := match decision.policy {
+			.regular { effective_sync_total_ms(regular_ms, regular_rtts, rtt) }
+			.manifest_depth1 { effective_sync_total_ms(manifest1_ms, manifest1_rtts, rtt) }
+			.manifest_depth2 { effective_sync_total_ms(manifest2_ms, manifest2_rtts, rtt) }
+			.auto { effective_sync_total_ms(manifest1_ms, manifest1_rtts, rtt) }
+		}
+		winner := match decision.policy {
+			.regular { 'regular' }
+			.manifest_depth1 { 'manifest1' }
+			.manifest_depth2 { 'manifest2' }
+			.auto { 'auto' }
+		}
+		sweep_parts << 'rtt${rtt}=${winner}:${winner_ms}'
+	}
+	regular_commit_packets, regular_node_packets := packet_kind_counts(regular.exchange.packets)
+	_ = manifest1
+	_ = manifest2
+	recommended := storage.recommend_sync_negotiation_policy(tree_depth, suite.cfg.sync_rtt_ms, regular_ms, manifest1_ms, manifest2_ms)
+	recommended_name := match recommended.policy {
+		.regular { 'regular' }
+		.manifest_depth1 { 'manifest1' }
+		.manifest_depth2 { 'manifest2' }
+		.auto { 'auto' }
+	}
+	return BenchResult{
+		name: 'sync_tiny_change_rtt_sweep'
+		duration_ms: regular_ms
+		ops: regular.exchange.packets.len
+		bytes: packet_bytes(regular.exchange.packets)
+		note: 'rows=${suite.cfg.rows} tree_depth=${tree_depth} configured_rtt_ms=${suite.cfg.sync_rtt_ms} recommended_policy=${recommended_name} regular_local_ms=${regular_ms} manifest1_local_ms=${manifest1_ms} manifest2_local_ms=${manifest2_ms} regular_packets=${regular_commit_packets + regular_node_packets} ${sweep_parts.join(" ")}'
+	}
 }
 
 fn (suite BenchSuite) run_chunker_bench() !BenchResult {

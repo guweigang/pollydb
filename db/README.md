@@ -4,7 +4,7 @@ This directory is the planned home for database-facing semantics in `pollydb`.
 
 The staged migration plan keeps the current implementation in `storage/` until
 the backend interfaces and package boundaries are stable enough to avoid V
-module cycles.
+module cycles and awkward cross-directory module coupling.
 
 Planned contents:
 
@@ -19,4 +19,6 @@ Current state:
 
 - source of truth still lives in `storage/`
 - this directory is intentionally documentation-only for now
+- it intentionally has no `.v` files yet because V's directory/module layout
+  makes early splitting expensive and cycle-prone
 - callers should continue importing `storage`

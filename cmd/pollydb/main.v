@@ -23,9 +23,22 @@ struct CliDbContext {
 	next_idx       int
 }
 
+struct CliSyncPeerContext {
+	root_dir       string
+	default_branch string
+	branch         string
+	next_idx       int
+}
+
 struct CliField {
 	label string
 	value string
+}
+
+struct CliSyncExecution {
+	session storage.SyncSession
+	exchange storage.SyncExchange
+	policy storage.SyncNegotiationPolicy
 }
 
 fn PollyDbCli.new(args []string) PollyDbCli {
@@ -56,6 +69,10 @@ fn cli_has_repository_layout(root_dir string) bool {
 
 fn cli_looks_like_path(raw string) bool {
 	return raw.starts_with('/') || raw.starts_with('./') || raw.starts_with('../') || raw.contains('/')
+}
+
+fn cli_looks_like_url(raw string) bool {
+	return raw.starts_with('http://') || raw.starts_with('https://')
 }
 
 fn cli_open_repository(root_dir string) !storage.Repository {
@@ -383,6 +400,11 @@ fn (cli PollyDbCli) usage() string {
   pollydb init [root_dir] [branch]
   pollydb checkpoint [root_dir] [branch] [mode]
   pollydb refresh-index-snapshots [root_dir] [branch]
+  pollydb sync-push [root_dir] [branch] <peer_root_dir> [peer_branch] [policy]
+  pollydb sync-pull [root_dir] [branch] <peer_root_dir> [peer_branch] [policy]
+  pollydb recommend-sync-policy [root_dir] [branch] <peer_root_dir> [peer_branch] [simulated_rtt_ms]
+  pollydb sync-push-sidecar [root_dir] [branch] <sidecar_url> [target_branch] [policy]
+  pollydb sync-pull-sidecar [root_dir] [branch] <sidecar_url> [source_branch] [policy]
   pollydb status [root_dir] [branch]
   pollydb inspect [root_dir] [branch]
   pollydb branches [root_dir] [branch]
@@ -426,6 +448,11 @@ Repository:
   init     Initialize a pollydb repository if needed and print its status.
   checkpoint  Persist the current durable boundary and print its status.
   refresh-index-snapshots  Publish the latest sidecar index snapshots without forcing a full checkpoint.
+  sync-push  Push one branch into another local pollydb repository using Polly-Sync.
+  sync-pull  Pull one branch from another local pollydb repository using Polly-Sync.
+  recommend-sync-policy  Estimate the best Polly-Sync negotiation policy for a peer repository.
+  sync-push-sidecar  Push one branch into a Polly-Link Sidecar-backed repository.
+  sync-pull-sidecar  Pull one branch from a Polly-Link Sidecar-backed repository.
   status   Open a pollydb repository and print the current status report.
   inspect  Inspect a pollydb repository directory without keeping it open.
 
@@ -519,6 +546,9 @@ Merge strategy:
 Checkpoint mode:
   full | data_only
 
+Sync negotiation policy:
+  regular | manifest_depth1 | manifest_depth2 | auto
+
 Aggregate projection refresh policy:
   none | stale_one | stale_up_to | stale_all
 '
@@ -538,6 +568,21 @@ fn (mut cli PollyDbCli) run() ! {
 	}
 	if command == 'refresh-index-snapshots' {
 		return cli.run_refresh_index_snapshots()
+	}
+	if command == 'sync-push' {
+		return cli.run_sync_push()
+	}
+	if command == 'sync-pull' {
+		return cli.run_sync_pull()
+	}
+	if command == 'recommend-sync-policy' {
+		return cli.run_recommend_sync_policy()
+	}
+	if command == 'sync-push-sidecar' {
+		return cli.run_sync_push_sidecar()
+	}
+	if command == 'sync-pull-sidecar' {
+		return cli.run_sync_pull_sidecar()
 	}
 	if command == 'status' {
 		return cli.run_status()
@@ -722,12 +767,119 @@ fn (cli PollyDbCli) resolve_db_context(start_idx int, require_repo bool) !CliDbC
 	}
 }
 
+fn (cli PollyDbCli) resolve_sync_peer_context(start_idx int) !CliSyncPeerContext {
+	if cli.args.len <= start_idx {
+		return error('missing <peer_root_dir>')
+	}
+	root_dir := os.real_path(cli.args[start_idx])
+	if !cli_has_repository(root_dir) {
+		return error('peer repository metadata not found: ${root_dir}')
+	}
+	repo := cli_open_repository(root_dir)!
+	mut branch := repo.default_branch
+	mut next_idx := start_idx + 1
+	branches := repo.branch_names()
+	if cli.args.len > next_idx && cli.args[next_idx] in branches {
+		branch = cli.args[next_idx]
+		next_idx++
+	}
+	return CliSyncPeerContext{
+		root_dir: root_dir
+		default_branch: repo.default_branch
+		branch: branch
+		next_idx: next_idx
+	}
+}
+
 fn parse_checkpoint_mode(raw string) !storage.CheckpointMode {
 	return match raw {
 		'full' { .full }
 		'data_only' { .data_only }
 		else { error('invalid checkpoint mode: ${raw}') }
 	}
+}
+
+fn parse_sync_negotiation_policy(value string) !storage.SyncNegotiationPolicy {
+	return match value {
+		'regular' { .regular }
+		'manifest_depth1' { .manifest_depth1 }
+		'manifest_depth2' { .manifest_depth2 }
+		'auto' { .auto }
+		else { error('invalid sync negotiation policy: ${value}') }
+	}
+}
+
+fn looks_like_sync_negotiation_policy(value string) bool {
+	return value in ['regular', 'manifest_depth1', 'manifest_depth2', 'auto']
+}
+
+fn open_cli_persistent_repo(root_dir string) !storage.PersistentRepository {
+	default_branch := if cli_has_repository(root_dir) {
+		(cli_open_repository(root_dir)!).default_branch
+	} else {
+		'main'
+	}
+	return storage.PersistentRepository.open_default(root_dir, default_branch)
+}
+
+fn sync_policy_label(policy storage.SyncNegotiationPolicy) string {
+	return match policy {
+		.regular { 'regular' }
+		.manifest_depth1 { 'manifest_depth1' }
+		.manifest_depth2 { 'manifest_depth2' }
+		.auto { 'auto' }
+	}
+}
+
+fn cli_render_sync_result(title string, direction string, source_root string, source_branch string, peer_root string, peer_branch string, policy string, packet_count int, packet_bytes int, branch storage.Branch, result_label string) string {
+	return cli_render_field_card(title, [
+		CliField{'direction', direction}
+		CliField{'source', '${source_root}#${source_branch}'}
+		CliField{'peer', '${peer_root}#${peer_branch}'}
+		CliField{'policy', policy}
+		CliField{'result', result_label}
+		CliField{'packets', packet_count.str()}
+		CliField{'bytes', packet_bytes.str()}
+		CliField{'head_branch', branch.name}
+		CliField{'head_commit', branch.commit_cid}
+	])
+}
+
+fn cli_render_sync_policy_recommendation(source_root string, source_branch string, peer_root string, peer_branch string, simulated_rtt_ms int, decision storage.SyncNegotiationDecision, tree_depth int, regular_local_ms i64, manifest1_local_ms i64, manifest2_local_ms i64) string {
+	return cli_render_field_card('Sync Policy Recommendation', [
+		CliField{'source', '${source_root}#${source_branch}'}
+		CliField{'peer', '${peer_root}#${peer_branch}'}
+		CliField{'simulated_rtt_ms', simulated_rtt_ms.str()}
+		CliField{'tree_depth', tree_depth.str()}
+		CliField{'recommended_policy', sync_policy_label(decision.policy)}
+		CliField{'prediction_depth', decision.prediction_depth.str()}
+		CliField{'estimated_rtts', decision.estimated_rtts.str()}
+		CliField{'regular_local_ms', regular_local_ms.str()}
+		CliField{'manifest1_local_ms', manifest1_local_ms.str()}
+		CliField{'manifest2_local_ms', manifest2_local_ms.str()}
+	])
+}
+
+fn sync_packet_bytes(packets []storage.DataPacket) int {
+	mut total := 0
+	for packet in packets {
+		total += packet.data.len
+	}
+	return total
+}
+
+fn build_sync_execution_for_policy(mut source_repo storage.PersistentRepository, source_branch string, mut target_repo storage.PersistentRepository, target_branch string, policy storage.SyncNegotiationPolicy) !CliSyncExecution {
+	prepared := storage.prepare_sync_exchange_for_policy(mut source_repo, source_branch, mut target_repo, target_branch, policy)!
+	return CliSyncExecution{
+		session: prepared.session
+		exchange: prepared.exchange
+		policy: prepared.policy
+	}
+}
+
+fn recommend_sync_policy_for_branches(mut source_repo storage.PersistentRepository, source_branch string, mut target_repo storage.PersistentRepository, target_branch string, simulated_rtt_ms int) !(storage.SyncNegotiationDecision, int, i64, i64, i64) {
+	recommendation := storage.recommend_sync_policy_for_repos(mut source_repo, source_branch, mut target_repo, target_branch, simulated_rtt_ms)!
+	return recommendation.decision, recommendation.tree_depth, recommendation.regular_local_ms, recommendation.manifest1_local_ms, recommendation.manifest2_local_ms
 }
 
 fn (mut cli PollyDbCli) run_status() ! {
@@ -1420,6 +1572,141 @@ fn (mut cli PollyDbCli) run_refresh_index_snapshots() ! {
 	println(cli_render_fields('Index Snapshots', [
 		CliField{'status', 'done'}
 	]))
+}
+
+fn (mut cli PollyDbCli) run_sync_push() ! {
+	ctx := cli.resolve_db_context(1, true)!
+	peer := cli.resolve_sync_peer_context(ctx.next_idx)!
+	policy := if cli.args.len > peer.next_idx {
+		parse_sync_negotiation_policy(cli.args[peer.next_idx])!
+	} else {
+		storage.SyncNegotiationPolicy.auto
+	}
+	mut source_repo := open_cli_persistent_repo(ctx.root_dir)!
+	defer {
+		source_repo.close() or {}
+	}
+	mut peer_repo := open_cli_persistent_repo(peer.root_dir)!
+	defer {
+		peer_repo.close() or {}
+	}
+	mut effective_policy := policy
+	if effective_policy == .auto {
+		decision, _, _, _, _ := recommend_sync_policy_for_branches(mut source_repo, ctx.branch, mut peer_repo, peer.branch, 40)!
+		effective_policy = decision.policy
+	}
+	execution := build_sync_execution_for_policy(mut source_repo, ctx.branch, mut peer_repo, peer.branch, effective_policy)!
+	branch := storage.apply_exchange_to_repo(mut peer_repo, execution.exchange)!
+	policy_label := if policy == .auto {
+		'auto -> ${sync_policy_label(effective_policy)}'
+	} else {
+		sync_policy_label(effective_policy)
+	}
+	println(cli_render_sync_result('Sync Push', 'push', ctx.root_dir, ctx.branch, peer.root_dir, peer.branch, policy_label, execution.exchange.packets.len, sync_packet_bytes(execution.exchange.packets), branch, 'applied'))
+}
+
+fn (mut cli PollyDbCli) run_sync_pull() ! {
+	ctx := cli.resolve_db_context(1, true)!
+	peer := cli.resolve_sync_peer_context(ctx.next_idx)!
+	policy := if cli.args.len > peer.next_idx {
+		parse_sync_negotiation_policy(cli.args[peer.next_idx])!
+	} else {
+		storage.SyncNegotiationPolicy.auto
+	}
+	mut target_repo := open_cli_persistent_repo(ctx.root_dir)!
+	defer {
+		target_repo.close() or {}
+	}
+	mut source_repo := open_cli_persistent_repo(peer.root_dir)!
+	defer {
+		source_repo.close() or {}
+	}
+	mut effective_policy := policy
+	if effective_policy == .auto {
+		decision, _, _, _, _ := recommend_sync_policy_for_branches(mut source_repo, peer.branch, mut target_repo, ctx.branch, 40)!
+		effective_policy = decision.policy
+	}
+	execution := build_sync_execution_for_policy(mut source_repo, peer.branch, mut target_repo, ctx.branch, effective_policy)!
+	branch := storage.apply_exchange_to_repo(mut target_repo, execution.exchange)!
+	policy_label := if policy == .auto {
+		'auto -> ${sync_policy_label(effective_policy)}'
+	} else {
+		sync_policy_label(effective_policy)
+	}
+	println(cli_render_sync_result('Sync Pull', 'pull', peer.root_dir, peer.branch, ctx.root_dir, ctx.branch, policy_label, execution.exchange.packets.len, sync_packet_bytes(execution.exchange.packets), branch, 'applied'))
+}
+
+fn (mut cli PollyDbCli) run_recommend_sync_policy() ! {
+	ctx := cli.resolve_db_context(1, true)!
+	peer := cli.resolve_sync_peer_context(ctx.next_idx)!
+	simulated_rtt_ms := if cli.args.len > peer.next_idx { cli.args[peer.next_idx].int() } else { 40 }
+	mut source_repo := open_cli_persistent_repo(ctx.root_dir)!
+	defer {
+		source_repo.close() or {}
+	}
+	mut peer_repo := open_cli_persistent_repo(peer.root_dir)!
+	defer {
+		peer_repo.close() or {}
+	}
+	decision, tree_depth, regular_local_ms, manifest1_local_ms, manifest2_local_ms := recommend_sync_policy_for_branches(mut source_repo, ctx.branch, mut peer_repo, peer.branch, simulated_rtt_ms)!
+	println(cli_render_sync_policy_recommendation(ctx.root_dir, ctx.branch, peer.root_dir, peer.branch, simulated_rtt_ms, decision, tree_depth, regular_local_ms, manifest1_local_ms, manifest2_local_ms))
+}
+
+fn (mut cli PollyDbCli) run_sync_push_sidecar() ! {
+	ctx := cli.resolve_db_context(1, true)!
+	if cli.args.len <= ctx.next_idx || !cli_looks_like_url(cli.args[ctx.next_idx]) {
+		return error('sync-push-sidecar requires [root_dir] [branch] <sidecar_url> [target_branch] [policy]')
+	}
+	sidecar_url := cli.args[ctx.next_idx]
+	mut target_branch := ctx.branch
+	mut next_idx := ctx.next_idx + 1
+	if cli.args.len > next_idx && !looks_like_sync_negotiation_policy(cli.args[next_idx]) {
+		target_branch = cli.args[next_idx]
+		next_idx++
+	}
+	policy := if cli.args.len > next_idx {
+		parse_sync_negotiation_policy(cli.args[next_idx])!
+	} else {
+		storage.SyncNegotiationPolicy.auto
+	}
+	mut repo := open_cli_persistent_repo(ctx.root_dir)!
+	defer {
+		repo.close() or {}
+	}
+	client := storage.PollyLinkClient{
+		base_url: sidecar_url
+	}
+	result := storage.push_branch_to_sidecar(mut repo, ctx.branch, client, target_branch, policy)!
+	result_label := if result.auto_merged { cli_success('auto_merged') } else { 'applied' }
+	println(cli_render_sync_result('Sync Push (Sidecar)', 'push', ctx.root_dir, ctx.branch, sidecar_url, target_branch, sync_policy_label(policy), result.exchange.packets.len, sync_packet_bytes(result.exchange.packets), result.branch, result_label))
+}
+
+fn (mut cli PollyDbCli) run_sync_pull_sidecar() ! {
+	ctx := cli.resolve_db_context(1, true)!
+	if cli.args.len <= ctx.next_idx || !cli_looks_like_url(cli.args[ctx.next_idx]) {
+		return error('sync-pull-sidecar requires [root_dir] [branch] <sidecar_url> [source_branch] [policy]')
+	}
+	sidecar_url := cli.args[ctx.next_idx]
+	mut source_branch := ctx.branch
+	mut next_idx := ctx.next_idx + 1
+	if cli.args.len > next_idx && !looks_like_sync_negotiation_policy(cli.args[next_idx]) {
+		source_branch = cli.args[next_idx]
+		next_idx++
+	}
+	policy := if cli.args.len > next_idx {
+		parse_sync_negotiation_policy(cli.args[next_idx])!
+	} else {
+		storage.SyncNegotiationPolicy.auto
+	}
+	mut repo := open_cli_persistent_repo(ctx.root_dir)!
+	defer {
+		repo.close() or {}
+	}
+	client := storage.PollyLinkClient{
+		base_url: sidecar_url
+	}
+	result := storage.pull_branch_from_sidecar(mut repo, ctx.branch, client, source_branch, policy)!
+	println(cli_render_sync_result('Sync Pull (Sidecar)', 'pull', sidecar_url, source_branch, ctx.root_dir, ctx.branch, sync_policy_label(policy), result.exchange.packets.len, sync_packet_bytes(result.exchange.packets), result.branch, 'applied'))
 }
 
 fn (mut cli PollyDbCli) run_branches() ! {

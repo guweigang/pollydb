@@ -211,6 +211,42 @@ fn test_usage_includes_patch_json_paths() {
 	assert cli.usage().contains('delete-json-path')
 }
 
+fn test_usage_includes_sync_commands() {
+	cli := PollyDbCli.new([])
+	assert cli.usage().contains('sync-push')
+	assert cli.usage().contains('sync-pull')
+	assert cli.usage().contains('recommend-sync-policy')
+	assert cli.usage().contains('sync-push-sidecar')
+	assert cli.usage().contains('sync-pull-sidecar')
+	assert cli.usage().contains('manifest_depth1 | manifest_depth2 | auto')
+}
+
+fn test_parse_sync_negotiation_policy() {
+	assert parse_sync_negotiation_policy('regular') or { panic(err) } == .regular
+	assert parse_sync_negotiation_policy('manifest_depth1') or { panic(err) } == .manifest_depth1
+	assert parse_sync_negotiation_policy('manifest_depth2') or { panic(err) } == .manifest_depth2
+	assert parse_sync_negotiation_policy('auto') or { panic(err) } == .auto
+	parse_sync_negotiation_policy('weird') or {
+		assert err.msg().contains('invalid sync negotiation policy')
+		return
+	}
+	panic('expected invalid sync negotiation policy error')
+}
+
+fn test_cli_looks_like_url() {
+	assert cli_looks_like_url('http://127.0.0.1:19191')
+	assert cli_looks_like_url('https://example.com')
+	assert !cli_looks_like_url('/tmp/mydb')
+}
+
+fn test_cli_render_sync_result_includes_auto_merged_status() {
+	output := cli_render_sync_result('Sync Push (Sidecar)', 'push', '/tmp/source', 'main', 'http://127.0.0.1:19191', 'main', 'manifest_depth1', 5, 1024, storage.Branch{
+		name: 'main'
+		commit_cid: 'commit-123'
+	}, 'auto_merged')
+	assert term.strip_ansi(output).contains('auto_merged')
+}
+
 fn test_parse_json_path_updates() {
 	updates := parse_json_path_updates('kind.code=string:beta,enabled=null,legacy=delete,flag=bool:true') or {
 		panic(err)

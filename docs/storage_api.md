@@ -4,6 +4,7 @@ This document defines the intended stable storage-facing API for `pollydb`.
 It is written for the future `vsql` integration, not for SQL parsing or DDL.
 
 For a CLI-first walkthrough, see [tutorial.md](/Users/guweigang/Source/pollytree/docs/tutorial.md).
+For platform-level milestones, see [platform_roadmap.md](/Users/guweigang/Source/pollytree/docs/platform_roadmap.md).
 
 ## Goals
 

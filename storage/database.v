@@ -1901,6 +1901,10 @@ pub fn (mut database PersistentDatabase) merge_branches(ours_branch string, thei
 	return database.engine.merge_branches(ours_branch, theirs_branch, cfg)
 }
 
+pub fn (mut database PersistentDatabase) auto_merge_by_roots(base_root_cid string, ours_root_cid string, theirs_root_cid string, cfg ChunkConfig) !MergeResult {
+	return auto_merge_by_roots(base_root_cid, ours_root_cid, theirs_root_cid, cfg, mut database.engine.repository.node_store)
+}
+
 pub fn (mut database PersistentDatabase) merge_branch_into(ours_branch string, theirs_branch string, resolutions []ConflictResolution, cfg ChunkConfig, meta CommitMeta) !BranchUpdate {
 	return database.engine.merge_branch_into(ours_branch, theirs_branch, resolutions, cfg, meta)
 }

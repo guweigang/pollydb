@@ -1138,3 +1138,34 @@ fn test_repository_merge_branch_into_commits_resolved_tree() {
 	assert found
 	_ = feature_update
 }
+
+fn test_auto_merge_by_roots_merges_non_conflicting_changes() {
+	cfg := ChunkConfig.default()
+	base_tree := Tree.build([
+		KVPair{key: 'k1'.bytes(), value: 'base-1'.bytes()},
+		KVPair{key: 'k2'.bytes(), value: 'base-2'.bytes()},
+	], cfg) or { panic(err) }
+	ours_tree := base_tree.put(KVPair{
+		key: 'k1'.bytes()
+		value: 'ours-1'.bytes()
+	}, cfg) or { panic(err) }
+	theirs_tree := base_tree.put(KVPair{
+		key: 'k2'.bytes()
+		value: 'theirs-2'.bytes()
+	}, cfg) or { panic(err) }
+	mut store := MemoryNodeStore.new()
+	store.put_tree(base_tree) or { panic(err) }
+	store.put_tree(ours_tree) or { panic(err) }
+	store.put_tree(theirs_tree) or { panic(err) }
+	result := auto_merge_by_roots(base_tree.root.cid, ours_tree.root.cid, theirs_tree.root.cid, cfg, mut store) or {
+		panic(err)
+	}
+	assert result.conflicts.len == 0
+	items := result.tree.items() or { panic(err) }
+	mut values := map[string]string{}
+	for item in items {
+		values[item.key.bytestr()] = item.value.bytestr()
+	}
+	assert values['k1'] == 'ours-1'
+	assert values['k2'] == 'theirs-2'
+}
