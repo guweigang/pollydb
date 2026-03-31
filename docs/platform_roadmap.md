@@ -96,6 +96,21 @@ Already present in local, transport-neutral form:
   - missing parent commit
   - merge required
 
+Current transport choice:
+
+- today Polly-Link uses a minimal HTTP + JSON Sidecar surface
+- each sync phase is an explicit endpoint, not a generic RPC framework
+- it is not WebSocket-based yet
+- this keeps the protocol easy to inspect and debug while the sync model stabilizes
+
+Current sync endpoints:
+
+- `POST /v1/sync/offer`
+- `POST /v1/sync/missing`
+- `POST /v1/sync/exchange`
+- `POST /v1/sync/exchange-full`
+- `POST /v1/sync/apply`
+
 #### Polly-Link M2: Collaboration loop
 
 - detect branch divergence during push
@@ -112,6 +127,9 @@ Already present in local, transport-neutral form:
 - RTT-aware policy defaulting
 - manifest depth policy selection on live links
 - stream packets instead of waiting for full exchange materialization
+- evaluate moving from plain HTTP request/response to:
+  - a thinner RPC-style surface on the same messages
+  - or a streaming transport such as WebSocket when packet streaming becomes more important than simple debuggability
 
 ### Exit Criteria
 
@@ -161,6 +179,13 @@ Use the current architecture boundary:
 - use provider-backed repository open/init
 - authenticate repo and branch operations
 - support per-repo namespaces
+- expose minimal control-plane read APIs:
+  - repo list
+  - repo open/create
+  - branch list
+  - repo activity
+  - branch activity
+  - branch log
 
 #### Polly-Hub M2: Hosted collaboration
 

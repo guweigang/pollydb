@@ -5,7 +5,7 @@ import os
 import storage
 
 fn usage() string {
-	return 'Usage:\n  pollylink-sidecar [root_dir] [default_branch] [addr]\n\nDefaults:\n  root_dir       current directory\n  default_branch repository default branch or main\n  addr           127.0.0.1:19191\n'
+	return 'Usage:\n  pollylink-sidecar [storage_root] [default_branch] [addr]\n\nDefaults:\n  storage_root   current directory\n  default_branch repository default branch or main\n  addr           127.0.0.1:19191\n\nNotes:\n  The sidecar can host the root repository at storage_root and additional namespaced repositories under storage_root/<repo_name>.\n'
 }
 
 fn repository_meta_path(root_dir string) string {

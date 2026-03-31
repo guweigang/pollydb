@@ -14,6 +14,13 @@ It focuses on the storage/database surface that already exists today:
 - work with `bool`, `enum`, `json`, and `datetime`
 - use aggregates and aggregate projectors
 
+One transport note up front:
+
+- current remote sync uses a Polly-Link Sidecar over plain HTTP + JSON
+- it is not a generic RPC framework
+- it is not WebSocket-based yet
+- every sync phase is an explicit request/response step, which keeps the protocol easy to debug
+
 This is intentionally CLI-first. `pollydb` already has lower-level V APIs, but the CLI is the easiest way to learn the model end to end.
 
 For end-to-end example workflows, see [tutorial_scenarios.md](/Users/guweigang/Source/pollytree/docs/tutorial_scenarios.md).
@@ -203,6 +210,40 @@ Conceptually:
 - a branch head points to a commit
 - each commit has a main data root
 - commits may also carry virtual roots for aggregate projectors
+
+## 5.1 Polly-Link and Sidecar Sync
+
+Current remote sync goes through a Polly-Link Sidecar.
+Today the transport is simple HTTP + JSON.
+
+Current sync endpoints are:
+
+- `POST /v1/sync/offer`
+- `POST /v1/sync/missing`
+- `POST /v1/sync/exchange`
+- `POST /v1/sync/exchange-full`
+- `POST /v1/sync/apply`
+
+Current control-plane endpoints are:
+
+- `GET /v1/repos`
+- `POST /v1/repos/open`
+- `GET /v1/branches`
+- `GET /v1/repo-activity`
+- `GET /v1/branch-activity`
+- `GET /v1/branch-log`
+
+Examples:
+
+```sh
+v run /Users/guweigang/Source/pollytree/cmd/pollydb -- sidecar-repos http://127.0.0.1:8765
+v run /Users/guweigang/Source/pollytree/cmd/pollydb -- sidecar-open-repo http://127.0.0.1:8765 team-a main
+v run /Users/guweigang/Source/pollytree/cmd/pollydb -- sidecar-repo-activity http://127.0.0.1:8765 team-a 10
+v run /Users/guweigang/Source/pollytree/cmd/pollydb -- sync-push-sidecar http://127.0.0.1:8765 team-a main auto
+v run /Users/guweigang/Source/pollytree/cmd/pollydb -- sync-pull-sidecar http://127.0.0.1:8765 team-a main auto
+```
+
+This transport will likely evolve later, but the current HTTP form is the reference implementation for Polly-Link and Polly-Hub M1.
 
 ## 6. CRUD
 

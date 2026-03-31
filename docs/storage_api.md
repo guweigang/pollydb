@@ -15,6 +15,37 @@ For platform-level milestones, see [platform_roadmap.md](/Users/guweigang/Source
 
 ## Stable Public Types
 
+## Polly-Link Transport
+
+The current Polly-Link transport is a minimal HTTP + JSON Sidecar surface.
+It is intentionally explicit:
+
+- not a generic RPC framework
+- not WebSocket-based
+- one request/response per sync phase
+
+This keeps protocol behavior easy to inspect while the sync model and negotiation policies are still evolving.
+
+Current sync endpoints:
+
+- `POST /v1/sync/offer`
+- `POST /v1/sync/missing`
+- `POST /v1/sync/exchange`
+- `POST /v1/sync/exchange-full`
+- `POST /v1/sync/apply`
+
+Current Sidecar control-plane endpoints:
+
+- `GET /v1/repos`
+- `POST /v1/repos/open`
+- `GET /v1/branches`
+- `GET /v1/repo-activity`
+- `GET /v1/branch-activity`
+- `GET /v1/branch-log`
+
+These endpoints are implemented in the current Sidecar handler and used by `PollyLinkClient`.
+They represent the first service shape for Polly-Link and Polly-Hub, while leaving room for a future RPC or streaming transport if packet streaming and high-RTT behavior become the dominant concern.
+
 ### Schema and Type System
 
 - `ColumnType`
@@ -236,6 +267,10 @@ The recommended storage-layer entrypoints are:
 - `PersistentDatabase.recovery_status(...)`
 - `(mut db PersistentDatabase).status_report()`
 - `PersistentDatabase.inspect(...)`
+- `PollyLinkClient`
+- `PollyLinkSidecarHandler`
+- `push_branch_to_sidecar(...)`
+- `pull_branch_from_sidecar(...)`
 - `(session DatabaseSession).begin_transaction(...)`
 - `(session DatabaseSession).begin_working_set(...)`
 - `(session DatabaseSession).apply_write_set(...)`
@@ -258,6 +293,20 @@ The recommended storage-layer entrypoints are:
 - `(session TransactionSession).get_row(...)`
 - `(mut session TransactionSession).put_row(...)`
 - `(mut session TransactionSession).delete_row(...)`
+
+Current Polly-Link and Sidecar-facing helpers:
+
+- `(client PollyLinkClient).offer(...)`
+- `(client PollyLinkClient).negotiate_missing(...)`
+- `(client PollyLinkClient).fetch_exchange(...)`
+- `(client PollyLinkClient).fetch_full_exchange(...)`
+- `(client PollyLinkClient).apply_exchange(...)`
+- `(client PollyLinkClient).list_repositories()`
+- `(client PollyLinkClient).open_repository(...)`
+- `(client PollyLinkClient).list_branches()`
+- `(client PollyLinkClient).repo_activity(...)`
+- `(client PollyLinkClient).branch_activity(...)`
+- `(client PollyLinkClient).branch_log(...)`
 - `(session TransactionSession).scan_table(...)`
 - `(session TransactionSession).lookup_index(...)`
 - `(session TransactionSession).table_cursor(...)`

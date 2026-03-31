@@ -75,6 +75,10 @@ fn cli_looks_like_url(raw string) bool {
 	return raw.starts_with('http://') || raw.starts_with('https://')
 }
 
+fn cli_sidecar_auth_token() string {
+	return os.getenv('POLLYHUB_TOKEN')
+}
+
 fn cli_open_repository(root_dir string) !storage.Repository {
 	return storage.Repository.open(cli_repository_metadata_path(root_dir))
 }
@@ -405,6 +409,22 @@ fn (cli PollyDbCli) usage() string {
   pollydb recommend-sync-policy [root_dir] [branch] <peer_root_dir> [peer_branch] [simulated_rtt_ms]
   pollydb sync-push-sidecar [root_dir] [branch] <sidecar_url> [target_branch] [policy]
   pollydb sync-pull-sidecar [root_dir] [branch] <sidecar_url> [source_branch] [policy]
+  pollydb sidecar-repos <sidecar_url>
+  pollydb sidecar-repo-summaries <sidecar_url> [limit]
+  pollydb sidecar-global-activity <sidecar_url> [limit]
+  pollydb sidecar-open-repo <sidecar_url> <repo_name> [default_branch]
+  pollydb sidecar-governance-status <sidecar_url>
+  pollydb sidecar-branches <sidecar_url> [repo_name]
+  pollydb sidecar-branch-status <sidecar_url> [repo_name] <branch>
+  pollydb sidecar-init-governance <storage_root> <actor> <token>
+  pollydb sidecar-grant-repo <storage_root> <repo_name> <actor> <role>
+  pollydb sidecar-set-repo-policy <storage_root> <repo_name> <allow_push_to_default> <require_auto_merge> [default_sync_policy]
+  pollydb sidecar-set-branch-policy <storage_root> <repo_name> <branch_name> <allow_push> <require_auto_merge> [default_sync_policy]
+  pollydb sidecar-set-rate-limit <storage_root> <requests_per_minute>
+  pollydb sidecar-audit-log <storage_root> [limit]
+  pollydb sidecar-repo-activity <sidecar_url> [repo_name] [limit]
+  pollydb sidecar-branch-activity <sidecar_url> [repo_name] <branch>
+  pollydb sidecar-branch-log <sidecar_url> [repo_name] <branch> [limit]
   pollydb status [root_dir] [branch]
   pollydb inspect [root_dir] [branch]
   pollydb branches [root_dir] [branch]
@@ -453,6 +473,22 @@ Repository:
   recommend-sync-policy  Estimate the best Polly-Sync negotiation policy for a peer repository.
   sync-push-sidecar  Push one branch into a Polly-Link Sidecar-backed repository.
   sync-pull-sidecar  Pull one branch from a Polly-Link Sidecar-backed repository.
+  sidecar-repos  List repositories currently hosted by one Polly-Link Sidecar.
+  sidecar-repo-summaries  Show recent activity summaries for all repositories on one Polly-Link Sidecar.
+  sidecar-global-activity  Show recent branch-head activity across all repositories on one Polly-Link Sidecar.
+  sidecar-open-repo  Open or initialize one repository namespace on a Polly-Link Sidecar.
+  sidecar-governance-status  Show auth, rate-limit skeleton, and recent audit activity for one Polly-Link Sidecar.
+  sidecar-branches  List branches for one Sidecar repository namespace with merge/projector status.
+  sidecar-branch-status  Show one branch status summary from a Sidecar repository namespace.
+  sidecar-init-governance  Initialize local Polly-Hub governance with one global admin token.
+  sidecar-grant-repo  Grant one actor reader|writer|admin access to one repo namespace.
+  sidecar-set-repo-policy  Set one repo policy for default-branch push, auto-merge, and default sync negotiation.
+  sidecar-set-branch-policy  Set one branch policy override for push, merge requirement, and default sync negotiation.
+  sidecar-set-rate-limit  Set one Sidecar-wide request-per-minute limit skeleton.
+  sidecar-audit-log  Show recent local Polly-Hub audit entries.
+  sidecar-repo-activity  Show recent branch head activity for one Sidecar repository namespace.
+  sidecar-branch-activity  Show one branch head summary from a Sidecar repository namespace.
+  sidecar-branch-log  Show recent commits for one branch on a Sidecar repository namespace.
   status   Open a pollydb repository and print the current status report.
   inspect  Inspect a pollydb repository directory without keeping it open.
 
@@ -551,6 +587,9 @@ Sync negotiation policy:
 
 Aggregate projection refresh policy:
   none | stale_one | stale_up_to | stale_all
+
+Environment:
+  POLLYHUB_TOKEN  Bearer token automatically used for sidecar-* and sync-*-sidecar commands.
 '
 }
 
@@ -583,6 +622,54 @@ fn (mut cli PollyDbCli) run() ! {
 	}
 	if command == 'sync-pull-sidecar' {
 		return cli.run_sync_pull_sidecar()
+	}
+	if command == 'sidecar-repos' {
+		return cli.run_sidecar_repos()
+	}
+	if command == 'sidecar-repo-summaries' {
+		return cli.run_sidecar_repo_summaries()
+	}
+	if command == 'sidecar-global-activity' {
+		return cli.run_sidecar_global_activity()
+	}
+	if command == 'sidecar-open-repo' {
+		return cli.run_sidecar_open_repo()
+	}
+	if command == 'sidecar-governance-status' {
+		return cli.run_sidecar_governance_status()
+	}
+	if command == 'sidecar-branches' {
+		return cli.run_sidecar_branches()
+	}
+	if command == 'sidecar-branch-status' {
+		return cli.run_sidecar_branch_status()
+	}
+	if command == 'sidecar-init-governance' {
+		return cli.run_sidecar_init_governance()
+	}
+	if command == 'sidecar-grant-repo' {
+		return cli.run_sidecar_grant_repo()
+	}
+	if command == 'sidecar-set-repo-policy' {
+		return cli.run_sidecar_set_repo_policy()
+	}
+	if command == 'sidecar-set-branch-policy' {
+		return cli.run_sidecar_set_branch_policy()
+	}
+	if command == 'sidecar-set-rate-limit' {
+		return cli.run_sidecar_set_rate_limit()
+	}
+	if command == 'sidecar-audit-log' {
+		return cli.run_sidecar_audit_log()
+	}
+	if command == 'sidecar-repo-activity' {
+		return cli.run_sidecar_repo_activity()
+	}
+	if command == 'sidecar-branch-activity' {
+		return cli.run_sidecar_branch_activity()
+	}
+	if command == 'sidecar-branch-log' {
+		return cli.run_sidecar_branch_log()
 	}
 	if command == 'status' {
 		return cli.run_status()
@@ -831,6 +918,13 @@ fn sync_policy_label(policy storage.SyncNegotiationPolicy) string {
 	}
 }
 
+fn resolve_sidecar_default_sync_policy(client storage.PollyLinkClient) storage.SyncNegotiationPolicy {
+	info := client.repository_info() or {
+		return storage.SyncNegotiationPolicy.auto
+	}
+	return parse_sync_negotiation_policy(info.default_sync_policy) or { storage.SyncNegotiationPolicy.auto }
+}
+
 fn cli_render_sync_result(title string, direction string, source_root string, source_branch string, peer_root string, peer_branch string, policy string, packet_count int, packet_bytes int, branch storage.Branch, result_label string) string {
 	return cli_render_field_card(title, [
 		CliField{'direction', direction}
@@ -858,6 +952,262 @@ fn cli_render_sync_policy_recommendation(source_root string, source_branch strin
 		CliField{'manifest1_local_ms', manifest1_local_ms.str()}
 		CliField{'manifest2_local_ms', manifest2_local_ms.str()}
 	])
+}
+
+fn cli_render_sidecar_repo_info(info storage.SidecarRepositoryInfo) string {
+	return cli_render_field_card('Sidecar Repository', [
+		CliField{'repo', info.repo_name}
+		CliField{'default_branch', info.default_branch}
+		CliField{'auth', if info.auth_enabled { cli_info('bearer') } else { cli_dim('disabled') }}
+		CliField{'branches', info.branch_count.str()}
+		CliField{'latest_branch', if info.latest_branch.len > 0 { info.latest_branch } else { '-' }}
+		CliField{'latest_commit', if info.latest_commit_cid.len > 0 { info.latest_commit_cid } else { '-' }}
+		CliField{'latest_timestamp', if info.latest_timestamp > 0 { info.latest_timestamp.str() } else { '-' }}
+		CliField{'allow_push_to_default', if info.allow_push_to_default { cli_success('true') } else { cli_warn('false') }}
+		CliField{'require_auto_merge', if info.require_auto_merge { cli_warn('true') } else { cli_dim('false') }}
+		CliField{'default_sync_policy', info.default_sync_policy}
+		CliField{'protection', info.protection_summary}
+	])
+}
+
+fn cli_render_sidecar_repo_summaries(infos []storage.SidecarRepositoryInfo) string {
+	if infos.len == 0 {
+		return cli_empty('no repositories', 'open one with `pollydb sidecar-open-repo`')
+	}
+	mut rows := [][]string{cap: infos.len}
+	for info in infos {
+		rows << [
+			info.repo_name,
+			info.default_branch,
+			if info.auth_enabled { 'bearer' } else { 'off' },
+			info.branch_count.str(),
+			if info.latest_branch.len > 0 { info.latest_branch } else { '-' },
+			if info.allow_push_to_default { 'push' } else { 'protected' },
+			if info.require_auto_merge { 'merge' } else { '-' },
+			info.default_sync_policy,
+			info.protection_summary,
+			if info.latest_commit_cid.len > 0 { info.latest_commit_cid } else { '-' },
+			if info.latest_timestamp > 0 { info.latest_timestamp.str() } else { '-' },
+		]
+	}
+	mut lines := []string{}
+	lines << cli_title('Sidecar Repository Summaries')
+	lines << cli_render_table(['repo', 'default_branch', 'auth', 'branches', 'latest_branch', 'push_default', 'auto_merge', 'sync_policy', 'protection', 'latest_commit', 'latest_timestamp'], rows)
+	return lines.join('\n')
+}
+
+fn cli_render_sidecar_branch_status(repo_name string, status storage.SidecarBranchStatus) string {
+	return cli_render_field_card('Sidecar Branch Status', [
+		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }}
+		CliField{'branch', status.branch.name}
+		CliField{'head_commit', status.branch.commit_cid}
+		CliField{'root', status.root_cid}
+		CliField{'merge', status.merge_relation}
+		CliField{'policy_scope', status.policy_scope}
+		CliField{'allow_push', if status.allow_push { cli_success('true') } else { cli_warn('false') }}
+		CliField{'require_auto_merge', if status.require_auto_merge { cli_warn('true') } else { cli_dim('false') }}
+		CliField{'default_sync_policy', status.default_sync_policy}
+		CliField{'protection', status.protection_summary}
+		CliField{'projectors', '${status.projector_fresh} fresh / ${status.projector_stale} stale'}
+		CliField{'stale_projectors', if status.stale_projectors.len > 0 { status.stale_projectors.join(',') } else { '-' }}
+		CliField{'recommended_policy', status.recommended_projection_refresh_policy}
+		CliField{'author', if status.author.len > 0 { status.author } else { '-' }}
+		CliField{'message', if status.message.len > 0 { status.message } else { '-' }}
+		CliField{'timestamp', status.timestamp.str()}
+	])
+}
+
+fn cli_render_sidecar_branch_activity(repo_name string, activity storage.SidecarBranchActivity) string {
+	return cli_render_field_card('Sidecar Branch Activity', [
+		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }}
+		CliField{'branch', activity.branch.name}
+		CliField{'head_commit', activity.branch.commit_cid}
+		CliField{'root', activity.root_cid}
+		CliField{'parents', activity.parent_count.str()}
+		CliField{'author', activity.author}
+		CliField{'message', activity.message}
+		CliField{'timestamp', activity.timestamp.str()}
+	])
+}
+
+fn cli_render_sidecar_branch_log(repo_name string, branch_name string, entries []storage.SidecarBranchLogEntry) string {
+	mut lines := []string{}
+	lines << cli_render_field_card('Sidecar Branch Log', [
+		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }}
+		CliField{'branch', branch_name}
+		CliField{'commits', entries.len.str()}
+	])
+	if entries.len == 0 {
+		lines << ''
+		lines << cli_empty('no commits', 'push or commit something first')
+		return lines.join('\n')
+	}
+	mut rows := [][]string{cap: entries.len}
+	for entry in entries {
+		rows << [
+			entry.cid,
+			entry.root_cid,
+			entry.parent_count.str(),
+			if entry.author.len > 0 { entry.author } else { '-' },
+			if entry.message.len > 0 { entry.message } else { '-' },
+			entry.timestamp.str(),
+		]
+	}
+	lines << ''
+	lines << cli_render_table(['commit', 'root', 'parents', 'author', 'message', 'timestamp'], rows)
+	return lines.join('\n')
+}
+
+fn cli_render_sidecar_repo_activity(repo_name string, entries []storage.SidecarRepoActivityEntry) string {
+	mut lines := []string{}
+	lines << cli_render_field_card('Sidecar Repository Activity', [
+		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }}
+		CliField{'branches', entries.len.str()}
+	])
+	if entries.len == 0 {
+		lines << ''
+		lines << cli_empty('no activity', 'push or commit something first')
+		return lines.join('\n')
+	}
+	mut rows := [][]string{cap: entries.len}
+	for entry in entries {
+		rows << [
+			entry.branch.name,
+			entry.branch.commit_cid,
+			entry.root_cid,
+			entry.parent_count.str(),
+			if entry.author.len > 0 { entry.author } else { '-' },
+			if entry.message.len > 0 { entry.message } else { '-' },
+			entry.timestamp.str(),
+		]
+	}
+	lines << ''
+	lines << cli_render_table(['branch', 'head_commit', 'root', 'parents', 'author', 'message', 'timestamp'], rows)
+	return lines.join('\n')
+}
+
+fn cli_render_sidecar_global_activity(entries []storage.SidecarRepoActivityEntry) string {
+	if entries.len == 0 {
+		return cli_empty('no activity', 'push or commit something first')
+	}
+	mut rows := [][]string{cap: entries.len}
+	for entry in entries {
+		rows << [
+			if entry.repo_name.len == 0 { '.' } else { entry.repo_name },
+			entry.branch.name,
+			entry.branch.commit_cid,
+			entry.root_cid,
+			entry.parent_count.str(),
+			if entry.author.len > 0 { entry.author } else { '-' },
+			if entry.message.len > 0 { entry.message } else { '-' },
+			entry.timestamp.str(),
+		]
+	}
+	mut lines := []string{}
+	lines << cli_title('Sidecar Global Activity')
+	lines << cli_render_table(['repo', 'branch', 'head_commit', 'root', 'parents', 'author', 'message', 'timestamp'], rows)
+	return lines.join('\n')
+}
+
+fn cli_render_sidecar_audit(entries []storage.PollyHubAuditEntry) string {
+	if entries.len == 0 {
+		return cli_empty('no audit entries', 'perform one sidecar action first')
+	}
+	mut rows := [][]string{cap: entries.len}
+	for entry in entries {
+		rows << [
+			entry.timestamp.str(),
+			if entry.actor.len > 0 { entry.actor } else { '-' },
+			entry.action,
+			if entry.repo_name.len > 0 { entry.repo_name } else { '.' },
+			if entry.branch_name.len > 0 { entry.branch_name } else { '-' },
+			if entry.allowed { 'allow' } else { 'deny' },
+			if entry.detail.len > 0 { entry.detail } else { '-' },
+		]
+	}
+	mut lines := []string{}
+	lines << cli_title('Sidecar Audit Log')
+	lines << cli_render_table(['timestamp', 'actor', 'action', 'repo', 'branch', 'result', 'detail'], rows)
+	return lines.join('\n')
+}
+
+fn cli_render_sidecar_branch_statuses(repo_name string, statuses []storage.SidecarBranchStatus) string {
+	if statuses.len == 0 {
+		return cli_empty('no branches', 'push or create one first')
+	}
+	mut rows := [][]string{cap: statuses.len}
+	for status in statuses {
+		rows << [
+			if repo_name.len == 0 { '.' } else { repo_name },
+			status.branch.name,
+			status.branch.commit_cid,
+			status.merge_relation,
+			status.policy_scope,
+			if status.allow_push { 'push' } else { 'blocked' },
+			if status.require_auto_merge { 'merge' } else { '-' },
+			status.default_sync_policy,
+			status.protection_summary,
+			'${status.projector_fresh}/${status.projector_stale}',
+			if status.stale_projectors.len > 0 { status.stale_projectors.join(',') } else { '-' },
+			status.timestamp.str(),
+		]
+	}
+	mut lines := []string{}
+	lines << cli_title('Sidecar Branch Statuses')
+	lines << cli_render_table(['repo', 'branch', 'head_commit', 'merge', 'scope', 'push', 'auto_merge', 'sync_policy', 'protection', 'projectors', 'stale_projectors', 'timestamp'], rows)
+	return lines.join('\n')
+}
+
+fn cli_render_sidecar_governance_status(status storage.SidecarGovernanceStatus) string {
+	mut lines := []string{}
+	lines << cli_render_field_card('Sidecar Governance', [
+		CliField{'auth', if status.auth_enabled { cli_info('bearer') } else { cli_dim('disabled') }}
+		CliField{'tokens', status.token_count.str()}
+		CliField{'repos', status.repo_count.str()}
+		CliField{'requests_per_minute', if status.requests_per_minute > 0 { status.requests_per_minute.str() } else { cli_dim('unlimited') }}
+		CliField{'recent_requests_1m', status.recent_requests_1m.str()}
+		CliField{'recent_denies_1m', status.recent_denies_1m.str()}
+	])
+	if status.recent_categories.len > 0 {
+		mut rows := [][]string{}
+		for row in status.recent_categories {
+			rows << [
+				row.category,
+				row.recent_requests_1m.str(),
+				row.recent_denies_1m.str(),
+			]
+		}
+		lines << ''
+		lines << cli_title('Recent Groups')
+		lines << cli_render_table(['group', 'requests_1m', 'denies_1m'], rows)
+	}
+	if status.recent_actors.len > 0 {
+		mut rows := [][]string{}
+		for row in status.recent_actors {
+			rows << [
+				row.actor,
+				row.recent_requests_1m.str(),
+				row.recent_denies_1m.str(),
+			]
+		}
+		lines << ''
+		lines << cli_title('Recent Actors')
+		lines << cli_render_table(['actor', 'requests_1m', 'denies_1m'], rows)
+	}
+	if status.recent_actions.len > 0 {
+		mut rows := [][]string{}
+		for row in status.recent_actions {
+			rows << [
+				row.action,
+				row.recent_requests_1m.str(),
+				row.recent_denies_1m.str(),
+			]
+		}
+		lines << ''
+		lines << cli_title('Recent Actions')
+		lines << cli_render_table(['action', 'requests_1m', 'denies_1m'], rows)
+	}
+	return lines.join('\n')
 }
 
 fn sync_packet_bytes(packets []storage.DataPacket) int {
@@ -1655,19 +2005,30 @@ fn (mut cli PollyDbCli) run_recommend_sync_policy() ! {
 fn (mut cli PollyDbCli) run_sync_push_sidecar() ! {
 	ctx := cli.resolve_db_context(1, true)!
 	if cli.args.len <= ctx.next_idx || !cli_looks_like_url(cli.args[ctx.next_idx]) {
-		return error('sync-push-sidecar requires [root_dir] [branch] <sidecar_url> [target_branch] [policy]')
+		return error('sync-push-sidecar requires [root_dir] [branch] <sidecar_url> [repo_name] [target_branch] [policy]')
 	}
 	sidecar_url := cli.args[ctx.next_idx]
+	mut repo_name := ''
 	mut target_branch := ctx.branch
 	mut next_idx := ctx.next_idx + 1
 	if cli.args.len > next_idx && !looks_like_sync_negotiation_policy(cli.args[next_idx]) {
-		target_branch = cli.args[next_idx]
-		next_idx++
+		if cli.args.len > next_idx + 1 && !looks_like_sync_negotiation_policy(cli.args[next_idx + 1]) {
+			repo_name = cli.args[next_idx]
+			target_branch = cli.args[next_idx + 1]
+			next_idx += 2
+		} else {
+			target_branch = cli.args[next_idx]
+			next_idx++
+		}
 	}
 	policy := if cli.args.len > next_idx {
 		parse_sync_negotiation_policy(cli.args[next_idx])!
 	} else {
-		storage.SyncNegotiationPolicy.auto
+		resolve_sidecar_default_sync_policy(storage.PollyLinkClient{
+			base_url: sidecar_url
+			repo_name: repo_name
+			auth_token: cli_sidecar_auth_token()
+		})
 	}
 	mut repo := open_cli_persistent_repo(ctx.root_dir)!
 	defer {
@@ -1675,28 +2036,42 @@ fn (mut cli PollyDbCli) run_sync_push_sidecar() ! {
 	}
 	client := storage.PollyLinkClient{
 		base_url: sidecar_url
+		repo_name: repo_name
+		auth_token: cli_sidecar_auth_token()
 	}
 	result := storage.push_branch_to_sidecar(mut repo, ctx.branch, client, target_branch, policy)!
 	result_label := if result.auto_merged { cli_success('auto_merged') } else { 'applied' }
-	println(cli_render_sync_result('Sync Push (Sidecar)', 'push', ctx.root_dir, ctx.branch, sidecar_url, target_branch, sync_policy_label(policy), result.exchange.packets.len, sync_packet_bytes(result.exchange.packets), result.branch, result_label))
+	sidecar_target := if repo_name.len == 0 { sidecar_url } else { '${sidecar_url} [${repo_name}]' }
+	println(cli_render_sync_result('Sync Push (Sidecar)', 'push', ctx.root_dir, ctx.branch, sidecar_target, target_branch, sync_policy_label(policy), result.exchange.packets.len, sync_packet_bytes(result.exchange.packets), result.branch, result_label))
 }
 
 fn (mut cli PollyDbCli) run_sync_pull_sidecar() ! {
 	ctx := cli.resolve_db_context(1, true)!
 	if cli.args.len <= ctx.next_idx || !cli_looks_like_url(cli.args[ctx.next_idx]) {
-		return error('sync-pull-sidecar requires [root_dir] [branch] <sidecar_url> [source_branch] [policy]')
+		return error('sync-pull-sidecar requires [root_dir] [branch] <sidecar_url> [repo_name] [source_branch] [policy]')
 	}
 	sidecar_url := cli.args[ctx.next_idx]
+	mut repo_name := ''
 	mut source_branch := ctx.branch
 	mut next_idx := ctx.next_idx + 1
 	if cli.args.len > next_idx && !looks_like_sync_negotiation_policy(cli.args[next_idx]) {
-		source_branch = cli.args[next_idx]
-		next_idx++
+		if cli.args.len > next_idx + 1 && !looks_like_sync_negotiation_policy(cli.args[next_idx + 1]) {
+			repo_name = cli.args[next_idx]
+			source_branch = cli.args[next_idx + 1]
+			next_idx += 2
+		} else {
+			source_branch = cli.args[next_idx]
+			next_idx++
+		}
 	}
 	policy := if cli.args.len > next_idx {
 		parse_sync_negotiation_policy(cli.args[next_idx])!
 	} else {
-		storage.SyncNegotiationPolicy.auto
+		resolve_sidecar_default_sync_policy(storage.PollyLinkClient{
+			base_url: sidecar_url
+			repo_name: repo_name
+			auth_token: cli_sidecar_auth_token()
+		})
 	}
 	mut repo := open_cli_persistent_repo(ctx.root_dir)!
 	defer {
@@ -1704,9 +2079,325 @@ fn (mut cli PollyDbCli) run_sync_pull_sidecar() ! {
 	}
 	client := storage.PollyLinkClient{
 		base_url: sidecar_url
+		repo_name: repo_name
+		auth_token: cli_sidecar_auth_token()
 	}
 	result := storage.pull_branch_from_sidecar(mut repo, ctx.branch, client, source_branch, policy)!
-	println(cli_render_sync_result('Sync Pull (Sidecar)', 'pull', sidecar_url, source_branch, ctx.root_dir, ctx.branch, sync_policy_label(policy), result.exchange.packets.len, sync_packet_bytes(result.exchange.packets), result.branch, 'applied'))
+	sidecar_source := if repo_name.len == 0 { sidecar_url } else { '${sidecar_url} [${repo_name}]' }
+	println(cli_render_sync_result('Sync Pull (Sidecar)', 'pull', sidecar_source, source_branch, ctx.root_dir, ctx.branch, sync_policy_label(policy), result.exchange.packets.len, sync_packet_bytes(result.exchange.packets), result.branch, 'applied'))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_repos() ! {
+	if cli.args.len < 2 || !cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-repos requires <sidecar_url>')
+	}
+	client := storage.PollyLinkClient{
+		base_url: cli.args[1]
+		auth_token: cli_sidecar_auth_token()
+	}
+	repos := client.list_repositories()!
+	if repos.len == 0 {
+		println(cli_empty('no repositories', 'open one with `pollydb sidecar-open-repo`'))
+		return
+	}
+	mut rows := [][]string{cap: repos.len}
+	for repo_name in repos {
+		rows << [repo_name]
+	}
+	println(cli_title('Sidecar Repositories'))
+	println(cli_render_table(['repo'], rows))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_repo_summaries() ! {
+	if cli.args.len < 2 || !cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-repo-summaries requires <sidecar_url> [limit]')
+	}
+	sidecar_url := cli.args[1]
+	limit := if cli.args.len > 2 && cli.args[2].int() > 0 { cli.args[2].int() } else { 20 }
+	client := storage.PollyLinkClient{
+		base_url: sidecar_url
+		auth_token: cli_sidecar_auth_token()
+	}
+	infos := client.list_repository_summaries(limit)!
+	println(cli_render_sidecar_repo_summaries(infos))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_global_activity() ! {
+	if cli.args.len < 2 || !cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-global-activity requires <sidecar_url> [limit]')
+	}
+	sidecar_url := cli.args[1]
+	limit := if cli.args.len > 2 && cli.args[2].int() > 0 { cli.args[2].int() } else { 20 }
+	client := storage.PollyLinkClient{
+		base_url: sidecar_url
+		auth_token: cli_sidecar_auth_token()
+	}
+	entries := client.global_activity(limit)!
+	println(cli_render_sidecar_global_activity(entries))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_open_repo() ! {
+	if cli.args.len < 3 || !cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-open-repo requires <sidecar_url> <repo_name> [default_branch]')
+	}
+	sidecar_url := cli.args[1]
+	repo_name := cli.args[2]
+	default_branch := if cli.args.len > 3 { cli.args[3] } else { 'main' }
+	client := storage.PollyLinkClient{
+		base_url: sidecar_url
+		repo_name: repo_name
+		auth_token: cli_sidecar_auth_token()
+	}
+	info := client.open_repository(default_branch)!
+	println(cli_render_sidecar_repo_info(info))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_governance_status() ! {
+	if cli.args.len < 2 || !cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-governance-status requires <sidecar_url>')
+	}
+	client := storage.PollyLinkClient{
+		base_url: cli.args[1]
+		auth_token: cli_sidecar_auth_token()
+	}
+	status := client.governance_status()!
+	println(cli_render_sidecar_governance_status(status))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_branches() ! {
+	if cli.args.len < 2 || !cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-branches requires <sidecar_url> [repo_name]')
+	}
+	sidecar_url := cli.args[1]
+	repo_name := if cli.args.len > 2 { cli.args[2] } else { '' }
+	client := storage.PollyLinkClient{
+		base_url: sidecar_url
+		repo_name: repo_name
+		auth_token: cli_sidecar_auth_token()
+	}
+	statuses := client.branch_statuses()!
+	println(cli_render_sidecar_branch_statuses(repo_name, statuses))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_branch_status() ! {
+	if cli.args.len < 3 || !cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-branch-status requires <sidecar_url> [repo_name] <branch>')
+	}
+	sidecar_url := cli.args[1]
+	mut repo_name := ''
+	mut branch_name := ''
+	if cli.args.len == 3 {
+		branch_name = cli.args[2]
+	} else {
+		repo_name = cli.args[2]
+		branch_name = cli.args[3]
+	}
+	client := storage.PollyLinkClient{
+		base_url: sidecar_url
+		repo_name: repo_name
+		auth_token: cli_sidecar_auth_token()
+	}
+	status := client.branch_status(branch_name)!
+	println(cli_render_sidecar_branch_status(repo_name, status))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_repo_activity() ! {
+	if cli.args.len < 2 || !cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-repo-activity requires <sidecar_url> [repo_name] [limit]')
+	}
+	sidecar_url := cli.args[1]
+	mut repo_name := ''
+	mut limit := 10
+	if cli.args.len > 2 {
+		if cli.args[2].int() > 0 {
+			limit = cli.args[2].int()
+		} else {
+			repo_name = cli.args[2]
+		}
+	}
+	if cli.args.len > 3 {
+		limit = cli.args[3].int()
+		if limit <= 0 {
+			limit = 10
+		}
+	}
+	client := storage.PollyLinkClient{
+		base_url: sidecar_url
+		repo_name: repo_name
+		auth_token: cli_sidecar_auth_token()
+	}
+	entries := client.repo_activity(limit)!
+	println(cli_render_sidecar_repo_activity(repo_name, entries))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_branch_activity() ! {
+	if cli.args.len < 3 || !cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-branch-activity requires <sidecar_url> [repo_name] <branch>')
+	}
+	sidecar_url := cli.args[1]
+	mut repo_name := ''
+	mut branch_name := ''
+	if cli.args.len == 3 {
+		branch_name = cli.args[2]
+	} else {
+		repo_name = cli.args[2]
+		branch_name = cli.args[3]
+	}
+	client := storage.PollyLinkClient{
+		base_url: sidecar_url
+		repo_name: repo_name
+		auth_token: cli_sidecar_auth_token()
+	}
+	activity := client.branch_activity(branch_name)!
+	println(cli_render_sidecar_branch_activity(repo_name, activity))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_branch_log() ! {
+	if cli.args.len < 3 || !cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-branch-log requires <sidecar_url> [repo_name] <branch> [limit]')
+	}
+	sidecar_url := cli.args[1]
+	mut repo_name := ''
+	mut branch_name := ''
+	mut limit := 10
+	if cli.args.len == 3 {
+		branch_name = cli.args[2]
+	} else if cli.args.len == 4 {
+		if cli.args[3].int() > 0 {
+			branch_name = cli.args[2]
+			limit = cli.args[3].int()
+		} else {
+			repo_name = cli.args[2]
+			branch_name = cli.args[3]
+		}
+	} else {
+		repo_name = cli.args[2]
+		branch_name = cli.args[3]
+		limit = cli.args[4].int()
+		if limit <= 0 {
+			limit = 10
+		}
+	}
+	client := storage.PollyLinkClient{
+		base_url: sidecar_url
+		repo_name: repo_name
+		auth_token: cli_sidecar_auth_token()
+	}
+	entries := client.branch_log(branch_name, limit)!
+	println(cli_render_sidecar_branch_log(repo_name, branch_name, entries))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_init_governance() ! {
+	if cli.args.len < 4 || cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-init-governance requires <storage_root> <actor> <token>')
+	}
+	root_dir := os.real_path(cli.args[1])
+	actor := cli.args[2]
+	token := cli.args[3]
+	storage.init_pollyhub_governance(root_dir, actor, token)!
+	println(cli_render_field_card('Sidecar Governance', [
+		CliField{'root', root_dir}
+		CliField{'actor', actor}
+		CliField{'status', cli_success('initialized')}
+	]))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_grant_repo() ! {
+	if cli.args.len < 5 || cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-grant-repo requires <storage_root> <repo_name> <actor> <role>')
+	}
+	root_dir := os.real_path(cli.args[1])
+	repo_name := cli.args[2]
+	actor := cli.args[3]
+	role := match cli.args[4] {
+		'reader' { storage.PollyHubRepoRole.reader }
+		'writer' { storage.PollyHubRepoRole.writer }
+		'admin' { storage.PollyHubRepoRole.admin }
+		else { return error('invalid repo role: ${cli.args[4]}') }
+	}
+	storage.grant_pollyhub_repo_access(root_dir, repo_name, actor, role)!
+	println(cli_render_field_card('Sidecar Repo Grant', [
+		CliField{'root', root_dir}
+		CliField{'repo', repo_name}
+		CliField{'actor', actor}
+		CliField{'role', cli.args[4]}
+		CliField{'status', cli_success('granted')}
+	]))
+}
+
+fn cli_parse_bool(raw string) !bool {
+	value := raw.trim_space().to_lower()
+	return match value {
+		'true', '1', 'yes', 'y', 'on' { true }
+		'false', '0', 'no', 'n', 'off' { false }
+		else { return error('invalid boolean: ${raw}') }
+	}
+}
+
+fn (mut cli PollyDbCli) run_sidecar_set_repo_policy() ! {
+	if cli.args.len < 5 || cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-set-repo-policy requires <storage_root> <repo_name> <allow_push_to_default> <require_auto_merge> [default_sync_policy]')
+	}
+	root_dir := os.real_path(cli.args[1])
+	repo_name := cli.args[2]
+	allow_push_to_default := cli_parse_bool(cli.args[3])!
+	require_auto_merge := cli_parse_bool(cli.args[4])!
+	default_sync_policy := if cli.args.len > 5 && cli.args[5].len > 0 { cli.args[5] } else { 'auto' }
+	storage.set_pollyhub_repo_policy(root_dir, repo_name, allow_push_to_default, require_auto_merge, default_sync_policy)!
+	println(cli_render_field_card('Sidecar Repo Policy', [
+		CliField{'root', root_dir}
+		CliField{'repo', repo_name}
+		CliField{'allow_push_to_default', if allow_push_to_default { cli_success('true') } else { cli_warn('false') }}
+		CliField{'require_auto_merge', if require_auto_merge { cli_warn('true') } else { cli_dim('false') }}
+		CliField{'default_sync_policy', default_sync_policy}
+		CliField{'status', cli_success('updated')}
+	]))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_set_branch_policy() ! {
+	if cli.args.len < 6 || cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-set-branch-policy requires <storage_root> <repo_name> <branch_name> <allow_push> <require_auto_merge> [default_sync_policy]')
+	}
+	root_dir := os.real_path(cli.args[1])
+	repo_name := cli.args[2]
+	branch_name := cli.args[3]
+	allow_push := cli_parse_bool(cli.args[4])!
+	require_auto_merge := cli_parse_bool(cli.args[5])!
+	default_sync_policy := if cli.args.len > 6 && cli.args[6].len > 0 { cli.args[6] } else { 'auto' }
+	storage.set_pollyhub_branch_policy(root_dir, repo_name, branch_name, allow_push, require_auto_merge, default_sync_policy)!
+	println(cli_render_field_card('Sidecar Branch Policy', [
+		CliField{'root', root_dir}
+		CliField{'repo', repo_name}
+		CliField{'branch', branch_name}
+		CliField{'allow_push', if allow_push { cli_success('true') } else { cli_warn('false') }}
+		CliField{'require_auto_merge', if require_auto_merge { cli_warn('true') } else { cli_dim('false') }}
+		CliField{'default_sync_policy', default_sync_policy}
+		CliField{'status', cli_success('updated')}
+	]))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_set_rate_limit() ! {
+	if cli.args.len < 3 || cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-set-rate-limit requires <storage_root> <requests_per_minute>')
+	}
+	root_dir := os.real_path(cli.args[1])
+	requests_per_minute := cli.args[2].int()
+	storage.set_pollyhub_rate_limit_policy(root_dir, requests_per_minute)!
+	println(cli_render_field_card('Sidecar Rate Limit', [
+		CliField{'root', root_dir}
+		CliField{'requests_per_minute', if requests_per_minute > 0 { requests_per_minute.str() } else { cli_dim('unlimited') }}
+		CliField{'status', cli_success('updated')}
+	]))
+}
+
+fn (mut cli PollyDbCli) run_sidecar_audit_log() ! {
+	if cli.args.len < 2 || cli_looks_like_url(cli.args[1]) {
+		return error('sidecar-audit-log requires <storage_root> [limit]')
+	}
+	root_dir := os.real_path(cli.args[1])
+	limit := if cli.args.len > 2 && cli.args[2].int() > 0 { cli.args[2].int() } else { 20 }
+	entries := storage.read_pollyhub_audit_entries(root_dir, limit)!
+	println(cli_render_sidecar_audit(entries))
 }
 
 fn (mut cli PollyDbCli) run_branches() ! {

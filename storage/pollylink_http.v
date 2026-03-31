@@ -12,28 +12,234 @@ pub:
 }
 
 struct SyncOfferRequestDto {
+	repo_name       string
 	branch_name      string
 	prediction_depth int
 	target_branch    string
 }
 
 struct SyncNegotiateRequestDto {
+	repo_name     string
 	offer        SyncOfferDto
 	manifest     SyncManifestDto
 	use_manifest bool
 }
 
 struct SyncExchangeRequestDto {
+	repo_name string
 	offer   SyncOfferDto
 	missing SyncMissingSetDto
 }
 
 struct SyncFullExchangeRequestDto {
+	repo_name string
 	offer SyncOfferDto
 }
 
 struct SyncApplyRequestDto {
+	repo_name string
 	exchange SyncExchangeDto
+}
+
+struct SidecarRepoOpenRequestDto {
+	repo_name       string
+	default_branch string
+}
+
+struct SidecarBranchListDto {
+	branches []BranchDto
+}
+
+struct SidecarBranchStatusListDto {
+	branches []SidecarBranchStatusDto
+}
+
+struct SidecarRepoListDto {
+	repos []string
+}
+
+struct SidecarRepoSummaryListDto {
+	repos []SidecarRepositoryInfoDto
+}
+
+struct SidecarRepoInfoQueryDto {
+	repo SidecarRepositoryInfoDto
+}
+
+struct SidecarGovernanceStatusDto {
+	auth_enabled        bool
+	token_count         int
+	repo_count          int
+	requests_per_minute int
+	recent_requests_1m  int
+	recent_denies_1m    int
+	recent_categories   []SidecarGovernanceCategoryDto
+	recent_actors       []SidecarGovernanceActorDto
+	recent_actions      []SidecarGovernanceActionDto
+}
+
+struct SidecarGovernanceCategoryDto {
+	category           string
+	recent_requests_1m int
+	recent_denies_1m   int
+}
+
+struct SidecarGovernanceActorDto {
+	actor              string
+	recent_requests_1m int
+	recent_denies_1m   int
+}
+
+struct SidecarGovernanceActionDto {
+	action             string
+	recent_requests_1m int
+	recent_denies_1m   int
+}
+
+struct SidecarRepositoryInfoDto {
+	repo_name       string
+	default_branch string
+	branch_count    int
+	latest_branch   string
+	latest_commit_cid string
+	latest_timestamp i64
+	auth_enabled bool
+	allow_push_to_default bool
+	require_auto_merge bool
+	default_sync_policy string
+	protection_summary string
+}
+
+pub struct SidecarRepositoryInfo {
+pub:
+	repo_name       string
+	default_branch string
+	branch_count    int
+	latest_branch   string
+	latest_commit_cid string
+	latest_timestamp i64
+	auth_enabled bool
+	allow_push_to_default bool
+	require_auto_merge bool
+	default_sync_policy string
+	protection_summary string
+}
+
+struct SidecarBranchPolicyInfo {
+	policy_scope string
+	allow_push bool
+	require_auto_merge bool
+	default_sync_policy string
+}
+
+struct SidecarBranchActivityDto {
+	branch       BranchDto
+	root_cid     string
+	parent_count int
+	author       string
+	message      string
+	timestamp    i64
+}
+
+struct SidecarBranchLogDto {
+	commits []CommitDto
+}
+
+struct SidecarRepoActivityDto {
+	entries []SidecarRepoActivityEntryDto
+}
+
+struct SidecarRepoActivityEntryDto {
+	repo_name    string
+	branch       BranchDto
+	root_cid     string
+	parent_count int
+	author       string
+	message      string
+	timestamp    i64
+}
+
+struct CommitDto {
+	cid         string
+	root_cid    string
+	parent_count int
+	author      string
+	message     string
+	timestamp   i64
+}
+
+pub struct SidecarBranchActivity {
+pub:
+	branch       Branch
+	root_cid     string
+	parent_count int
+	author       string
+	message      string
+	timestamp    i64
+}
+
+struct SidecarBranchStatusDto {
+	branch                                 BranchDto
+	root_cid                               string
+	parent_count                           int
+	author                                 string
+	message                                string
+	timestamp                              i64
+	merge_relation                         string
+	projector_fresh                        int
+	projector_stale                        int
+	stale_projectors                       []string
+	recommended_projection_refresh_policy  string
+	policy_scope                           string
+	allow_push                             bool
+	require_auto_merge                     bool
+	default_sync_policy                    string
+	protection_summary                     string
+}
+
+pub struct SidecarBranchStatus {
+pub:
+	branch                                 Branch
+	root_cid                               string
+	parent_count                           int
+	author                                 string
+	message                                string
+	timestamp                              i64
+	merge_relation                         string
+	projector_fresh                        int
+	projector_stale                        int
+	stale_projectors                       []string
+	recommended_projection_refresh_policy  string
+	policy_scope                           string
+	allow_push                             bool
+	require_auto_merge                     bool
+	default_sync_policy                    string
+	protection_summary                     string
+}
+
+pub struct SidecarBranchLogEntry {
+pub:
+	cid          string
+	root_cid     string
+	parent_count int
+	author       string
+	message      string
+	timestamp    i64
+}
+
+pub struct SidecarRepoActivityEntry {
+pub:
+	repo_name    string
+	branch       Branch
+	root_cid     string
+	parent_count int
+	author       string
+	message      string
+	timestamp    i64
+}
+
+struct SidecarGlobalActivityDto {
+	entries []SidecarRepoActivityEntryDto
 }
 
 struct SyncOfferEnvelopeDto {
@@ -90,7 +296,8 @@ struct DataPacketDto {
 	data_b64 string
 }
 
-struct BranchDto {
+pub struct BranchDto {
+pub:
 	name       string
 	commit_cid string
 }
@@ -258,6 +465,30 @@ fn branch_from_dto(dto BranchDto) Branch {
 	}
 }
 
+fn commit_to_dto(commit Commit) CommitDto {
+	return CommitDto{
+		cid: commit.cid
+		root_cid: commit.root_cid
+		parent_count: commit.parent_cids.len
+		author: commit.meta.author
+		message: commit.meta.message
+		timestamp: commit.meta.timestamp
+	}
+}
+
+fn sidecar_repo_activity_entry(mut repo PersistentRepository, repo_name string, branch Branch) !SidecarRepoActivityEntryDto {
+	commit := repo.commit_store.get(branch.commit_cid)!
+	return SidecarRepoActivityEntryDto{
+		repo_name: if repo_name.len == 0 { '.' } else { repo_name }
+		branch: branch_to_dto(branch)
+		root_cid: commit.root_cid
+		parent_count: commit.parent_cids.len
+		author: commit.meta.author
+		message: commit.meta.message
+		timestamp: commit.meta.timestamp
+	}
+}
+
 fn json_ok(body string) http.Response {
 	mut resp := http.Response{
 		body: body
@@ -283,8 +514,250 @@ fn sidecar_repo_meta_path(root_dir string) string {
 	return os.join_path(root_dir, '.pollydb', 'repo.meta')
 }
 
-fn open_sidecar_repository(root_dir string, default_branch string) !PersistentRepository {
-	return PersistentRepository.open_default(root_dir, default_branch)
+fn sidecar_repo_root_dir(root_dir string, repo_name string) string {
+	name := repo_name.trim_space()
+	if name.len == 0 || name == '.' {
+		return root_dir
+	}
+	return os.join_path(root_dir, name)
+}
+
+fn sidecar_query_value(url string, key string) string {
+	if !url.contains('?') {
+		return ''
+	}
+	query := url.all_after('?')
+	for part in query.split('&') {
+		if part.len == 0 {
+			continue
+		}
+		pair := part.split_nth('=', 2)
+		if pair.len == 2 && pair[0] == key {
+			return pair[1]
+		}
+	}
+	return ''
+}
+
+fn open_sidecar_repository(root_dir string, repo_name string, default_branch string) !PersistentRepository {
+	repo_root := sidecar_repo_root_dir(root_dir, repo_name)
+	if os.exists(sidecar_repo_meta_path(repo_root)) {
+		return PersistentRepository.open_default(repo_root, default_branch)
+	}
+	return PersistentRepository.init(repo_root, default_branch)
+}
+
+fn list_sidecar_repositories(root_dir string) ![]string {
+	mut names := []string{}
+	if os.exists(sidecar_repo_meta_path(root_dir)) {
+		names << '.'
+	}
+	for entry in os.ls(root_dir)! {
+		path := os.join_path(root_dir, entry)
+		if !os.is_dir(path) {
+			continue
+		}
+		if os.exists(sidecar_repo_meta_path(path)) {
+			names << entry
+		}
+	}
+	names.sort()
+	return names
+}
+
+fn sidecar_repository_info(root_dir string, mut repo PersistentRepository, repo_name string) SidecarRepositoryInfoDto {
+	mut latest_branch := ''
+	mut latest_commit_cid := ''
+	mut latest_timestamp := i64(0)
+	for branch_name in repo.branch_names() {
+		branch := repo.branch(branch_name) or { continue }
+		commit := repo.commit_store.get(branch.commit_cid) or { continue }
+		if latest_branch.len == 0 || commit.meta.timestamp > latest_timestamp {
+			latest_branch = branch.name
+			latest_commit_cid = branch.commit_cid
+			latest_timestamp = commit.meta.timestamp
+		}
+	}
+	auth_enabled := pollyhub_auth_enabled(root_dir) or { false }
+	policy := pollyhub_repo_policy(root_dir, repo_name) or {
+		PollyHubRepoPolicy{
+			repo_name: pollyhub_normalize_repo_name(repo_name)
+			allow_push_to_default: true
+			require_auto_merge: false
+			default_sync_policy: 'auto'
+		}
+	}
+	protection_summary := if policy.allow_push_to_default {
+		if policy.require_auto_merge {
+			'default:merge_only,sync=${policy.default_sync_policy}'
+		} else {
+			'default:open,sync=${policy.default_sync_policy}'
+		}
+	} else {
+		'default:protected,sync=${policy.default_sync_policy}'
+	}
+	return SidecarRepositoryInfoDto{
+		repo_name: if repo_name.len == 0 { '.' } else { repo_name }
+		default_branch: repo.repo.default_branch
+		branch_count: repo.repo.branch_names().len
+		latest_branch: latest_branch
+		latest_commit_cid: latest_commit_cid
+		latest_timestamp: latest_timestamp
+		auth_enabled: auth_enabled
+		allow_push_to_default: policy.allow_push_to_default
+		require_auto_merge: policy.require_auto_merge
+		default_sync_policy: policy.default_sync_policy
+		protection_summary: protection_summary
+	}
+}
+
+fn sidecar_branch_merge_relation(mut db PersistentDatabase, branch_name string) string {
+	if branch_name == db.default_branch {
+		return 'default'
+	}
+	if !db.engine.repository.has_branch(db.default_branch) {
+		return 'no_default_branch'
+	}
+	branch_commit := db.engine.checkout(branch_name) or { return 'unknown' }
+	default_commit := db.engine.checkout(db.default_branch) or { return 'unknown' }
+	if branch_commit.cid == default_commit.cid {
+		return 'same_as_default'
+	}
+	base := db.merge_base_branch(db.default_branch, branch_name) or { return 'unknown' }
+	if base.cid == default_commit.cid {
+		return 'ahead_of_default'
+	}
+	if base.cid == branch_commit.cid {
+		return 'behind_default'
+	}
+	return 'diverged'
+}
+
+fn sidecar_branch_policy_info(root_dir string, default_branch string, repo_name string, branch_name string) SidecarBranchPolicyInfo {
+	if branch_policy := find_pollyhub_branch_policy(root_dir, repo_name, branch_name) {
+		return SidecarBranchPolicyInfo{
+			policy_scope: 'branch'
+			allow_push: branch_policy.allow_push
+			require_auto_merge: branch_policy.require_auto_merge
+			default_sync_policy: branch_policy.default_sync_policy
+		}
+	}
+	if branch_name == default_branch {
+		repo_policy := pollyhub_repo_policy(root_dir, repo_name) or {
+			PollyHubRepoPolicy{
+				repo_name: pollyhub_normalize_repo_name(repo_name)
+				allow_push_to_default: true
+				require_auto_merge: false
+				default_sync_policy: 'auto'
+			}
+		}
+		return SidecarBranchPolicyInfo{
+			policy_scope: 'repo_default'
+			allow_push: repo_policy.allow_push_to_default
+			require_auto_merge: repo_policy.require_auto_merge
+			default_sync_policy: repo_policy.default_sync_policy
+		}
+	}
+	return SidecarBranchPolicyInfo{
+		policy_scope: 'open'
+		allow_push: true
+		require_auto_merge: false
+		default_sync_policy: 'auto'
+	}
+}
+
+fn sidecar_branch_protection_summary(policy SidecarBranchPolicyInfo) string {
+	mut parts := []string{}
+	parts << 'scope=${policy.policy_scope}'
+	parts << if policy.allow_push { 'push=open' } else { 'push=blocked' }
+	if policy.require_auto_merge {
+		parts << 'merge=required'
+	}
+	parts << 'sync=${policy.default_sync_policy}'
+	return parts.join(',')
+}
+
+fn sidecar_branch_status(root_dir string, repo_name string, mut db PersistentDatabase, branch_name string) !SidecarBranchStatusDto {
+	branch := db.branch(branch_name)!
+	commit := db.engine.checkout(branch_name)!
+	policy := sidecar_branch_policy_info(root_dir, db.default_branch, repo_name, branch_name)
+	mut fresh := 0
+	mut stale := 0
+	mut stale_projectors := []string{}
+	for state in db.projection_states_at_branch(branch_name) or { []AggregateProjectorState{} } {
+		if state.fresh {
+			fresh++
+		} else {
+			stale++
+			stale_projectors << state.projection.name
+		}
+	}
+	stale_projectors.sort()
+	return SidecarBranchStatusDto{
+		branch: branch_to_dto(branch)
+		root_cid: commit.root_cid
+		parent_count: commit.parent_cids.len
+		author: commit.meta.author
+		message: commit.meta.message
+		timestamp: commit.meta.timestamp
+		merge_relation: sidecar_branch_merge_relation(mut db, branch_name)
+		projector_fresh: fresh
+		projector_stale: stale
+		stale_projectors: stale_projectors
+		recommended_projection_refresh_policy: 'stale_one'
+		policy_scope: policy.policy_scope
+		allow_push: policy.allow_push
+		require_auto_merge: policy.require_auto_merge
+		default_sync_policy: policy.default_sync_policy
+		protection_summary: sidecar_branch_protection_summary(policy)
+	}
+}
+
+fn list_sidecar_branch_statuses(root_dir string, repo_name string, default_branch string) ![]SidecarBranchStatusDto {
+	repo_root := sidecar_repo_root_dir(root_dir, repo_name)
+	mut db := PersistentDatabase.open(repo_root, default_branch)!
+	defer {
+		db.close() or {}
+	}
+	mut rows := []SidecarBranchStatusDto{}
+	for branch_name in db.branch_names() {
+		rows << sidecar_branch_status(root_dir, repo_name, mut db, branch_name) or { continue }
+	}
+	rows.sort(a.timestamp > b.timestamp)
+	return rows
+}
+
+fn list_sidecar_repository_infos(root_dir string, default_branch string) ![]SidecarRepositoryInfoDto {
+	names := list_sidecar_repositories(root_dir)!
+	mut infos := []SidecarRepositoryInfoDto{cap: names.len}
+	for name in names {
+		mut repo := open_sidecar_repository(root_dir, if name == '.' { '' } else { name }, default_branch) or {
+			continue
+		}
+		infos << sidecar_repository_info(root_dir, mut repo, if name == '.' { '' } else { name })
+		repo.close() or {}
+	}
+	infos.sort(a.latest_timestamp > b.latest_timestamp)
+	return infos
+}
+
+fn list_sidecar_global_activity(root_dir string, default_branch string, limit int) ![]SidecarRepoActivityEntryDto {
+	names := list_sidecar_repositories(root_dir)!
+	mut entries := []SidecarRepoActivityEntryDto{}
+	for name in names {
+		effective_name := if name == '.' { '' } else { name }
+		mut repo := open_sidecar_repository(root_dir, effective_name, default_branch) or { continue }
+		for branch_name in repo.branch_names() {
+			branch := repo.branch(branch_name) or { continue }
+			entries << sidecar_repo_activity_entry(mut repo, effective_name, branch) or { continue }
+		}
+		repo.close() or {}
+	}
+	entries.sort(a.timestamp > b.timestamp)
+	if limit > 0 && entries.len > limit {
+		return entries[..limit].clone()
+	}
+	return entries
 }
 
 pub struct PollyLinkSidecarHandler {
@@ -293,11 +766,83 @@ pub:
 	default_branch  string
 }
 
+fn (handler PollyLinkSidecarHandler) request_identity(req http.Request) !PollyHubRequestIdentity {
+	authorization := req.header.get(.authorization) or { '' }
+	return authenticate_pollyhub_request(handler.root_dir, authorization)
+}
+
+fn (handler PollyLinkSidecarHandler) audit(identity PollyHubRequestIdentity, action string, repo_name string, branch_name string, allowed bool, detail string) {
+	append_pollyhub_audit_entry(handler.root_dir, PollyHubAuditEntry{
+		timestamp: pollyhub_now_unix()
+		actor: identity.actor
+		action: action
+		repo_name: pollyhub_normalize_repo_name(repo_name)
+		branch_name: branch_name
+		allowed: allowed
+		detail: detail
+	}) or {}
+}
+
+fn (handler PollyLinkSidecarHandler) audit_auth_failure(action string, repo_name string, branch_name string, detail string) {
+	append_pollyhub_audit_entry(handler.root_dir, PollyHubAuditEntry{
+		timestamp: pollyhub_now_unix()
+		actor: 'anonymous'
+		action: action
+		repo_name: pollyhub_normalize_repo_name(repo_name)
+		branch_name: branch_name
+		allowed: false
+		detail: detail
+	}) or {}
+}
+
+fn (handler PollyLinkSidecarHandler) enforce_rate_limit(identity PollyHubRequestIdentity, action string, repo_name string, branch_name string) ! {
+	policy := pollyhub_rate_limit_policy(handler.root_dir) or {
+		return
+	}
+	if policy.requests_per_minute <= 0 {
+		return
+	}
+	actor := if identity.actor.len > 0 { identity.actor } else { 'anonymous' }
+	requests, _ := summarize_pollyhub_actor_audit_since(handler.root_dir, actor, pollyhub_now_unix() - 60) or {
+		return
+	}
+	if requests >= policy.requests_per_minute {
+		handler.audit(identity, action, repo_name, branch_name, false, 'rate limit exceeded')
+		return error('rate limit exceeded')
+	}
+}
+
+fn sidecar_target_commit_from_exchange(exchange SyncExchange) !Commit {
+	for packet in exchange.packets {
+		if packet.kind == .commit && packet.cid == exchange.plan.target_commit_cid {
+			commit := Commit.from_data(packet.data)!
+			if commit.cid != exchange.plan.target_commit_cid {
+				return error('sync target commit packet cid mismatch')
+			}
+			return commit
+		}
+	}
+	return error('missing target commit packet in sync exchange')
+}
+
 fn (handler PollyLinkSidecarHandler) serve_offer(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('sync_offer', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
 	payload := json.decode(SyncOfferRequestDto, req.data) or {
+		handler.audit(identity, 'sync_offer', '', '', false, err.msg())
 		return json_error(.bad_request, err.msg())
 	}
-	mut repo := open_sidecar_repository(handler.root_dir, handler.default_branch) or {
+	handler.enforce_rate_limit(identity, 'sync_offer', payload.repo_name, payload.branch_name) or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, payload.repo_name, .reader) or {
+		handler.audit(identity, 'sync_offer', payload.repo_name, payload.branch_name, false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	mut repo := open_sidecar_repository(handler.root_dir, payload.repo_name, handler.default_branch) or {
+		handler.audit(identity, 'sync_offer', payload.repo_name, payload.branch_name, false, err.msg())
 		return json_error(.internal_server_error, err.msg())
 	}
 	defer {
@@ -320,14 +865,17 @@ fn (handler PollyLinkSidecarHandler) serve_offer(req http.Request) http.Response
 	}
 	if payload.prediction_depth > 0 {
 		manifest := effective_offer.manifest_with_depth(payload.prediction_depth, mut repo.node_store) or {
+			handler.audit(identity, 'sync_offer', payload.repo_name, payload.branch_name, false, err.msg())
 			return json_error(.internal_server_error, err.msg())
 		}
+		handler.audit(identity, 'sync_offer', payload.repo_name, payload.branch_name, true, 'manifest')
 		return json_ok(json.encode(SyncOfferEnvelopeDto{
 			offer: sync_offer_to_dto(effective_offer)
 			manifest: sync_manifest_to_dto(manifest)
 			has_manifest: true
 		}))
 	}
+	handler.audit(identity, 'sync_offer', payload.repo_name, payload.branch_name, true, 'regular')
 	return json_ok(json.encode(SyncOfferEnvelopeDto{
 		offer: sync_offer_to_dto(effective_offer)
 		has_manifest: false
@@ -335,10 +883,23 @@ fn (handler PollyLinkSidecarHandler) serve_offer(req http.Request) http.Response
 }
 
 fn (handler PollyLinkSidecarHandler) serve_missing(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('sync_missing', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
 	payload := json.decode(SyncNegotiateRequestDto, req.data) or {
+		handler.audit(identity, 'sync_missing', '', '', false, err.msg())
 		return json_error(.bad_request, err.msg())
 	}
-	mut repo := open_sidecar_repository(handler.root_dir, handler.default_branch) or {
+	handler.enforce_rate_limit(identity, 'sync_missing', payload.repo_name, payload.offer.request_branch_name) or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, payload.repo_name, .reader) or {
+		handler.audit(identity, 'sync_missing', payload.repo_name, payload.offer.request_branch_name, false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	mut repo := open_sidecar_repository(handler.root_dir, payload.repo_name, handler.default_branch) or {
+		handler.audit(identity, 'sync_missing', payload.repo_name, payload.offer.request_branch_name, false, err.msg())
 		return json_error(.internal_server_error, err.msg())
 	}
 	defer {
@@ -346,71 +907,578 @@ fn (handler PollyLinkSidecarHandler) serve_missing(req http.Request) http.Respon
 	}
 	missing := if payload.use_manifest {
 		sync_missing_for_manifest(mut repo, sync_manifest_from_dto(payload.manifest)) or {
+			handler.audit(identity, 'sync_missing', payload.repo_name, payload.offer.request_branch_name, false, err.msg())
 			return json_error(.bad_request, err.msg())
 		}
 	} else {
 		sync_missing_for_offer(mut repo, sync_offer_from_dto(payload.offer)) or {
+			handler.audit(identity, 'sync_missing', payload.repo_name, payload.offer.request_branch_name, false, err.msg())
 			return json_error(.bad_request, err.msg())
 		}
 	}
+	handler.audit(identity, 'sync_missing', payload.repo_name, payload.offer.request_branch_name, true, '')
 	return json_ok(json.encode(sync_missing_set_to_dto(missing)))
 }
 
 fn (handler PollyLinkSidecarHandler) serve_exchange(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('sync_exchange', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
 	payload := json.decode(SyncExchangeRequestDto, req.data) or {
+		handler.audit(identity, 'sync_exchange', '', '', false, err.msg())
 		return json_error(.bad_request, err.msg())
 	}
-	mut repo := open_sidecar_repository(handler.root_dir, handler.default_branch) or {
+	handler.enforce_rate_limit(identity, 'sync_exchange', payload.repo_name, payload.offer.request_branch_name) or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, payload.repo_name, .reader) or {
+		handler.audit(identity, 'sync_exchange', payload.repo_name, payload.offer.request_branch_name, false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	mut repo := open_sidecar_repository(handler.root_dir, payload.repo_name, handler.default_branch) or {
+		handler.audit(identity, 'sync_exchange', payload.repo_name, payload.offer.request_branch_name, false, err.msg())
 		return json_error(.internal_server_error, err.msg())
 	}
 	defer {
 		repo.close() or {}
 	}
 	exchange := sync_exchange_for_missing(mut repo, sync_offer_from_dto(payload.offer), sync_missing_set_from_dto(payload.missing)) or {
+		handler.audit(identity, 'sync_exchange', payload.repo_name, payload.offer.request_branch_name, false, err.msg())
 		return json_error(.bad_request, err.msg())
 	}
+	handler.audit(identity, 'sync_exchange', payload.repo_name, payload.offer.request_branch_name, true, 'packets=${exchange.packets.len}')
 	return json_ok(json.encode(sync_exchange_to_dto(exchange)))
 }
 
 fn (handler PollyLinkSidecarHandler) serve_exchange_full(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('sync_exchange_full', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
 	payload := json.decode(SyncFullExchangeRequestDto, req.data) or {
+		handler.audit(identity, 'sync_exchange_full', '', '', false, err.msg())
 		return json_error(.bad_request, err.msg())
 	}
-	mut repo := open_sidecar_repository(handler.root_dir, handler.default_branch) or {
+	handler.enforce_rate_limit(identity, 'sync_exchange_full', payload.repo_name, payload.offer.request_branch_name) or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, payload.repo_name, .reader) or {
+		handler.audit(identity, 'sync_exchange_full', payload.repo_name, payload.offer.request_branch_name, false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	mut repo := open_sidecar_repository(handler.root_dir, payload.repo_name, handler.default_branch) or {
+		handler.audit(identity, 'sync_exchange_full', payload.repo_name, payload.offer.request_branch_name, false, err.msg())
 		return json_error(.internal_server_error, err.msg())
 	}
 	defer {
 		repo.close() or {}
 	}
 	exchange := full_sync_exchange_for_offer(mut repo, sync_offer_from_dto(payload.offer)) or {
+		handler.audit(identity, 'sync_exchange_full', payload.repo_name, payload.offer.request_branch_name, false, err.msg())
 		return json_error(.bad_request, err.msg())
 	}
+	handler.audit(identity, 'sync_exchange_full', payload.repo_name, payload.offer.request_branch_name, true, 'packets=${exchange.packets.len}')
 	return json_ok(json.encode(sync_exchange_to_dto(exchange)))
 }
 
 fn (handler PollyLinkSidecarHandler) serve_apply(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('sync_apply', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
 	payload := json.decode(SyncApplyRequestDto, req.data) or {
+		handler.audit(identity, 'sync_apply', '', '', false, err.msg())
 		return json_error(.bad_request, err.msg())
 	}
 	exchange := sync_exchange_from_dto(payload.exchange) or {
+		handler.audit(identity, 'sync_apply', payload.repo_name, '', false, err.msg())
 		return json_error(.bad_request, err.msg())
 	}
-	mut repo := open_sidecar_repository(handler.root_dir, handler.default_branch) or {
+	handler.enforce_rate_limit(identity, 'sync_apply', payload.repo_name, exchange.session.request.branch_name) or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, payload.repo_name, .writer) or {
+		handler.audit(identity, 'sync_apply', payload.repo_name, exchange.session.request.branch_name, false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	mut repo := open_sidecar_repository(handler.root_dir, payload.repo_name, handler.default_branch) or {
+		handler.audit(identity, 'sync_apply', payload.repo_name, exchange.session.request.branch_name, false, err.msg())
 		return json_error(.internal_server_error, err.msg())
 	}
 	defer {
 		repo.close() or {}
 	}
+	policy := sidecar_branch_policy_info(handler.root_dir, repo.repo.default_branch, payload.repo_name, exchange.session.request.branch_name)
+	if !policy.allow_push {
+		handler.audit(identity, 'sync_apply', payload.repo_name, exchange.session.request.branch_name, false, 'push to branch disabled by policy')
+		return json_error(.unauthorized, 'push to branch disabled by policy')
+	}
+	if policy.require_auto_merge {
+		target_commit := sidecar_target_commit_from_exchange(exchange) or {
+			handler.audit(identity, 'sync_apply', payload.repo_name, exchange.session.request.branch_name, false, err.msg())
+			return json_error(.bad_request, err.msg())
+		}
+		if target_commit.parent_cids.len < 2 {
+			handler.audit(identity, 'sync_apply', payload.repo_name, exchange.session.request.branch_name, false, 'branch requires merge commit by policy')
+			return json_error(.unauthorized, 'branch requires merge commit by policy')
+		}
+	}
 	branch := apply_exchange_to_repo(mut repo, exchange) or {
+		handler.audit(identity, 'sync_apply', payload.repo_name, exchange.session.request.branch_name, false, err.msg())
 		return json_error(.bad_request, err.msg())
 	}
+	handler.audit(identity, 'sync_apply', payload.repo_name, branch.name, true, 'commit=${branch.commit_cid}')
 	return json_ok(json.encode(branch_to_dto(branch)))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_list_repos(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('list_repos', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repos := list_pollyhub_authorized_repositories(handler.root_dir, identity) or {
+		return json_error(.internal_server_error, err.msg())
+	}
+	handler.enforce_rate_limit(identity, 'list_repos', '.', '') or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	handler.audit(identity, 'list_repos', '.', '', true, 'repos=${repos.len}')
+	return json_ok(json.encode(SidecarRepoListDto{
+		repos: repos
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_repo_summaries(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('repo_summaries', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	limit := sidecar_query_value(req.url, 'limit').int()
+	handler.enforce_rate_limit(identity, 'repo_summaries', '.', '') or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	mut infos := list_sidecar_repository_infos(handler.root_dir, handler.default_branch) or {
+		return json_error(.internal_server_error, err.msg())
+	}
+	if identity.auth_enabled && !identity.global_admin {
+		allowed := list_pollyhub_authorized_repositories(handler.root_dir, identity) or { []string{} }
+		mut filtered := []SidecarRepositoryInfoDto{}
+		for info in infos {
+			if info.repo_name in allowed {
+				filtered << info
+			}
+		}
+		infos = filtered.clone()
+	}
+	if limit > 0 && infos.len > limit {
+		infos = infos[..limit].clone()
+	}
+	handler.audit(identity, 'repo_summaries', '.', '', true, 'repos=${infos.len}')
+	return json_ok(json.encode(SidecarRepoSummaryListDto{
+		repos: infos
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_repo_info(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('repo_info', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_name := sidecar_query_value(req.url, 'repo')
+	handler.enforce_rate_limit(identity, 'repo_info', repo_name, '') or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, repo_name, .reader) or {
+		handler.audit(identity, 'repo_info', repo_name, '', false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	mut repo := open_sidecar_repository(handler.root_dir, repo_name, handler.default_branch) or {
+		handler.audit(identity, 'repo_info', repo_name, '', false, err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	defer {
+		repo.close() or {}
+	}
+	info := sidecar_repository_info(handler.root_dir, mut repo, repo_name)
+	handler.audit(identity, 'repo_info', repo_name, '', true, info.default_sync_policy)
+	return json_ok(json.encode(SidecarRepoInfoQueryDto{
+		repo: info
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_governance_status(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('governance_status', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	if identity.auth_enabled && !identity.global_admin {
+		handler.audit(identity, 'governance_status', '.', '', false, 'governance status requires global admin')
+		return json_error(.unauthorized, 'governance status requires global admin')
+	}
+	handler.enforce_rate_limit(identity, 'governance_status', '.', '') or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	governance := load_pollyhub_governance(handler.root_dir) or {
+		return json_error(.internal_server_error, err.msg())
+	}
+	repo_count := list_sidecar_repositories(handler.root_dir) or { []string{} }.len
+	recent_requests_1m, recent_denies_1m := summarize_pollyhub_audit_since(handler.root_dir, pollyhub_now_unix() - 60) or { 0, 0 }
+	category_summaries := summarize_pollyhub_audit_by_category_since(handler.root_dir, pollyhub_now_unix() - 60) or { []PollyHubAuditCategorySummary{} }
+	actor_summaries := summarize_pollyhub_audit_by_actor_since(handler.root_dir, pollyhub_now_unix() - 60) or { []PollyHubActorAuditSummary{} }
+	action_summaries := summarize_pollyhub_audit_by_action_since(handler.root_dir, pollyhub_now_unix() - 60) or { []PollyHubActionAuditSummary{} }
+	mut recent_categories := []SidecarGovernanceCategoryDto{cap: category_summaries.len}
+	for summary in category_summaries {
+		recent_categories << SidecarGovernanceCategoryDto{
+			category: summary.category
+			recent_requests_1m: summary.total
+			recent_denies_1m: summary.denies
+		}
+	}
+	mut recent_actors := []SidecarGovernanceActorDto{cap: actor_summaries.len}
+	for summary in actor_summaries {
+		recent_actors << SidecarGovernanceActorDto{
+			actor: summary.actor
+			recent_requests_1m: summary.total
+			recent_denies_1m: summary.denies
+		}
+	}
+	mut recent_actions := []SidecarGovernanceActionDto{cap: action_summaries.len}
+	for summary in action_summaries {
+		recent_actions << SidecarGovernanceActionDto{
+			action: summary.action
+			recent_requests_1m: summary.total
+			recent_denies_1m: summary.denies
+		}
+	}
+	handler.audit(identity, 'governance_status', '.', '', true, 'repos=${repo_count}')
+	return json_ok(json.encode(SidecarGovernanceStatusDto{
+		auth_enabled: governance.tokens.len > 0
+		token_count: governance.tokens.len
+		repo_count: repo_count
+		requests_per_minute: governance.rate_limit.requests_per_minute
+		recent_requests_1m: recent_requests_1m
+		recent_denies_1m: recent_denies_1m
+		recent_categories: recent_categories
+		recent_actors: recent_actors
+		recent_actions: recent_actions
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_list_branches(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('list_branches', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_name := sidecar_query_value(req.url, 'repo')
+	handler.enforce_rate_limit(identity, 'list_branches', repo_name, '') or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, repo_name, .reader) or {
+		handler.audit(identity, 'list_branches', repo_name, '', false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	mut repo := open_sidecar_repository(handler.root_dir, repo_name, handler.default_branch) or {
+		handler.audit(identity, 'list_branches', repo_name, '', false, err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	defer {
+		repo.close() or {}
+	}
+	mut branches := []BranchDto{}
+	for name in repo.branch_names() {
+		branches << branch_to_dto(repo.branch(name) or { continue })
+	}
+	handler.audit(identity, 'list_branches', repo_name, '', true, 'branches=${branches.len}')
+	return json_ok(json.encode(SidecarBranchListDto{
+		branches: branches
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_branch_status(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('branch_status', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_name := sidecar_query_value(req.url, 'repo')
+	branch_name := sidecar_query_value(req.url, 'branch')
+	if branch_name.len == 0 {
+		return json_error(.bad_request, 'missing branch query parameter')
+	}
+	handler.enforce_rate_limit(identity, 'branch_status', repo_name, branch_name) or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, repo_name, .reader) or {
+		handler.audit(identity, 'branch_status', repo_name, branch_name, false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_root := sidecar_repo_root_dir(handler.root_dir, repo_name)
+	mut db := PersistentDatabase.open(repo_root, handler.default_branch) or {
+		handler.audit(identity, 'branch_status', repo_name, branch_name, false, err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	defer {
+		db.close() or {}
+	}
+	status := sidecar_branch_status(handler.root_dir, repo_name, mut db, branch_name) or {
+		handler.audit(identity, 'branch_status', repo_name, branch_name, false, err.msg())
+		return json_error(.bad_request, err.msg())
+	}
+	handler.audit(identity, 'branch_status', repo_name, branch_name, true, status.merge_relation)
+	return json_ok(json.encode(status))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_branch_statuses(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('branch_statuses', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_name := sidecar_query_value(req.url, 'repo')
+	handler.enforce_rate_limit(identity, 'branch_statuses', repo_name, '') or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, repo_name, .reader) or {
+		handler.audit(identity, 'branch_statuses', repo_name, '', false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	rows := list_sidecar_branch_statuses(handler.root_dir, repo_name, handler.default_branch) or {
+		handler.audit(identity, 'branch_statuses', repo_name, '', false, err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	handler.audit(identity, 'branch_statuses', repo_name, '', true, 'branches=${rows.len}')
+	return json_ok(json.encode(SidecarBranchStatusListDto{
+		branches: rows
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_open_repo(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('open_repo', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	payload := json.decode(SidecarRepoOpenRequestDto, req.data) or {
+		handler.audit(identity, 'open_repo', '', '', false, err.msg())
+		return json_error(.bad_request, err.msg())
+	}
+	handler.enforce_rate_limit(identity, 'open_repo', payload.repo_name, '') or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	existing_repo_root := sidecar_repo_root_dir(handler.root_dir, payload.repo_name)
+	if os.exists(sidecar_repo_meta_path(existing_repo_root)) {
+		authorize_pollyhub_repo_access(handler.root_dir, identity, payload.repo_name, .admin) or {
+			handler.audit(identity, 'open_repo', payload.repo_name, '', false, err.msg())
+			return json_error(.unauthorized, err.msg())
+		}
+	} else if identity.auth_enabled && !identity.global_admin {
+		handler.audit(identity, 'open_repo', payload.repo_name, '', false, 'repo create requires global admin')
+		return json_error(.unauthorized, 'repo create requires global admin')
+	}
+	mut repo := open_sidecar_repository(handler.root_dir, payload.repo_name, if payload.default_branch.len > 0 {
+		payload.default_branch
+	} else {
+		handler.default_branch
+	}) or {
+		handler.audit(identity, 'open_repo', payload.repo_name, '', false, err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	defer {
+		repo.close() or {}
+	}
+	info := sidecar_repository_info(handler.root_dir, mut repo, payload.repo_name)
+	handler.audit(identity, 'open_repo', payload.repo_name, '', true, info.default_branch)
+	return json_ok(json.encode(info))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_branch_activity(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('branch_activity', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_name := sidecar_query_value(req.url, 'repo')
+	branch_name := sidecar_query_value(req.url, 'branch')
+	if branch_name.len == 0 {
+		return json_error(.bad_request, 'missing branch query parameter')
+	}
+	handler.enforce_rate_limit(identity, 'branch_activity', repo_name, branch_name) or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, repo_name, .reader) or {
+		handler.audit(identity, 'branch_activity', repo_name, branch_name, false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	mut repo := open_sidecar_repository(handler.root_dir, repo_name, handler.default_branch) or {
+		handler.audit(identity, 'branch_activity', repo_name, branch_name, false, err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	defer {
+		repo.close() or {}
+	}
+	branch := repo.branch(branch_name) or {
+		handler.audit(identity, 'branch_activity', repo_name, branch_name, false, err.msg())
+		return json_error(.bad_request, err.msg())
+	}
+	commit := repo.checkout(branch_name) or {
+		handler.audit(identity, 'branch_activity', repo_name, branch_name, false, err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	handler.audit(identity, 'branch_activity', repo_name, branch_name, true, '')
+	return json_ok(json.encode(SidecarBranchActivityDto{
+		branch: branch_to_dto(branch)
+		root_cid: commit.root_cid
+		parent_count: commit.parent_cids.len
+		author: commit.meta.author
+		message: commit.meta.message
+		timestamp: commit.meta.timestamp
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_branch_log(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('branch_log', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_name := sidecar_query_value(req.url, 'repo')
+	branch_name := sidecar_query_value(req.url, 'branch')
+	if branch_name.len == 0 {
+		return json_error(.bad_request, 'missing branch query parameter')
+	}
+	limit := sidecar_query_value(req.url, 'limit').int()
+	handler.enforce_rate_limit(identity, 'branch_log', repo_name, branch_name) or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, repo_name, .reader) or {
+		handler.audit(identity, 'branch_log', repo_name, branch_name, false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_root := sidecar_repo_root_dir(handler.root_dir, repo_name)
+	mut db := PersistentDatabase.open(repo_root, handler.default_branch) or {
+		handler.audit(identity, 'branch_log', repo_name, branch_name, false, err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	defer {
+		db.close() or {}
+	}
+	commits := db.branch_log(branch_name, limit) or {
+		handler.audit(identity, 'branch_log', repo_name, branch_name, false, err.msg())
+		return json_error(.bad_request, err.msg())
+	}
+	mut rows := []CommitDto{cap: commits.len}
+	for commit in commits {
+		rows << commit_to_dto(commit)
+	}
+	handler.audit(identity, 'branch_log', repo_name, branch_name, true, 'commits=${rows.len}')
+	return json_ok(json.encode(SidecarBranchLogDto{
+		commits: rows
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_repo_activity(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('repo_activity', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_name := sidecar_query_value(req.url, 'repo')
+	limit := sidecar_query_value(req.url, 'limit').int()
+	handler.enforce_rate_limit(identity, 'repo_activity', repo_name, '') or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, repo_name, .reader) or {
+		handler.audit(identity, 'repo_activity', repo_name, '', false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	mut repo := open_sidecar_repository(handler.root_dir, repo_name, handler.default_branch) or {
+		handler.audit(identity, 'repo_activity', repo_name, '', false, err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	defer {
+		repo.close() or {}
+	}
+	mut entries := []SidecarRepoActivityEntryDto{}
+	for branch_name in repo.branch_names() {
+		branch := repo.branch(branch_name) or { continue }
+		entries << sidecar_repo_activity_entry(mut repo, repo_name, branch) or { continue }
+	}
+	entries.sort(a.timestamp > b.timestamp)
+	if limit > 0 && entries.len > limit {
+		entries = entries[..limit].clone()
+	}
+	handler.audit(identity, 'repo_activity', repo_name, '', true, 'entries=${entries.len}')
+	return json_ok(json.encode(SidecarRepoActivityDto{
+		entries: entries
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_global_activity(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('global_activity', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	limit := sidecar_query_value(req.url, 'limit').int()
+	handler.enforce_rate_limit(identity, 'global_activity', '.', '') or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	mut entries := list_sidecar_global_activity(handler.root_dir, handler.default_branch, limit) or {
+		return json_error(.internal_server_error, err.msg())
+	}
+	if identity.auth_enabled && !identity.global_admin {
+		allowed := list_pollyhub_authorized_repositories(handler.root_dir, identity) or { []string{} }
+		mut filtered := []SidecarRepoActivityEntryDto{}
+		for entry in entries {
+			if entry.repo_name in allowed {
+				filtered << entry
+			}
+		}
+		entries = filtered.clone()
+		if limit > 0 && entries.len > limit {
+			entries = entries[..limit].clone()
+		}
+	}
+	handler.audit(identity, 'global_activity', '.', '', true, 'entries=${entries.len}')
+	return json_ok(json.encode(SidecarGlobalActivityDto{
+		entries: entries
+	}))
 }
 
 pub fn (handler PollyLinkSidecarHandler) handle(req http.Request) http.Response {
 	path := req.url.all_before('?')
 	if req.method == .get && path == '/health' {
 		return json_ok('{"status":"ok"}')
+	}
+	if req.method == .get && path == '/v1/repos' {
+		return handler.serve_list_repos(req)
+	}
+	if req.method == .get && path == '/v1/repos/summaries' {
+		return handler.serve_repo_summaries(req)
+	}
+	if req.method == .get && path == '/v1/repo-info' {
+		return handler.serve_repo_info(req)
+	}
+	if req.method == .get && path == '/v1/governance-status' {
+		return handler.serve_governance_status(req)
+	}
+	if req.method == .get && path == '/v1/branches' {
+		return handler.serve_list_branches(req)
+	}
+	if req.method == .get && path == '/v1/branch-status' {
+		return handler.serve_branch_status(req)
+	}
+	if req.method == .get && path == '/v1/branch-statuses' {
+		return handler.serve_branch_statuses(req)
+	}
+	if req.method == .get && path == '/v1/branch-activity' {
+		return handler.serve_branch_activity(req)
+	}
+	if req.method == .get && path == '/v1/branch-log' {
+		return handler.serve_branch_log(req)
+	}
+	if req.method == .get && path == '/v1/repo-activity' {
+		return handler.serve_repo_activity(req)
+	}
+	if req.method == .get && path == '/v1/global-activity' {
+		return handler.serve_global_activity(req)
+	}
+	if req.method == .post && path == '/v1/repos/open' {
+		return handler.serve_open_repo(req)
 	}
 	if req.method == .post && path == '/v1/sync/offer' {
 		return handler.serve_offer(req)
@@ -447,6 +1515,42 @@ pub fn start_pollylink_sidecar(root_dir string, default_branch string, addr stri
 pub struct PollyLinkClient {
 pub:
 	base_url string
+	repo_name string
+	auth_token string
+}
+
+pub struct SidecarGovernanceStatus {
+pub:
+	auth_enabled        bool
+	token_count         int
+	repo_count          int
+	requests_per_minute int
+	recent_requests_1m  int
+	recent_denies_1m    int
+	recent_categories   []SidecarGovernanceCategory
+	recent_actors       []SidecarGovernanceActor
+	recent_actions      []SidecarGovernanceAction
+}
+
+pub struct SidecarGovernanceCategory {
+pub:
+	category           string
+	recent_requests_1m int
+	recent_denies_1m   int
+}
+
+pub struct SidecarGovernanceActor {
+pub:
+	actor              string
+	recent_requests_1m int
+	recent_denies_1m   int
+}
+
+pub struct SidecarGovernanceAction {
+pub:
+	action             string
+	recent_requests_1m int
+	recent_denies_1m   int
 }
 
 struct ApplyExchangeResult {
@@ -463,8 +1567,23 @@ fn (client PollyLinkClient) endpoint(path string) string {
 	return client.base_url.trim_right('/') + path
 }
 
+fn (client PollyLinkClient) auth_header() http.Header {
+	mut header := http.new_header()
+	if client.auth_token.len > 0 {
+		header.add(.authorization, 'Bearer ${client.auth_token}')
+	}
+	return header
+}
+
 fn (client PollyLinkClient) post_json(path string, body string) !http.Response {
-	response := http.post_json(client.endpoint(path), body)!
+	mut header := client.auth_header()
+	header.add(.content_type, 'application/json')
+	response := http.fetch(
+		method: .post
+		url: client.endpoint(path)
+		data: body
+		header: header
+	)!
 	if response.status_code >= 400 {
 		return error(response.body)
 	}
@@ -472,11 +1591,31 @@ fn (client PollyLinkClient) post_json(path string, body string) !http.Response {
 }
 
 fn (client PollyLinkClient) post_json_raw(path string, body string) !http.Response {
-	return http.post_json(client.endpoint(path), body)!
+	mut header := client.auth_header()
+	header.add(.content_type, 'application/json')
+	return http.fetch(
+		method: .post
+		url: client.endpoint(path)
+		data: body
+		header: header
+	)
+}
+
+fn (client PollyLinkClient) get(path string) !http.Response {
+	response := http.fetch(
+		method: .get
+		url: client.endpoint(path)
+		header: client.auth_header()
+	)!
+	if response.status_code >= 400 {
+		return error(response.body)
+	}
+	return response
 }
 
 pub fn (client PollyLinkClient) offer(branch_name string, target_branch string, prediction_depth int) !PollyLinkOfferEnvelope {
 	response := client.post_json('/v1/sync/offer', json.encode(SyncOfferRequestDto{
+		repo_name: client.repo_name
 		branch_name: branch_name
 		target_branch: target_branch
 		prediction_depth: prediction_depth
@@ -490,6 +1629,7 @@ pub fn (client PollyLinkClient) offer(branch_name string, target_branch string, 
 
 pub fn (client PollyLinkClient) negotiate_missing(offer SyncOffer, manifest SyncManifest, use_manifest bool) !SyncMissingSet {
 	response := client.post_json('/v1/sync/missing', json.encode(SyncNegotiateRequestDto{
+		repo_name: client.repo_name
 		offer: sync_offer_to_dto(offer)
 		manifest: sync_manifest_to_dto(manifest)
 		use_manifest: use_manifest
@@ -500,6 +1640,7 @@ pub fn (client PollyLinkClient) negotiate_missing(offer SyncOffer, manifest Sync
 
 pub fn (client PollyLinkClient) fetch_exchange(offer SyncOffer, missing SyncMissingSet) !SyncExchange {
 	response := client.post_json('/v1/sync/exchange', json.encode(SyncExchangeRequestDto{
+		repo_name: client.repo_name
 		offer: sync_offer_to_dto(offer)
 		missing: sync_missing_set_to_dto(missing)
 	}))!
@@ -509,6 +1650,7 @@ pub fn (client PollyLinkClient) fetch_exchange(offer SyncOffer, missing SyncMiss
 
 pub fn (client PollyLinkClient) fetch_full_exchange(offer SyncOffer) !SyncExchange {
 	response := client.post_json('/v1/sync/exchange-full', json.encode(SyncFullExchangeRequestDto{
+		repo_name: client.repo_name
 		offer: sync_offer_to_dto(offer)
 	}))!
 	payload := json.decode(SyncExchangeDto, response.body)!
@@ -517,6 +1659,7 @@ pub fn (client PollyLinkClient) fetch_full_exchange(offer SyncOffer) !SyncExchan
 
 pub fn (client PollyLinkClient) apply_exchange(exchange SyncExchange) !Branch {
 	response := client.post_json('/v1/sync/apply', json.encode(SyncApplyRequestDto{
+		repo_name: client.repo_name
 		exchange: sync_exchange_to_dto(exchange)
 	}))!
 	payload := json.decode(BranchDto, response.body)!
@@ -525,6 +1668,7 @@ pub fn (client PollyLinkClient) apply_exchange(exchange SyncExchange) !Branch {
 
 fn (client PollyLinkClient) try_apply_exchange(exchange SyncExchange) !ApplyExchangeResult {
 	response := client.post_json_raw('/v1/sync/apply', json.encode(SyncApplyRequestDto{
+		repo_name: client.repo_name
 		exchange: sync_exchange_to_dto(exchange)
 	}))!
 	if response.status_code >= 400 {
@@ -544,6 +1688,276 @@ fn (client PollyLinkClient) try_apply_exchange(exchange SyncExchange) !ApplyExch
 		ok: true
 		branch: branch_from_dto(payload)
 	}
+}
+
+pub fn (client PollyLinkClient) list_repositories() ![]string {
+	response := client.get('/v1/repos')!
+	payload := json.decode(SidecarRepoListDto, response.body)!
+	return payload.repos
+}
+
+pub fn (client PollyLinkClient) list_repository_summaries(limit int) ![]SidecarRepositoryInfo {
+	path := '/v1/repos/summaries?limit=${limit}'
+	response := client.get(path)!
+	payload := json.decode(SidecarRepoSummaryListDto, response.body)!
+	mut infos := []SidecarRepositoryInfo{cap: payload.repos.len}
+	for dto in payload.repos {
+		infos << SidecarRepositoryInfo{
+			repo_name: dto.repo_name
+			default_branch: dto.default_branch
+			branch_count: dto.branch_count
+			latest_branch: dto.latest_branch
+			latest_commit_cid: dto.latest_commit_cid
+			latest_timestamp: dto.latest_timestamp
+			auth_enabled: dto.auth_enabled
+			allow_push_to_default: dto.allow_push_to_default
+			require_auto_merge: dto.require_auto_merge
+			default_sync_policy: dto.default_sync_policy
+			protection_summary: dto.protection_summary
+		}
+	}
+	return infos
+}
+
+pub fn (client PollyLinkClient) repository_info() !SidecarRepositoryInfo {
+	path := if client.repo_name.len == 0 {
+		'/v1/repo-info'
+	} else {
+		'/v1/repo-info?repo=${client.repo_name}'
+	}
+	response := client.get(path)!
+	payload := json.decode(SidecarRepoInfoQueryDto, response.body)!
+	dto := payload.repo
+	return SidecarRepositoryInfo{
+		repo_name: dto.repo_name
+		default_branch: dto.default_branch
+		branch_count: dto.branch_count
+		latest_branch: dto.latest_branch
+		latest_commit_cid: dto.latest_commit_cid
+		latest_timestamp: dto.latest_timestamp
+		auth_enabled: dto.auth_enabled
+		allow_push_to_default: dto.allow_push_to_default
+		require_auto_merge: dto.require_auto_merge
+		default_sync_policy: dto.default_sync_policy
+		protection_summary: dto.protection_summary
+	}
+}
+
+pub fn (client PollyLinkClient) governance_status() !SidecarGovernanceStatus {
+	response := client.get('/v1/governance-status')!
+	dto := json.decode(SidecarGovernanceStatusDto, response.body)!
+	mut recent_categories := []SidecarGovernanceCategory{cap: dto.recent_categories.len}
+	for row in dto.recent_categories {
+		recent_categories << SidecarGovernanceCategory{
+			category: row.category
+			recent_requests_1m: row.recent_requests_1m
+			recent_denies_1m: row.recent_denies_1m
+		}
+	}
+	mut recent_actors := []SidecarGovernanceActor{cap: dto.recent_actors.len}
+	for row in dto.recent_actors {
+		recent_actors << SidecarGovernanceActor{
+			actor: row.actor
+			recent_requests_1m: row.recent_requests_1m
+			recent_denies_1m: row.recent_denies_1m
+		}
+	}
+	mut recent_actions := []SidecarGovernanceAction{cap: dto.recent_actions.len}
+	for row in dto.recent_actions {
+		recent_actions << SidecarGovernanceAction{
+			action: row.action
+			recent_requests_1m: row.recent_requests_1m
+			recent_denies_1m: row.recent_denies_1m
+		}
+	}
+	return SidecarGovernanceStatus{
+		auth_enabled: dto.auth_enabled
+		token_count: dto.token_count
+		repo_count: dto.repo_count
+		requests_per_minute: dto.requests_per_minute
+		recent_requests_1m: dto.recent_requests_1m
+		recent_denies_1m: dto.recent_denies_1m
+		recent_categories: recent_categories
+		recent_actors: recent_actors
+		recent_actions: recent_actions
+	}
+}
+
+pub fn (client PollyLinkClient) list_branches() ![]Branch {
+	path := if client.repo_name.len == 0 {
+		'/v1/branches'
+	} else {
+		'/v1/branches?repo=${client.repo_name}'
+	}
+	response := client.get(path)!
+	payload := json.decode(SidecarBranchListDto, response.body)!
+	mut branches := []Branch{cap: payload.branches.len}
+	for branch in payload.branches {
+		branches << branch_from_dto(branch)
+	}
+	return branches
+}
+
+pub fn (client PollyLinkClient) branch_status(branch_name string) !SidecarBranchStatus {
+	path := if client.repo_name.len == 0 {
+		'/v1/branch-status?branch=${branch_name}'
+	} else {
+		'/v1/branch-status?repo=${client.repo_name}&branch=${branch_name}'
+	}
+	response := client.get(path)!
+	dto := json.decode(SidecarBranchStatusDto, response.body)!
+	return SidecarBranchStatus{
+		branch: branch_from_dto(dto.branch)
+		root_cid: dto.root_cid
+		parent_count: dto.parent_count
+		author: dto.author
+		message: dto.message
+		timestamp: dto.timestamp
+		merge_relation: dto.merge_relation
+		projector_fresh: dto.projector_fresh
+		projector_stale: dto.projector_stale
+		stale_projectors: dto.stale_projectors.clone()
+		recommended_projection_refresh_policy: dto.recommended_projection_refresh_policy
+		policy_scope: dto.policy_scope
+		allow_push: dto.allow_push
+		require_auto_merge: dto.require_auto_merge
+		default_sync_policy: dto.default_sync_policy
+		protection_summary: dto.protection_summary
+	}
+}
+
+pub fn (client PollyLinkClient) branch_statuses() ![]SidecarBranchStatus {
+	path := if client.repo_name.len == 0 {
+		'/v1/branch-statuses'
+	} else {
+		'/v1/branch-statuses?repo=${client.repo_name}'
+	}
+	response := client.get(path)!
+	payload := json.decode(SidecarBranchStatusListDto, response.body)!
+	mut rows := []SidecarBranchStatus{cap: payload.branches.len}
+	for dto in payload.branches {
+		rows << SidecarBranchStatus{
+			branch: branch_from_dto(dto.branch)
+			root_cid: dto.root_cid
+			parent_count: dto.parent_count
+			author: dto.author
+			message: dto.message
+			timestamp: dto.timestamp
+			merge_relation: dto.merge_relation
+			projector_fresh: dto.projector_fresh
+			projector_stale: dto.projector_stale
+			stale_projectors: dto.stale_projectors.clone()
+			recommended_projection_refresh_policy: dto.recommended_projection_refresh_policy
+			policy_scope: dto.policy_scope
+			allow_push: dto.allow_push
+			require_auto_merge: dto.require_auto_merge
+			default_sync_policy: dto.default_sync_policy
+			protection_summary: dto.protection_summary
+		}
+	}
+	return rows
+}
+
+pub fn (client PollyLinkClient) open_repository(default_branch string) !SidecarRepositoryInfo {
+	response := client.post_json('/v1/repos/open', json.encode(SidecarRepoOpenRequestDto{
+		repo_name: client.repo_name
+		default_branch: default_branch
+	}))!
+	dto := json.decode(SidecarRepositoryInfoDto, response.body)!
+	return SidecarRepositoryInfo{
+		repo_name: dto.repo_name
+		default_branch: dto.default_branch
+		branch_count: dto.branch_count
+		latest_branch: dto.latest_branch
+		latest_commit_cid: dto.latest_commit_cid
+		latest_timestamp: dto.latest_timestamp
+		auth_enabled: dto.auth_enabled
+		allow_push_to_default: dto.allow_push_to_default
+		require_auto_merge: dto.require_auto_merge
+		default_sync_policy: dto.default_sync_policy
+		protection_summary: dto.protection_summary
+	}
+}
+
+pub fn (client PollyLinkClient) branch_activity(branch_name string) !SidecarBranchActivity {
+	path := if client.repo_name.len == 0 {
+		'/v1/branch-activity?branch=${branch_name}'
+	} else {
+		'/v1/branch-activity?repo=${client.repo_name}&branch=${branch_name}'
+	}
+	response := client.get(path)!
+	dto := json.decode(SidecarBranchActivityDto, response.body)!
+	return SidecarBranchActivity{
+		branch: branch_from_dto(dto.branch)
+		root_cid: dto.root_cid
+		parent_count: dto.parent_count
+		author: dto.author
+		message: dto.message
+		timestamp: dto.timestamp
+	}
+}
+
+pub fn (client PollyLinkClient) branch_log(branch_name string, limit int) ![]SidecarBranchLogEntry {
+	path := if client.repo_name.len == 0 {
+		'/v1/branch-log?branch=${branch_name}&limit=${limit}'
+	} else {
+		'/v1/branch-log?repo=${client.repo_name}&branch=${branch_name}&limit=${limit}'
+	}
+	response := client.get(path)!
+	payload := json.decode(SidecarBranchLogDto, response.body)!
+	mut commits := []SidecarBranchLogEntry{cap: payload.commits.len}
+	for commit in payload.commits {
+		commits << SidecarBranchLogEntry{
+			cid: commit.cid
+			root_cid: commit.root_cid
+			parent_count: commit.parent_count
+			author: commit.author
+			message: commit.message
+			timestamp: commit.timestamp
+		}
+	}
+	return commits
+}
+
+pub fn (client PollyLinkClient) repo_activity(limit int) ![]SidecarRepoActivityEntry {
+	path := if client.repo_name.len == 0 {
+		'/v1/repo-activity?limit=${limit}'
+	} else {
+		'/v1/repo-activity?repo=${client.repo_name}&limit=${limit}'
+	}
+	response := client.get(path)!
+	payload := json.decode(SidecarRepoActivityDto, response.body)!
+	mut entries := []SidecarRepoActivityEntry{cap: payload.entries.len}
+	for entry in payload.entries {
+		entries << SidecarRepoActivityEntry{
+			repo_name: entry.repo_name
+			branch: branch_from_dto(entry.branch)
+			root_cid: entry.root_cid
+			parent_count: entry.parent_count
+			author: entry.author
+			message: entry.message
+			timestamp: entry.timestamp
+		}
+	}
+	return entries
+}
+
+pub fn (client PollyLinkClient) global_activity(limit int) ![]SidecarRepoActivityEntry {
+	response := client.get('/v1/global-activity?limit=${limit}')!
+	payload := json.decode(SidecarGlobalActivityDto, response.body)!
+	mut entries := []SidecarRepoActivityEntry{cap: payload.entries.len}
+	for entry in payload.entries {
+		entries << SidecarRepoActivityEntry{
+			repo_name: entry.repo_name
+			branch: branch_from_dto(entry.branch)
+			root_cid: entry.root_cid
+			parent_count: entry.parent_count
+			author: entry.author
+			message: entry.message
+			timestamp: entry.timestamp
+		}
+	}
+	return entries
 }
 
 fn fetch_remote_branch_into_repo(mut repo PersistentRepository, client PollyLinkClient, branch_name string) !SyncOffer {
