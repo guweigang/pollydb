@@ -47,6 +47,15 @@ Together they describe:
 - continuation compatibility
 - a sample planner explanation for each filter shape
 
+For lightweight lexical Markdown search, selector-backed introspection can now
+also expose:
+
+- `fts_query_kinds`
+- `fts_shapes`
+
+That metadata appears on FTS-capable field selectors such as `markdown:fts` and
+`markdown:fts:heading`.
+
 ## Two Explain Surfaces
 
 PollyDB now exposes two related explain surfaces.
@@ -133,6 +142,8 @@ The current planner-facing Sidecar endpoints are:
 
 - `GET /v1/query-schema`
 - `POST /v1/query-plan-preview`
+- `POST /v1/query-fts-preview`
+- `POST /v1/query-fts`
 
 Recommended usage:
 
@@ -140,7 +151,18 @@ Recommended usage:
 2. map a user request into `QueryRequest`-like filters
 3. call `query-plan-preview` when a request-specific explanation is needed
 
+For lexical Markdown search:
+
+1. inspect `field_selectors[*].fts_query_kinds`
+2. inspect `field_selectors[*].fts_shapes[*].sample_explain`
+3. call `query-fts-preview` for a concrete multi-term `all`/`any` explanation
+4. call `query-fts` to execute the request
+
+This keeps lexical search inside the same capability/introspection model rather
+than treating it as an unrelated subsystem.
+
 For a more concrete SQL-to-storage lowering guide, see [vsql_query_mapping.md](/Users/guweigang/Source/pollytree/docs/vsql_query_mapping.md).
+For a possible future lexical-search layer that should plug into the same planner metadata model, see [lightweight_fts_design.md](/Users/guweigang/Source/pollytree/docs/lightweight_fts_design.md).
 
 ## Recommended Consumer Rules
 

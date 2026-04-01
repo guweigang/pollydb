@@ -4,8 +4,10 @@ This document defines the intended stable storage-facing API for `pollydb`.
 It is written for the future `vsql` integration, not for SQL parsing or DDL.
 
 For a CLI-first walkthrough, see [tutorial.md](/Users/guweigang/Source/pollytree/docs/tutorial.md).
+For a realistic local-AI-session archival schema, see [ai_session_archive_case_study.md](/Users/guweigang/Source/pollytree/docs/ai_session_archive_case_study.md).
 For platform-level milestones, see [platform_roadmap.md](/Users/guweigang/Source/pollytree/docs/platform_roadmap.md).
 For the proposed native Markdown field model, see [markdown_field_design.md](/Users/guweigang/Source/pollytree/docs/markdown_field_design.md).
+For a possible lightweight inverted-index/search layer above Markdown and other typed text fields, see [lightweight_fts_design.md](/Users/guweigang/Source/pollytree/docs/lightweight_fts_design.md).
 For the follow-up refactor that turns complex fields into capability-backed plugins, see [field_capability_plugins.md](/Users/guweigang/Source/pollytree/docs/field_capability_plugins.md).
 For the planner-facing metadata contract that future `vsql` should consume, see [query_planner_introspection.md](/Users/guweigang/Source/pollytree/docs/query_planner_introspection.md).
 For the SQL-to-`QueryRequest` lowering guidance that future `vsql` should follow, see [vsql_query_mapping.md](/Users/guweigang/Source/pollytree/docs/vsql_query_mapping.md).
@@ -77,10 +79,12 @@ Current primitive and semi-structured column support:
 - `enum(...)`
 - `json`
 - `datetime`
+- `markdown`
 
 `enum(...)` is stored as a constrained string payload and validated against the declared value list.
 `json` is currently stored as validated JSON text. Index-aware JSON querying supports declared scalar object paths such as `meta.kind` or `meta.kind.code`.
 `datetime` is currently stored as validated RFC3339 UTC text.
+`markdown` is stored as a native external-field reference (`MarkdownRef`) backed by the Markdown document store.
 
 Current `datetime` column behaviors:
 
@@ -145,6 +149,10 @@ This is the main mutation flow that `vsql` should depend on:
 - `QueryCursorState`
 - `QueryCursorPage`
 - `QueryResult`
+- `FtsQuery`
+- `FtsQueryPlan`
+- `FtsQueryPreview`
+- `FtsQueryResult`
 
 This is the current lightweight query/planner surface for single-table reads.
 It sits above direct `lookup_index(...)` helpers but below any future SQL layer.
@@ -187,6 +195,37 @@ Preferred planner/explain entrypoints:
 `preview_query_plan_details(...)` is the canonical explain entrypoint.
 Its `QueryPlanPreview.sample_explain()` payload intentionally matches the `sample_explain` object exposed by `table_query_schema(...).columns[*].filter_shapes[*]` and `field_selectors[*].filter_shapes[*]`.
 That shared explain shape is the intended planner-facing metadata contract for future `vsql`.
+
+### Lightweight FTS Flow
+
+For lexical Markdown search, PollyDB now also exposes a lightweight FTS surface:
+
+- `(db PersistentDatabase).preview_fts_query(...)`
+- `(db PersistentDatabase).preview_fts_query_details(...)`
+- `(session DatabaseSession).query_fts(...)`
+- `(session TransactionSession).query_fts(...)`
+
+Current supported FTS kinds:
+
+- `term`
+- `prefix`
+- `all`
+- `any`
+
+Current supported Markdown scopes:
+
+- `any`
+- `heading`
+- `paragraph`
+- `code_block`
+- `list_item`
+
+Planner behavior for FTS today:
+
+- prefers `markdown_value(..., 'fts')` or `markdown_value(..., 'fts:<scope>')` derived indexes
+- executes `all` as indexed exact-term intersection when such an index exists
+- executes `any` as indexed exact-term union when such an index exists
+- falls back to row scan when no matching FTS derived index exists
 
 ### Repository and Versioning
 
@@ -332,6 +371,8 @@ The recommended storage-layer entrypoints are:
 - `PollyLinkSidecarHandler`
 - `push_branch_to_sidecar(...)`
 - `pull_branch_from_sidecar(...)`
+- `(client PollyLinkClient).query_fts_preview(...)`
+- `(client PollyLinkClient).query_fts(...)`
 - `(session DatabaseSession).begin_transaction(...)`
 - `(session DatabaseSession).begin_working_set(...)`
 - `(session DatabaseSession).apply_write_set(...)`

@@ -8,6 +8,7 @@ It shows:
 - register a table with a native `markdown_` field
 - write one Markdown row
 - query it with a Markdown field selector
+- query it with lightweight FTS
 - inspect planner preview metadata
 
 ## Minimal Example
@@ -36,6 +37,7 @@ fn main() ! {
 		[
 			storage.SchemaIndexDef.markdown_value('body_heading_text_idx', 'body', 'heading_text:2')!,
 			storage.SchemaIndexDef.markdown_value('body_link_host_idx', 'body', 'link_host')!,
+			storage.SchemaIndexDef.markdown_value('body_fts_any_idx', 'body', 'fts')!,
 		],
 	)!
 	db.register_table(spec)!
@@ -45,7 +47,11 @@ fn main() ! {
 	mut seed_row := storage.TypedRowData.new()
 	seed_row.set('id', 'note-1')
 	seed_row.set('title', 'Roadmap')
-	seed_row.set('body', storage.MarkdownRef{})
+	seed_row.set('body', storage.MarkdownRef{
+		doc_root_id: 'seed-note-1'
+		source_hash: 'seed-note-1'
+		source_len: 0
+	})
 	seed_tree := storage.Tree.build([
 		storage.KVPair{
 			key: storage.TableView.new(storage.Tree{}, 'notes').key_for('note-1'.bytes())
@@ -86,6 +92,19 @@ fn main() ! {
 	println('strategy=${page.plan.strategy}')
 	println('index=${page.plan.index_name}')
 
+	fts := session.query_fts(mut db, storage.FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		kind: .all
+		terms: ['pollydb', 'roadmap']
+		select_columns: ['title']
+		limit: 10
+	})!
+
+	println('fts_rows=${fts.rows.len}')
+	println('fts_strategy=${fts.plan.strategy}')
+	println('fts_index=${fts.plan.index_name}')
+
 	preview := db.preview_query_plan_details(storage.QueryRequest{
 		table_name: 'notes'
 		filters: [
@@ -111,7 +130,51 @@ The most important APIs are:
 - `SchemaIndexDef.markdown_value(...)`
 - `DatabaseSession.put_markdown(...)`
 - `DatabaseSession.query_page(...)`
+- `DatabaseSession.query_fts(...)`
 - `PersistentDatabase.preview_query_plan_details(...)`
+
+## Lightweight FTS Example
+
+The same Markdown row can also be queried through the lightweight lexical FTS layer:
+
+```v
+preview := session.preview_fts_query_details(storage.FtsQuery{
+	table_name: 'notes'
+	column_name: 'body'
+	scope: .any
+	kind: .any
+	terms: ['agent', 'sync']
+	limit: 20
+})!
+
+println(preview.plan.strategy)
+println(preview.notes)
+
+result := session.query_fts(mut db, storage.FtsQuery{
+	table_name: 'notes'
+	column_name: 'body'
+	scope: .heading
+	kind: .term
+	terms: ['roadmap']
+	select_columns: ['title']
+	limit: 20
+})!
+```
+
+Supported lightweight FTS kinds today:
+
+- `term`
+- `prefix`
+- `all`
+- `any`
+
+Supported Markdown FTS scopes today:
+
+- `any`
+- `heading`
+- `paragraph`
+- `code_block`
+- `list_item`
 
 ## Simpler Query Construction Options
 

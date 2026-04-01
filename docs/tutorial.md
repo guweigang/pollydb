@@ -16,6 +16,7 @@ It focuses on the storage/database surface that already exists today:
 - insert, update, delete, and query rows
 - work with `bool`, `enum`, `json`, and `datetime`
 - use aggregates and aggregate projectors
+- query Markdown with selector indexes and lightweight FTS
 
 One transport note up front:
 
@@ -88,6 +89,7 @@ Current column declarations support:
 - `enum(...)`
 - `json`
 - `datetime`
+- `markdown`
 
 Examples:
 
@@ -100,6 +102,7 @@ meta:json
 created_at:datetime:current_timestamp
 updated_at:datetime:current_timestamp:auto_update
 total:i64:sum
+transcript:markdown
 ```
 
 Notes:
@@ -109,6 +112,7 @@ Notes:
 - `enum(...)` is stored as a validated string.
 - `json` is stored as validated JSON text.
 - `datetime` is stored as validated RFC3339 UTC text.
+- `markdown` is stored as a native external-field reference rather than inline source text.
 - Append `:current_timestamp` to fill a missing `datetime` on insert.
 - Append `:auto_update` to refresh a `datetime` automatically on update.
 - In CLI writes, `CURRENT_TIMESTAMP` can be used as a `datetime` value.
@@ -165,6 +169,41 @@ Current JSON-path indexing rules:
 - object-path navigation only
 - scalar leaf type must be declared as `string`, `bool`, or `i64`
 - arrays and non-scalar JSON leaves are not indexed yet
+
+### Markdown Selector Index
+
+Markdown columns can also expose selector-backed indexes:
+
+```text
+body_heading_text_idx:body#heading_text:2:string
+body_link_host_idx:body#link_host:string
+body_link_count_idx:body#links:i64
+body_code_lang_cover:body#code_block_lang:string:covering
+```
+
+Rules:
+
+- use `column#selector` as the target
+- declare selector value type as `string` or `i64`
+- append `:covering` when you want the index to store the encoded row
+- typical string selectors include `heading_text:2`, `link_host`, `image_host`, `code_block_lang`
+- typical metric selectors include `links`, `images`, `code_spans`, `code_blocks`, `headings`, `blocks`
+
+### Markdown Lightweight FTS Index
+
+Markdown columns can also expose lightweight lexical selectors:
+
+```text
+body_fts_any_idx:body#fts:string
+body_fts_heading_idx:body#fts:heading:string
+```
+
+These selectors back the current lightweight FTS query kinds:
+
+- `term`
+- `prefix`
+- `all`
+- `any`
 
 ## 5. Git-Like Semantics
 
