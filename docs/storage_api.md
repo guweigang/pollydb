@@ -5,6 +5,11 @@ It is written for the future `vsql` integration, not for SQL parsing or DDL.
 
 For a CLI-first walkthrough, see [tutorial.md](/Users/guweigang/Source/pollytree/docs/tutorial.md).
 For platform-level milestones, see [platform_roadmap.md](/Users/guweigang/Source/pollytree/docs/platform_roadmap.md).
+For the proposed native Markdown field model, see [markdown_field_design.md](/Users/guweigang/Source/pollytree/docs/markdown_field_design.md).
+For the follow-up refactor that turns complex fields into capability-backed plugins, see [field_capability_plugins.md](/Users/guweigang/Source/pollytree/docs/field_capability_plugins.md).
+For the planner-facing metadata contract that future `vsql` should consume, see [query_planner_introspection.md](/Users/guweigang/Source/pollytree/docs/query_planner_introspection.md).
+For the SQL-to-`QueryRequest` lowering guidance that future `vsql` should follow, see [vsql_query_mapping.md](/Users/guweigang/Source/pollytree/docs/vsql_query_mapping.md).
+For a direct V-language integration walkthrough, see [v_embedding_example.md](/Users/guweigang/Source/pollytree/docs/v_embedding_example.md).
 
 ## Goals
 
@@ -42,6 +47,9 @@ Current Sidecar control-plane endpoints:
 - `GET /v1/repo-activity`
 - `GET /v1/branch-activity`
 - `GET /v1/branch-log`
+- `GET /v1/table-spec`
+- `GET /v1/query-schema`
+- `POST /v1/query-plan-preview`
 
 These endpoints are implemented in the current Sidecar handler and used by `PollyLinkClient`.
 They represent the first service shape for Polly-Link and Polly-Hub, while leaving room for a future RPC or streaming transport if packet streaming and high-RTT behavior become the dominant concern.
@@ -126,6 +134,59 @@ This is the main mutation flow that `vsql` should depend on:
 4. Apply writes
 5. Inspect `TreeDiff` / `WorkingSetStatus`
 6. Commit through `Repository`
+
+### Query and Cursor Flow
+
+- `QueryFilter`
+- `QueryRequest`
+- `QueryPlan`
+- `QuerySamplePlanExplain`
+- `QueryPlanPreview`
+- `QueryCursorState`
+- `QueryCursorPage`
+- `QueryResult`
+
+This is the current lightweight query/planner surface for single-table reads.
+It sits above direct `lookup_index(...)` helpers but below any future SQL layer.
+
+Current supported filter operators:
+
+- `eq`
+- `prefix`
+- `after`
+- `before`
+- `between`
+
+Current planner behavior:
+
+- chooses one best ordinary or field-selector index when available
+- applies remaining filters as post-filters
+- falls back to table scan when no eligible index exists
+- supports opaque continuation tokens for paged reads
+
+Preferred paged read entrypoints:
+
+- `(session DatabaseSession).query_page(...)`
+- `(session TransactionSession).query_page(...)`
+
+Compatibility entrypoints that still work:
+
+- `(session DatabaseSession).query_rows(...)`
+- `(session TransactionSession).query_rows(...)`
+
+`query_page(...)` is now the canonical public API for paged queries.
+`query_rows(...)` is retained as a compatibility wrapper that returns the same data plus duplicated legacy cursor fields.
+
+Preferred planner/explain entrypoints:
+
+- `(db PersistentDatabase).preview_query_plan(...)`
+- `(db PersistentDatabase).preview_query_plan_details(...)`
+- `(session TransactionSession).preview_query_plan(...)`
+- `(session TransactionSession).preview_query_plan_details(...)`
+
+`preview_query_plan_details(...)` is the canonical explain entrypoint.
+Its `QueryPlanPreview.sample_explain()` payload intentionally matches the `sample_explain` object exposed by `table_query_schema(...).columns[*].filter_shapes[*]` and `field_selectors[*].filter_shapes[*]`.
+That shared explain shape is the intended planner-facing metadata contract for future `vsql`.
 
 ### Repository and Versioning
 
@@ -285,6 +346,8 @@ The recommended storage-layer entrypoints are:
 - `(session DatabaseSession).lookup_index(...)`
 - `(session DatabaseSession).lookup_index_prefix(...)`
 - `(session DatabaseSession).lookup_index_prefix_projected(...)`
+- `(session DatabaseSession).query_page(...)`
+- `(session DatabaseSession).query_rows(...)`
 - `(session DatabaseSession).table_cursor(...)`
 - `(session DatabaseSession).index_cursor(...)`
 - `(session DatabaseSession).table_reader(...)`
@@ -309,10 +372,37 @@ Current Polly-Link and Sidecar-facing helpers:
 - `(client PollyLinkClient).branch_log(...)`
 - `(session TransactionSession).scan_table(...)`
 - `(session TransactionSession).lookup_index(...)`
+- `(session TransactionSession).query_page(...)`
+- `(session TransactionSession).query_rows(...)`
 - `(session TransactionSession).table_cursor(...)`
 - `(session TransactionSession).index_cursor(...)`
 - `(mut session TransactionSession).commit(...)`
 - `(mut session TransactionSession).merge_from(...)`
+
+Current query/planner and Sidecar-facing helpers:
+
+- `QueryFilter.eq(...)`
+- `QueryFilter.prefix(...)`
+- `QueryFilter.after(...)`
+- `QueryFilter.before(...)`
+- `QueryFilter.between(...)`
+- `QueryFilter.field_eq(...)`
+- `QueryFilter.field_prefix(...)`
+- `QueryFilter.field_after(...)`
+- `QueryFilter.field_before(...)`
+- `QueryFilter.field_between(...)`
+- `(result QueryResult).page()`
+- `(result QueryResult).cursor_page()`
+- `(page QueryCursorPage).result()`
+- `(db PersistentDatabase).table_query_schema(...)`
+- `(db PersistentDatabase).preview_query_plan(...)`
+- `(db PersistentDatabase).preview_query_plan_details(...)`
+- `(client PollyLinkClient).query_page(...)`
+- `(client PollyLinkClient).query_rows(...)`
+- `(client PollyLinkClient).query_page_post(...)`
+- `(client PollyLinkClient).query_rows_post(...)`
+- `(client PollyLinkClient).query_schema(...)`
+- `(client PollyLinkClient).query_plan_preview(...)`
 
 For point reads and secondary-index reads:
 

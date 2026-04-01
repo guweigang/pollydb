@@ -3,6 +3,9 @@
 Related architecture notes:
 - [Storage/Compute Separation](/Users/guweigang/Source/pollytree/docs/storage_compute_separation.md)
 - [Platform Roadmap](/Users/guweigang/Source/pollytree/docs/platform_roadmap.md)
+- [Query Planner Introspection](/Users/guweigang/Source/pollytree/docs/query_planner_introspection.md)
+- [vsql Query Mapping](/Users/guweigang/Source/pollytree/docs/vsql_query_mapping.md)
+- [V Embedding Example](/Users/guweigang/Source/pollytree/docs/v_embedding_example.md)
 
 This tutorial shows the current `pollydb` workflow from the command line.
 It focuses on the storage/database surface that already exists today:
@@ -299,6 +302,95 @@ v run /Users/guweigang/Source/pollytree/cmd/pollydb -- prefix-index-projected us
 ```
 
 This is especially useful for covering indexes and low-latency projected reads.
+
+## 7.1 Query Pages
+
+For new application code, prefer the lightweight query/planner layer over wiring together direct index helpers yourself.
+Its default return shape is a page with rows, planner metadata, and cursor state.
+
+Storage-layer example:
+
+```v
+page := session.query_page(mut db, storage.QueryRequest{
+	table_name: 'users'
+	filters: [
+		storage.QueryFilter.eq('email', storage.ColumnValue('ada@example.com')),
+	]
+	select_columns: ['id', 'name']
+	limit: 10
+})!
+
+assert page.rows.len == 1
+assert page.plan.index_name == 'email_idx'
+assert !page.cursor.has_more
+```
+
+Field-selector example for Markdown-derived indexes:
+
+```v
+page := session.query_page(mut db, storage.QueryRequest{
+	table_name: 'notes'
+	filters: [
+		storage.QueryFilter.field_prefix('body', 'markdown', 'heading_text:2',
+			storage.ColumnValue('Road')),
+	]
+	limit: 10
+})!
+```
+
+Compatibility note:
+
+- `query_page(...)` is the preferred API
+- `query_rows(...)` still works, but mainly as a compatibility wrapper around the same cursor-page result
+
+Sidecar example:
+
+```v
+page := client.query_page_post(storage.SidecarQueryRowsPostRequest{
+	branch_name: 'main'
+	table_name: 'notes'
+	filters: [
+		storage.SidecarQueryFilter{
+			column_name: 'body'
+			plugin_name: 'markdown'
+			selector: 'heading_text:2'
+			query_kind: 'prefix'
+			value: 'Road'
+		},
+	]
+	limit: 10
+})!
+
+if page.cursor.has_more {
+	next := page.cursor.next_continuation_token
+	_ = next
+}
+```
+
+Current Sidecar query endpoint:
+
+- `GET /v1/query-rows`
+- `POST /v1/query-rows`
+
+The HTTP path still uses the historical `query-rows` name, but its canonical result shape is now page/cursor-oriented.
+
+For capability introspection, Sidecar also exposes:
+
+- `GET /v1/query-schema`
+- `POST /v1/query-plan-preview`
+
+This returns the table's query-facing metadata:
+
+- columns and their legal filter operators
+- ordinary and derived indexes
+- field selectors exposed by plugins such as `markdown`
+- registered projection metrics
+
+That metadata is intended to be reused by future `vsql` planning and validation rather than replaced by a second query language.
+
+`query-schema` now also includes `filter_shapes[*].sample_explain`, which gives the smallest planner-facing preview for each supported filter shape.
+For ad-hoc request-specific planning, use `POST /v1/query-plan-preview`.
+Its preferred result field is `explain`; the duplicated top-level `warnings` and `notes` remain for compatibility.
 
 ## 8. Working with `bool`, `enum`, `json`, and `datetime`
 
