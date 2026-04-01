@@ -1184,6 +1184,17 @@ fn test_sidecar_query_schema_returns_selector_and_projection_metadata() {
 	assert fts_selector.filter_shapes[1].indexed
 	assert fts_selector.filter_shapes[1].index_name == 'body_fts_any_idx'
 	assert fts_selector.filter_shapes[1].sample_explain.strategy == 'index_prefix'
+	assert fts_selector.fts_query_kinds == ['term', 'prefix', 'all', 'any']
+	assert fts_selector.fts_shapes.len == 4
+	assert fts_selector.fts_shapes[0].kind == 'term'
+	assert fts_selector.fts_shapes[0].indexed
+	assert fts_selector.fts_shapes[0].index_name == 'body_fts_any_idx'
+	assert fts_selector.fts_shapes[0].planner_strategy == 'index_exact'
+	assert fts_selector.fts_shapes[2].kind == 'all'
+	assert fts_selector.fts_shapes[2].planner_strategy == 'fts_index_all'
+	assert fts_selector.fts_shapes[2].sample_explain.strategy == 'fts_index_all'
+	assert fts_selector.fts_shapes[3].kind == 'any'
+	assert fts_selector.fts_shapes[3].planner_strategy == 'fts_index_any'
 
 	assert links_selector.plugin_name == 'markdown'
 	assert links_selector.value_type == 'i64'
@@ -1469,6 +1480,175 @@ fn test_sidecar_query_returns_markdown_selector_query_plan() {
 	assert dto.query_kind == 'prefix'
 	assert dto.rows.len == 1
 	assert dto.rows[0].primary_key == 'note-1'
+}
+
+fn test_sidecar_query_fts_preview_reports_all_strategy() {
+	root_dir := os.join_path(os.vtmp_dir(), 'polly-sidecar-query-fts-preview-${rand.uuid_v4()}')
+	defer {
+		os.rmdir_all(root_dir) or {}
+	}
+	repo_root := sidecar_repo_root_dir(root_dir, 'team-query-fts-preview')
+	cfg := ChunkConfig.default()
+	spec := sidecar_markdown_value_and_fts_indexed_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut row := TypedRowData.new()
+	row.set('id', 'note-1')
+	row.set('title', 'Doc')
+	row.set('body', MarkdownRef{
+		doc_root_id: 'seed'
+		source_hash: 'seed'
+		source_len: 0
+	})
+	seed_tree := Tree.build([
+		KVPair{
+			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			value: codec.encode(row)!
+		},
+	], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed'
+		timestamp: 1
+	}) or { panic(err) }
+	session := db.begin_default_session() or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\nParagraph about PollyDB merge and agent sync.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'markdown'
+			timestamp: 2
+		}) or { panic(err) }
+	db.close() or { panic(err) }
+
+	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
+	grant_pollyhub_repo_access(root_dir, 'team-query-fts-preview', 'alice', .reader) or {
+		panic(err)
+	}
+	handler := PollyLinkSidecarHandler{
+		root_dir: root_dir
+		default_branch: 'main'
+	}
+	mut auth_header := http.new_header()
+	auth_header.add(.authorization, 'Bearer secret-token')
+	response := handler.handle(http.Request{
+		method: .post
+		url: '/v1/query-fts-preview'
+		header: auth_header
+		data: json.encode(SidecarFtsQueryRequestDto{
+			repo_name: 'team-query-fts-preview'
+			branch_name: 'main'
+			table_name: 'notes'
+			column_name: 'body'
+			scope: 'any'
+			query_kind: 'all'
+			terms: ['PollyDB', 'merge']
+			select_columns: ['title']
+			limit: 10
+		})
+	})
+	assert response.status_code == 200
+	dto := json.decode(SidecarFtsQueryPreviewDto, response.body) or { panic(err) }
+	assert dto.plan.strategy == 'fts_index_all'
+	assert dto.plan.index_name == 'body_fts_any_idx'
+	assert dto.plan.selector == 'fts'
+	assert dto.plan.scope == 'any'
+	assert dto.plan.query_kind == 'all'
+	assert dto.explain.strategy == 'fts_index_all'
+	assert dto.notes.len == 1
+}
+
+fn test_sidecar_query_fts_returns_any_matches() {
+	root_dir := os.join_path(os.vtmp_dir(), 'polly-sidecar-query-fts-${rand.uuid_v4()}')
+	defer {
+		os.rmdir_all(root_dir) or {}
+	}
+	repo_root := sidecar_repo_root_dir(root_dir, 'team-query-fts')
+	cfg := ChunkConfig.default()
+	spec := sidecar_markdown_value_and_fts_indexed_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut pairs := []KVPair{}
+	for id, title in {
+		'note-1': 'Roadmap'
+		'note-2': 'Metrics'
+		'note-3': 'Other'
+	} {
+		mut row := TypedRowData.new()
+		row.set('id', id)
+		row.set('title', title)
+		row.set('body', MarkdownRef{
+			doc_root_id: 'seed-${id}'
+			source_hash: 'seed-${id}'
+			source_len: 0
+		})
+		pairs << KVPair{
+			key: TableView.new(Tree{}, 'notes').key_for(id.bytes())
+			value: codec.encode(row)!
+		}
+	}
+	seed_tree := Tree.build(pairs, cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed'
+		timestamp: 1
+	}) or { panic(err) }
+	session := db.begin_default_session() or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Roadmap\n\nShip agent sync.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'note-1'
+			timestamp: 2
+		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Metrics\n\nTrack dashboard metrics.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'note-2'
+			timestamp: 3
+		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body',
+		'# Notes\n\nNothing relevant.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'note-3'
+			timestamp: 4
+		}) or { panic(err) }
+	db.close() or { panic(err) }
+
+	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
+	grant_pollyhub_repo_access(root_dir, 'team-query-fts', 'alice', .reader) or { panic(err) }
+	handler := PollyLinkSidecarHandler{
+		root_dir: root_dir
+		default_branch: 'main'
+	}
+	mut auth_header := http.new_header()
+	auth_header.add(.authorization, 'Bearer secret-token')
+	response := handler.handle(http.Request{
+		method: .post
+		url: '/v1/query-fts'
+		header: auth_header
+		data: json.encode(SidecarFtsQueryRequestDto{
+			repo_name: 'team-query-fts'
+			branch_name: 'main'
+			table_name: 'notes'
+			column_name: 'body'
+			scope: 'any'
+			query_kind: 'any'
+			terms: ['metrics', 'sync']
+			select_columns: ['title']
+			limit: 10
+		})
+	})
+	assert response.status_code == 200
+	dto := json.decode(SidecarFtsQueryResultDto, response.body) or { panic(err) }
+	assert dto.plan.strategy == 'fts_index_any'
+	assert dto.plan.index_name == 'body_fts_any_idx'
+	assert dto.plan.selector == 'fts'
+	assert dto.rows.len == 2
+	assert dto.rows[0].primary_key == 'note-1'
+	assert dto.rows[1].primary_key == 'note-2'
+	assert dto.rows[0].values['title'] == 'Roadmap'
+	assert 'body' !in dto.rows[0].values
 }
 
 fn test_sidecar_query_post_supports_multiple_plain_filters() {

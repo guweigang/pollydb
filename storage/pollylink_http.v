@@ -155,6 +155,14 @@ struct SidecarQueryFilterShapeDto {
 	sample_explain      SidecarQuerySamplePlanExplainDto
 }
 
+struct SidecarFtsShapeDto {
+	kind             string
+	indexed          bool
+	index_name       string
+	planner_strategy string
+	sample_explain   SidecarQuerySamplePlanExplainDto
+}
+
 struct SidecarQuerySamplePlanExplainDto {
 	strategy                    string
 	index_name                  string
@@ -185,6 +193,8 @@ struct SidecarQuerySchemaFieldSelectorDto {
 	projection_names []string
 	planner_hints []SidecarQueryPlannerHintDto
 	filter_shapes []SidecarQueryFilterShapeDto
+	fts_query_kinds []string
+	fts_shapes      []SidecarFtsShapeDto
 }
 
 struct SidecarQuerySchemaProjectionDto {
@@ -573,6 +583,15 @@ pub:
 	sample_explain      SidecarQuerySamplePlanExplain
 }
 
+pub struct SidecarFtsShape {
+pub:
+	kind             string
+	indexed          bool
+	index_name       string
+	planner_strategy string
+	sample_explain   SidecarQuerySamplePlanExplain
+}
+
 pub struct SidecarQuerySamplePlanExplain {
 pub:
 	strategy                    string
@@ -606,6 +625,55 @@ pub:
 	projection_names []string
 	planner_hints []SidecarQueryPlannerHint
 	filter_shapes []SidecarQueryFilterShape
+	fts_query_kinds []string
+	fts_shapes      []SidecarFtsShape
+}
+
+struct SidecarFtsQueryPlanDto {
+	strategy    string
+	index_name  string
+	selector    string
+	scope       string
+	query_kind  string
+	term_count  int
+	limit       int
+}
+
+struct SidecarFtsQueryRequestDto {
+	repo_name      string
+	branch_name    string
+	table_name     string
+	column_name    string
+	scope          string
+	query_kind     string
+	terms          []string
+	select_columns []string
+	limit          int
+}
+
+struct SidecarFtsQueryPreviewDto {
+	branch_name string
+	table_name  string
+	column_name string
+	scope       string
+	query_kind  string
+	terms       []string
+	plan        SidecarFtsQueryPlanDto
+	explain     SidecarQuerySamplePlanExplainDto
+	warnings    []string
+	notes       []string
+}
+
+struct SidecarFtsQueryResultDto {
+	branch_name    string
+	table_name     string
+	column_name    string
+	scope          string
+	query_kind     string
+	terms          []string
+	select_columns []string
+	plan           SidecarFtsQueryPlanDto
+	rows           []SidecarTypedRowDto
 }
 
 pub struct SidecarQuerySchemaProjection {
@@ -764,6 +832,56 @@ pub:
 	plan                SidecarQueryPlan
 	cursor              SidecarQueryCursor
 	field_selector_meta SidecarFieldSelectorMeta
+}
+
+pub struct SidecarFtsQueryPlan {
+pub:
+	strategy    string
+	index_name  string
+	selector    string
+	scope       string
+	query_kind  string
+	term_count  int
+	limit       int
+}
+
+pub struct SidecarFtsQueryRequest {
+pub:
+	branch_name    string
+	table_name     string
+	column_name    string
+	scope          string
+	query_kind     string
+	terms          []string
+	select_columns []string
+	limit          int
+}
+
+pub struct SidecarFtsQueryPreview {
+pub:
+	branch_name string
+	table_name  string
+	column_name string
+	scope       string
+	query_kind  string
+	terms       []string
+	plan        SidecarFtsQueryPlan
+	explain     SidecarQuerySamplePlanExplain
+	warnings    []string
+	notes       []string
+}
+
+pub struct SidecarFtsQueryResult {
+pub:
+	branch_name    string
+	table_name     string
+	column_name    string
+	scope          string
+	query_kind     string
+	terms          []string
+	select_columns []string
+	plan           SidecarFtsQueryPlan
+	rows           []SidecarTypedRow
 }
 
 pub struct SidecarBranchLogEntry {
@@ -1301,6 +1419,32 @@ fn sidecar_query_filter_shape_dto(shape QueryFilterShapeCapability) SidecarQuery
 	}
 }
 
+fn sidecar_fts_kind_name(kind FtsQueryKind) string {
+	return fts_query_kind_name(kind)
+}
+
+fn sidecar_fts_shape_dto(shape QueryFtsShapeCapability) SidecarFtsShapeDto {
+	return SidecarFtsShapeDto{
+		kind: sidecar_fts_kind_name(shape.kind)
+		indexed: shape.indexed
+		index_name: shape.index_name
+		planner_strategy: shape.planner_strategy
+		sample_explain: sidecar_query_sample_plan_explain_dto(shape.sample_explain)
+	}
+}
+
+fn sidecar_fts_query_plan_dto(plan FtsQueryPlan) SidecarFtsQueryPlanDto {
+	return SidecarFtsQueryPlanDto{
+		strategy: plan.strategy
+		index_name: plan.index_name
+		selector: plan.selector
+		scope: fts_scope_name(plan.scope)
+		query_kind: sidecar_fts_kind_name(plan.kind)
+		term_count: plan.term_count
+		limit: plan.limit
+	}
+}
+
 fn sidecar_query_sample_plan_explain_dto(explain QuerySamplePlanExplain) SidecarQuerySamplePlanExplainDto {
 	return SidecarQuerySamplePlanExplainDto{
 		strategy: explain.strategy
@@ -1323,6 +1467,27 @@ fn sidecar_query_sample_plan_explain(dto SidecarQuerySamplePlanExplainDto) Sidec
 	}
 }
 
+fn sidecar_fts_scope_from_string(raw string) !FtsScope {
+	return match raw {
+		'', 'any' { .any }
+		'heading' { .heading }
+		'paragraph' { .paragraph }
+		'code_block' { .code_block }
+		'list_item' { .list_item }
+		else { return error('unsupported fts scope: ${raw}') }
+	}
+}
+
+fn sidecar_fts_kind_from_string(raw string) !FtsQueryKind {
+	return match raw {
+		'term' { .term }
+		'prefix' { .prefix }
+		'all' { .all }
+		'any' { .any }
+		else { return error('unsupported fts query kind: ${raw}') }
+	}
+}
+
 fn sidecar_typed_row_dto(row TypedSchemaRow) SidecarTypedRowDto {
 	mut values := map[string]string{}
 	for name, value in row.data.fields() {
@@ -1331,6 +1496,13 @@ fn sidecar_typed_row_dto(row TypedSchemaRow) SidecarTypedRowDto {
 	return SidecarTypedRowDto{
 		primary_key: row.primary_key.bytestr()
 		values: values
+	}
+}
+
+fn sidecar_typed_row(dto SidecarTypedRowDto) SidecarTypedRow {
+	return SidecarTypedRow{
+		primary_key: dto.primary_key
+		values: dto.values.clone()
 	}
 }
 
@@ -2334,6 +2506,14 @@ fn (handler PollyLinkSidecarHandler) serve_query_schema(req http.Request) http.R
 		for shape in selector.filter_shapes {
 			filter_shapes << sidecar_query_filter_shape_dto(shape)
 		}
+		mut fts_shapes := []SidecarFtsShapeDto{cap: selector.fts_shapes.len}
+		for shape in selector.fts_shapes {
+			fts_shapes << sidecar_fts_shape_dto(shape)
+		}
+		mut fts_query_kinds := []string{cap: selector.fts_query_kinds.len}
+		for kind in selector.fts_query_kinds {
+			fts_query_kinds << sidecar_fts_kind_name(kind)
+		}
 		field_selectors << SidecarQuerySchemaFieldSelectorDto{
 			column_name: selector.column_name
 			plugin_name: selector.plugin_name
@@ -2345,6 +2525,8 @@ fn (handler PollyLinkSidecarHandler) serve_query_schema(req http.Request) http.R
 			projection_names: selector.projection_names.clone()
 			planner_hints: planner_hints
 			filter_shapes: filter_shapes
+			fts_query_kinds: fts_query_kinds
+			fts_shapes: fts_shapes
 		}
 	}
 	mut projection_metrics := []SidecarQuerySchemaProjectionDto{cap: schema.projection_metrics.len}
@@ -2456,6 +2638,158 @@ fn (handler PollyLinkSidecarHandler) serve_query_plan_preview(req http.Request) 
 		notes: preview.notes.clone()
 		default_result_shape: preview.default_result_shape
 		supports_continuation_token: preview.supports_continuation_token
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_query_fts_preview(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('query_fts_preview', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	payload := json.decode(SidecarFtsQueryRequestDto, req.data) or {
+		handler.audit(identity, 'query_fts_preview', '', '', false, err.msg())
+		return json_error(.bad_request, err.msg())
+	}
+	if payload.branch_name.len == 0 {
+		return json_error(.bad_request, 'missing branch_name in request body')
+	}
+	if payload.table_name.len == 0 || payload.column_name.len == 0 {
+		return json_error(.bad_request, 'missing table_name or column_name in request body')
+	}
+	handler.enforce_rate_limit(identity, 'query_fts_preview', payload.repo_name, payload.branch_name) or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, payload.repo_name, .reader) or {
+		handler.audit(identity, 'query_fts_preview', payload.repo_name, payload.branch_name, false,
+			err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_root := sidecar_repo_root_dir(handler.root_dir, payload.repo_name)
+	mut db := PersistentDatabase.open(repo_root, handler.default_branch) or {
+		handler.audit(identity, 'query_fts_preview', payload.repo_name, payload.branch_name, false,
+			err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	defer {
+		db.close() or {}
+	}
+	session := db.open_session(payload.branch_name) or {
+		handler.audit(identity, 'query_fts_preview', payload.repo_name, payload.branch_name, false,
+			err.msg())
+		return json_error(.bad_request, err.msg())
+	}
+	query := FtsQuery{
+		table_name: payload.table_name
+		column_name: payload.column_name
+		scope: sidecar_fts_scope_from_string(payload.scope) or {
+			handler.audit(identity, 'query_fts_preview', payload.repo_name, payload.branch_name,
+				false, err.msg())
+			return json_error(.bad_request, err.msg())
+		}
+		kind: sidecar_fts_kind_from_string(payload.query_kind) or {
+			handler.audit(identity, 'query_fts_preview', payload.repo_name, payload.branch_name,
+				false, err.msg())
+			return json_error(.bad_request, err.msg())
+		}
+		terms: payload.terms.clone()
+		select_columns: payload.select_columns.clone()
+		limit: payload.limit
+	}
+	preview := session.preview_fts_query_details(query) or {
+		handler.audit(identity, 'query_fts_preview', payload.repo_name, payload.branch_name, false,
+			err.msg())
+		return json_error(.bad_request, err.msg())
+	}
+	handler.audit(identity, 'query_fts_preview', payload.repo_name, payload.branch_name, true,
+		'${payload.table_name}:${preview.plan.strategy}')
+	return json_ok(json.encode(SidecarFtsQueryPreviewDto{
+		branch_name: payload.branch_name
+		table_name: payload.table_name
+		column_name: payload.column_name
+		scope: payload.scope
+		query_kind: payload.query_kind
+		terms: payload.terms.clone()
+		plan: sidecar_fts_query_plan_dto(preview.plan)
+		explain: sidecar_query_sample_plan_explain_dto(QuerySamplePlanExplain{
+			strategy: preview.plan.strategy
+			index_name: preview.plan.index_name
+			warnings: preview.warnings.clone()
+			notes: preview.notes.clone()
+			default_result_shape: 'rows'
+			supports_continuation_token: false
+		})
+		warnings: preview.warnings.clone()
+		notes: preview.notes.clone()
+	}))
+}
+
+fn (handler PollyLinkSidecarHandler) serve_query_fts(req http.Request) http.Response {
+	identity := handler.request_identity(req) or {
+		handler.audit_auth_failure('query_fts', '', '', err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	payload := json.decode(SidecarFtsQueryRequestDto, req.data) or {
+		handler.audit(identity, 'query_fts', '', '', false, err.msg())
+		return json_error(.bad_request, err.msg())
+	}
+	if payload.branch_name.len == 0 {
+		return json_error(.bad_request, 'missing branch_name in request body')
+	}
+	if payload.table_name.len == 0 || payload.column_name.len == 0 {
+		return json_error(.bad_request, 'missing table_name or column_name in request body')
+	}
+	handler.enforce_rate_limit(identity, 'query_fts', payload.repo_name, payload.branch_name) or {
+		return json_error(.too_many_requests, err.msg())
+	}
+	authorize_pollyhub_repo_access(handler.root_dir, identity, payload.repo_name, .reader) or {
+		handler.audit(identity, 'query_fts', payload.repo_name, payload.branch_name, false, err.msg())
+		return json_error(.unauthorized, err.msg())
+	}
+	repo_root := sidecar_repo_root_dir(handler.root_dir, payload.repo_name)
+	mut db := PersistentDatabase.open(repo_root, handler.default_branch) or {
+		handler.audit(identity, 'query_fts', payload.repo_name, payload.branch_name, false, err.msg())
+		return json_error(.internal_server_error, err.msg())
+	}
+	defer {
+		db.close() or {}
+	}
+	session := db.open_session(payload.branch_name) or {
+		handler.audit(identity, 'query_fts', payload.repo_name, payload.branch_name, false, err.msg())
+		return json_error(.bad_request, err.msg())
+	}
+	query := FtsQuery{
+		table_name: payload.table_name
+		column_name: payload.column_name
+		scope: sidecar_fts_scope_from_string(payload.scope) or {
+			handler.audit(identity, 'query_fts', payload.repo_name, payload.branch_name, false,
+				err.msg())
+			return json_error(.bad_request, err.msg())
+		}
+		kind: sidecar_fts_kind_from_string(payload.query_kind) or {
+			handler.audit(identity, 'query_fts', payload.repo_name, payload.branch_name, false,
+				err.msg())
+			return json_error(.bad_request, err.msg())
+		}
+		terms: payload.terms.clone()
+		select_columns: payload.select_columns.clone()
+		limit: payload.limit
+	}
+	result := session.query_fts(mut db, query) or {
+		handler.audit(identity, 'query_fts', payload.repo_name, payload.branch_name, false, err.msg())
+		return json_error(.bad_request, err.msg())
+	}
+	handler.audit(identity, 'query_fts', payload.repo_name, payload.branch_name, true,
+		'${payload.table_name}:${result.plan.strategy}')
+	return json_ok(json.encode(SidecarFtsQueryResultDto{
+		branch_name: payload.branch_name
+		table_name: payload.table_name
+		column_name: payload.column_name
+		scope: payload.scope
+		query_kind: payload.query_kind
+		terms: payload.terms.clone()
+		select_columns: payload.select_columns.clone()
+		plan: sidecar_fts_query_plan_dto(result.plan)
+		rows: result.rows.map(sidecar_typed_row_dto(it))
 	}))
 }
 
@@ -3208,6 +3542,12 @@ pub fn (handler PollyLinkSidecarHandler) handle(req http.Request) http.Response 
 	if req.method == .post && path == '/v1/query-plan-preview' {
 		return handler.serve_query_plan_preview(req)
 	}
+	if req.method == .post && path == '/v1/query-fts-preview' {
+		return handler.serve_query_fts_preview(req)
+	}
+	if req.method == .post && path == '/v1/query-fts' {
+		return handler.serve_query_fts(req)
+	}
 	if req.method == .get && path == '/v1/markdown-metric' {
 		return handler.serve_markdown_metric(req)
 	}
@@ -3781,6 +4121,16 @@ pub fn (client PollyLinkClient) query_schema(branch_name string, table_name stri
 				sample_explain: sidecar_query_sample_plan_explain(shape.sample_explain)
 			}
 		}
+		mut fts_shapes := []SidecarFtsShape{cap: selector.fts_shapes.len}
+		for shape in selector.fts_shapes {
+			fts_shapes << SidecarFtsShape{
+				kind: shape.kind
+				indexed: shape.indexed
+				index_name: shape.index_name
+				planner_strategy: shape.planner_strategy
+				sample_explain: sidecar_query_sample_plan_explain(shape.sample_explain)
+			}
+		}
 		field_selectors << SidecarQuerySchemaFieldSelector{
 			column_name: selector.column_name
 			plugin_name: selector.plugin_name
@@ -3792,6 +4142,8 @@ pub fn (client PollyLinkClient) query_schema(branch_name string, table_name stri
 			projection_names: selector.projection_names.clone()
 			planner_hints: planner_hints
 			filter_shapes: filter_shapes
+			fts_query_kinds: selector.fts_query_kinds.clone()
+			fts_shapes: fts_shapes
 		}
 	}
 	mut projection_metrics := []SidecarQuerySchemaProjection{cap: dto.projection_metrics.len}
@@ -3820,6 +4172,79 @@ pub fn (client PollyLinkClient) query_schema(branch_name string, table_name stri
 		default_result_shape: dto.default_result_shape
 		supports_continuation_token: dto.supports_continuation_token
 		supports_select_projection: dto.supports_select_projection
+	}
+}
+
+pub fn (client PollyLinkClient) query_fts_preview(query SidecarFtsQueryRequest) !SidecarFtsQueryPreview {
+	response := client.post_json('/v1/query-fts-preview', json.encode(SidecarFtsQueryRequestDto{
+		repo_name: client.repo_name
+		branch_name: query.branch_name
+		table_name: query.table_name
+		column_name: query.column_name
+		scope: query.scope
+		query_kind: query.query_kind
+		terms: query.terms.clone()
+		select_columns: query.select_columns.clone()
+		limit: query.limit
+	}))!
+	dto := json.decode(SidecarFtsQueryPreviewDto, response.body)!
+	return SidecarFtsQueryPreview{
+		branch_name: dto.branch_name
+		table_name: dto.table_name
+		column_name: dto.column_name
+		scope: dto.scope
+		query_kind: dto.query_kind
+		terms: dto.terms.clone()
+		plan: SidecarFtsQueryPlan{
+			strategy: dto.plan.strategy
+			index_name: dto.plan.index_name
+			selector: dto.plan.selector
+			scope: dto.plan.scope
+			query_kind: dto.plan.query_kind
+			term_count: dto.plan.term_count
+			limit: dto.plan.limit
+		}
+		explain: sidecar_query_sample_plan_explain(dto.explain)
+		warnings: dto.warnings.clone()
+		notes: dto.notes.clone()
+	}
+}
+
+pub fn (client PollyLinkClient) query_fts(query SidecarFtsQueryRequest) !SidecarFtsQueryResult {
+	response := client.post_json('/v1/query-fts', json.encode(SidecarFtsQueryRequestDto{
+		repo_name: client.repo_name
+		branch_name: query.branch_name
+		table_name: query.table_name
+		column_name: query.column_name
+		scope: query.scope
+		query_kind: query.query_kind
+		terms: query.terms.clone()
+		select_columns: query.select_columns.clone()
+		limit: query.limit
+	}))!
+	dto := json.decode(SidecarFtsQueryResultDto, response.body)!
+	mut rows := []SidecarTypedRow{cap: dto.rows.len}
+	for row in dto.rows {
+		rows << sidecar_typed_row(row)
+	}
+	return SidecarFtsQueryResult{
+		branch_name: dto.branch_name
+		table_name: dto.table_name
+		column_name: dto.column_name
+		scope: dto.scope
+		query_kind: dto.query_kind
+		terms: dto.terms.clone()
+		select_columns: dto.select_columns.clone()
+		plan: SidecarFtsQueryPlan{
+			strategy: dto.plan.strategy
+			index_name: dto.plan.index_name
+			selector: dto.plan.selector
+			scope: dto.plan.scope
+			query_kind: dto.plan.query_kind
+			term_count: dto.plan.term_count
+			limit: dto.plan.limit
+		}
+		rows: rows
 	}
 }
 

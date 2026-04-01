@@ -4249,6 +4249,20 @@ fn test_database_table_query_schema_exposes_selectors_and_projection_metrics() {
 	assert fts_selector.filter_shapes[1].indexed
 	assert fts_selector.filter_shapes[1].index_name == 'body_fts_any_idx'
 	assert fts_selector.filter_shapes[1].sample_explain.strategy == 'index_prefix'
+	assert fts_selector.fts_query_kinds == [.term, .prefix, .all, .any]
+	assert fts_selector.fts_shapes.len == 4
+	assert fts_selector.fts_shapes[0].kind == .term
+	assert fts_selector.fts_shapes[0].indexed
+	assert fts_selector.fts_shapes[0].index_name == 'body_fts_any_idx'
+	assert fts_selector.fts_shapes[0].planner_strategy == 'index_exact'
+	assert fts_selector.fts_shapes[0].sample_explain.strategy == 'index_exact'
+	assert fts_selector.fts_shapes[2].kind == .all
+	assert fts_selector.fts_shapes[2].indexed
+	assert fts_selector.fts_shapes[2].index_name == 'body_fts_any_idx'
+	assert fts_selector.fts_shapes[2].planner_strategy == 'fts_index_all'
+	assert fts_selector.fts_shapes[2].sample_explain.strategy == 'fts_index_all'
+	assert fts_selector.fts_shapes[3].kind == .any
+	assert fts_selector.fts_shapes[3].planner_strategy == 'fts_index_any'
 
 	assert links_selector.selector == 'links'
 	assert links_selector.value_type == .i64_

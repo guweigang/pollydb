@@ -22,6 +22,15 @@ pub:
 	sample_explain      QuerySamplePlanExplain
 }
 
+pub struct QueryFtsShapeCapability {
+pub:
+	kind             FtsQueryKind
+	indexed          bool
+	index_name       string
+	planner_strategy string
+	sample_explain   QuerySamplePlanExplain
+}
+
 pub struct QuerySamplePlanExplain {
 pub:
 	strategy                    string
@@ -66,6 +75,8 @@ pub:
 	projection_names  []string
 	planner_hints     []QueryPlannerHint
 	filter_shapes     []QueryFilterShapeCapability
+	fts_query_kinds   []FtsQueryKind
+	fts_shapes        []QueryFtsShapeCapability
 }
 
 pub struct QueryProjectionCapability {
@@ -220,6 +231,71 @@ fn query_filter_shapes_for_target(spec TypedTableSpec, projectors map[string]Agg
 	return shapes
 }
 
+fn query_supported_fts_kinds_for_selector(plugin_name string, selector string) []FtsQueryKind {
+	if plugin_name != 'markdown' || !selector.starts_with('fts') {
+		return []FtsQueryKind{}
+	}
+	return [.term, .prefix, .all, .any]
+}
+
+fn query_sample_fts_terms(kind FtsQueryKind) []string {
+	return match kind {
+		.term { ['roadmap'] }
+		.prefix { ['road'] }
+		.all { ['pollydb', 'merge'] }
+		.any { ['agent', 'sync'] }
+	}
+}
+
+fn query_sample_fts_explain(spec TypedTableSpec, column_name string, scope FtsScope, kind FtsQueryKind) QuerySamplePlanExplain {
+	query := FtsQuery{
+		table_name: spec.table.name
+		column_name: column_name
+		scope: scope
+		kind: kind
+		terms: query_sample_fts_terms(kind)
+		limit: 10
+	}
+	plan := plan_fts_query(spec, query)
+	preview := build_fts_query_preview(spec, query, plan)
+	return QuerySamplePlanExplain{
+		strategy: preview.plan.strategy
+		index_name: preview.plan.index_name
+		warnings: preview.warnings.clone()
+		notes: preview.notes.clone()
+		default_result_shape: 'rows'
+		supports_continuation_token: false
+	}
+}
+
+fn query_fts_shapes_for_selector(spec TypedTableSpec, column_name string, plugin_name string, selector string) []QueryFtsShapeCapability {
+	kinds := query_supported_fts_kinds_for_selector(plugin_name, selector)
+	if kinds.len == 0 {
+		return []QueryFtsShapeCapability{}
+	}
+	scope := markdown_fts_scope_from_selector(selector)
+	mut shapes := []QueryFtsShapeCapability{cap: kinds.len}
+	for kind in kinds {
+		query := FtsQuery{
+			table_name: spec.table.name
+			column_name: column_name
+			scope: scope
+			kind: kind
+			terms: query_sample_fts_terms(kind)
+			limit: 10
+		}
+		plan := plan_fts_query(spec, query)
+		shapes << QueryFtsShapeCapability{
+			kind: kind
+			indexed: plan.index_name.len > 0
+			index_name: plan.index_name
+			planner_strategy: plan.strategy
+			sample_explain: query_sample_fts_explain(spec, column_name, scope, kind)
+		}
+	}
+	return shapes
+}
+
 pub fn (database PersistentDatabase) table_query_schema(table_name string) !TableQuerySchema {
 	spec := database.table_spec(table_name)!
 	mut columns := []QueryColumnCapability{cap: spec.table.columns.len}
@@ -271,6 +347,10 @@ pub fn (database PersistentDatabase) table_query_schema(table_name string) !Tabl
 				planner_hints: query_planner_hints_for_target(spec, index.column, meta.plugin_name,
 					meta.selector, meta.value_type)
 				filter_shapes: []QueryFilterShapeCapability{}
+				fts_query_kinds: query_supported_fts_kinds_for_selector(meta.plugin_name,
+					meta.selector)
+				fts_shapes: query_fts_shapes_for_selector(spec, index.column, meta.plugin_name,
+					meta.selector)
 			}
 		}
 		mut index_names := capability.index_names.clone()
@@ -282,6 +362,8 @@ pub fn (database PersistentDatabase) table_query_schema(table_name string) !Tabl
 			filter_shapes: query_filter_shapes_for_target(spec, database.projectors, table_name,
 				index.column, meta.plugin_name, meta.selector, meta.value_type,
 				capability.projection_names)
+			fts_query_kinds: capability.fts_query_kinds.clone()
+			fts_shapes: capability.fts_shapes.clone()
 		}
 	}
 	mut projection_metrics := []QueryProjectionCapability{}
@@ -322,6 +404,10 @@ pub fn (database PersistentDatabase) table_query_schema(table_name string) !Tabl
 					planner_hints: query_planner_hints_for_target(spec, projector.column_name,
 						selector_meta.plugin_name, selector_meta.selector, selector_meta.value_type)
 					filter_shapes: []QueryFilterShapeCapability{}
+					fts_query_kinds: query_supported_fts_kinds_for_selector(selector_meta.plugin_name,
+						selector_meta.selector)
+					fts_shapes: query_fts_shapes_for_selector(spec, projector.column_name,
+						selector_meta.plugin_name, selector_meta.selector)
 				}
 			}
 			mut projection_names := selector_capability.projection_names.clone()
@@ -332,6 +418,8 @@ pub fn (database PersistentDatabase) table_query_schema(table_name string) !Tabl
 				filter_shapes: query_filter_shapes_for_target(spec, database.projectors, table_name,
 					projector.column_name, selector_meta.plugin_name, selector_meta.selector,
 					selector_meta.value_type, projection_names)
+				fts_query_kinds: selector_capability.fts_query_kinds.clone()
+				fts_shapes: selector_capability.fts_shapes.clone()
 			}
 		}
 		projection_metrics << capability
