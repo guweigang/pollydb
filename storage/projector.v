@@ -297,6 +297,17 @@ fn validate_markdown_index_selector(selector string, value_type ColumnType) ! {
 				return error('markdown value selector ${selector} does not accept a qualifier')
 			}
 		}
+		'fts' {
+			if value_type != .string_ {
+				return error('markdown value selector ${selector} requires string index type')
+			}
+			if parts.len > 2 {
+				return error('markdown fts selector must be fts or fts:<scope>')
+			}
+			if parts.len == 2 && parts[1] !in ['heading', 'paragraph', 'code_block', 'list_item'] {
+				return error('unsupported markdown fts scope selector: ${parts[1]}')
+			}
+		}
 		else {
 			return error('unsupported markdown index selector: ${selector}')
 		}
@@ -435,10 +446,35 @@ fn collect_markdown_index_values(selector string, nodes []vmarkdown.BlockNode, m
 	}
 }
 
+fn markdown_fts_scope_from_selector(selector string) FtsScope {
+	parts := selector.split(':')
+	if parts.len == 1 {
+		return .any
+	}
+	return match parts[1] {
+		'heading' { .heading }
+		'paragraph' { .paragraph }
+		'code_block' { .code_block }
+		'list_item' { .list_item }
+		else { .any }
+	}
+}
+
 fn markdown_index_values(selector string, doc vmarkdown.Document, value_type ColumnType) ![]ColumnValue {
 	validate_markdown_index_selector(selector, value_type)!
 	if value_type == .i64_ {
 		return [ColumnValue(count_markdown_blocks(selector, doc.children))]
+	}
+	if selector.starts_with('fts') {
+		scope := markdown_fts_scope_from_selector(selector)
+		mut out := []ColumnValue{}
+		for key in fts_distinct_keys(emit_markdown_fts_tokens_from_doc(doc)) {
+			if key.scope != scope {
+				continue
+			}
+			markdown_append_distinct(mut out, ColumnValue(key.term))
+		}
+		return out
 	}
 	mut out := []ColumnValue{}
 	collect_markdown_index_values(selector, doc.children, mut out)

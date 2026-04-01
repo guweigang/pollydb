@@ -399,3 +399,105 @@ fn test_typed_indexed_schema_view_fast_update_preserves_indexes_for_fixed_width_
 	assert rows.len == 1
 	assert rows[0].primary_key.bytestr() == '001'
 }
+
+fn test_fts_query_validation_accepts_single_term_and_scoped_prefix() {
+	validate_fts_query(FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		scope: .heading
+		kind: .prefix
+		terms: ['Road']
+		limit: 10
+	}) or { panic(err) }
+	assert fts_scope_name(.heading) == 'heading'
+	assert fts_query_kind_name(.prefix) == 'prefix'
+	assert fts_normalize_term('  RoadMap ') == 'roadmap'
+}
+
+fn test_fts_query_validation_rejects_empty_and_multi_term_prefix() {
+	if _ := validate_fts_query(FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		kind: .term
+		terms: []string{}
+	}) {
+		panic('expected empty term list to fail')
+	} else {
+		assert err.msg().contains('at least one term')
+	}
+	if _ := validate_fts_query(FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		kind: .prefix
+		terms: ['road', 'map']
+	}) {
+		panic('expected multi-term prefix query to fail')
+	} else {
+		assert err.msg().contains('exactly one term')
+	}
+}
+
+fn test_fts_tokenize_text_splits_and_normalizes_ascii_words() {
+	tokens := fts_tokenize_text('Road-map v1 docs.example.com')
+	assert tokens == ['road', 'map', 'v1', 'docs', 'example', 'com']
+}
+
+fn test_emit_markdown_fts_tokens_collects_scoped_terms() {
+	tokens := emit_markdown_fts_tokens('# Intro\n\nParagraph about PollyDB.\n\n- list item\n\n```v\nprintln(\"ok\")\n```\n') or {
+		panic(err)
+	}
+	assert tokens.len > 0
+	assert tokens.any(it.scope == .heading && it.term == 'intro')
+	assert tokens.any(it.scope == .paragraph && it.term == 'pollydb')
+	assert tokens.any(it.scope == .list_item && it.term == 'list')
+	assert tokens.any(it.scope == .code_block && it.term == 'println')
+}
+
+fn test_fts_distinct_keys_adds_scope_specific_and_any_scope_terms() {
+	keys := fts_markdown_derived_keys('# Intro\n\nParagraph about PollyDB.\n') or { panic(err) }
+	assert keys.any(it.scope == .heading && it.term == 'intro')
+	assert keys.any(it.scope == .paragraph && it.term == 'pollydb')
+	assert keys.any(it.scope == .any && it.term == 'intro')
+	assert keys.any(it.scope == .any && it.term == 'pollydb')
+}
+
+fn test_fts_matches_query_supports_term_prefix_all_and_any() {
+	keys := fts_markdown_derived_keys('# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n') or {
+		panic(err)
+	}
+	assert fts_matches_query(keys, FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		scope: .heading
+		kind: .term
+		terms: ['roadmap']
+	}) or { panic(err) }
+	assert fts_matches_query(keys, FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		scope: .heading
+		kind: .prefix
+		terms: ['road']
+	}) or { panic(err) }
+	assert fts_matches_query(keys, FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		scope: .paragraph
+		kind: .all
+		terms: ['pollydb', 'merge']
+	}) or { panic(err) }
+	assert fts_matches_query(keys, FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		scope: .any
+		kind: .any
+		terms: ['agent', 'missing']
+	}) or { panic(err) }
+	assert !(fts_matches_query(keys, FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		scope: .paragraph
+		kind: .term
+		terms: ['roadmap']
+	}) or { panic(err) })
+}

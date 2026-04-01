@@ -33,6 +33,21 @@ fn sidecar_markdown_value_indexed_spec() !TypedTableSpec {
 	])
 }
 
+fn sidecar_markdown_value_and_fts_indexed_spec() !TypedTableSpec {
+	table := TableDef.new('notes', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('title', .string_, false)!,
+		ColumnDef.new('body', .markdown_, false)!,
+	], ['id'])!
+	return TypedTableSpec.new(table, [
+		SchemaIndexDef.markdown_value('body_link_host_idx', 'body', 'link_host')!,
+		SchemaIndexDef.markdown_value_covering('body_code_lang_cover', 'body', 'code_block_lang')!,
+		SchemaIndexDef.markdown_value('body_heading_text_idx', 'body', 'heading_text:2')!,
+		SchemaIndexDef.markdown_value('body_fts_any_idx', 'body', 'fts')!,
+		SchemaIndexDef.markdown_value('body_fts_heading_idx', 'body', 'fts:heading')!,
+	])
+}
+
 fn test_sidecar_repo_root_dir_uses_namespace_when_present() {
 	assert sidecar_repo_root_dir('/tmp/hub', '') == '/tmp/hub'
 	assert sidecar_repo_root_dir('/tmp/hub', '.') == '/tmp/hub'
@@ -792,7 +807,7 @@ fn test_sidecar_index_lookup_returns_markdown_value_index_rows() {
 	}
 	repo_root := sidecar_repo_root_dir(root_dir, 'team-md-index')
 	cfg := ChunkConfig.default()
-	spec := sidecar_markdown_value_indexed_spec() or { panic(err) }
+	spec := sidecar_markdown_value_and_fts_indexed_spec() or { panic(err) }
 	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
 	db.register_table(spec) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
@@ -855,7 +870,7 @@ fn test_sidecar_index_lookup_prefix_returns_markdown_heading_matches() {
 	}
 	repo_root := sidecar_repo_root_dir(root_dir, 'team-md-prefix')
 	cfg := ChunkConfig.default()
-	spec := sidecar_markdown_value_indexed_spec() or { panic(err) }
+	spec := sidecar_markdown_value_and_fts_indexed_spec() or { panic(err) }
 	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
 	db.register_table(spec) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
@@ -981,7 +996,7 @@ fn test_sidecar_markdown_query_prefix_returns_markdown_index_rows() {
 	}
 	repo_root := sidecar_repo_root_dir(root_dir, 'team-md-query-prefix')
 	cfg := ChunkConfig.default()
-	spec := sidecar_markdown_value_indexed_spec() or { panic(err) }
+	spec := sidecar_markdown_value_and_fts_indexed_spec() or { panic(err) }
 	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
 	db.register_table(spec) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
@@ -1082,7 +1097,7 @@ fn test_sidecar_query_schema_returns_selector_and_projection_metadata() {
 	defer {
 		db.close() or {}
 	}
-	spec := sidecar_markdown_value_indexed_spec() or { panic(err) }
+	spec := sidecar_markdown_value_and_fts_indexed_spec() or { panic(err) }
 	db.register_table(spec) or { panic(err) }
 	db.register_aggregate_projection(AggregateProjectionDef.count_field_selector('count(notes.body.links)',
 		'notes', 'body', 'markdown', 'links') or { panic(err) }) or { panic(err) }
@@ -1128,10 +1143,14 @@ fn test_sidecar_query_schema_returns_selector_and_projection_metadata() {
 	assert body_column.filter_shapes[0].sample_explain.warnings[0].contains('table scan')
 
 	mut heading_selector := SidecarQuerySchemaFieldSelectorDto{}
+	mut fts_selector := SidecarQuerySchemaFieldSelectorDto{}
 	mut links_selector := SidecarQuerySchemaFieldSelectorDto{}
 	for selector in dto.field_selectors {
 		if selector.selector == 'heading_text:2' {
 			heading_selector = selector
+		}
+		if selector.selector == 'fts' {
+			fts_selector = selector
 		}
 		if selector.selector == 'links' {
 			links_selector = selector
@@ -1154,6 +1173,17 @@ fn test_sidecar_query_schema_returns_selector_and_projection_metadata() {
 	assert heading_selector.filter_shapes[1].sample_explain.strategy == 'index_prefix'
 	assert heading_selector.filter_shapes[1].sample_explain.index_name == 'body_heading_text_idx'
 	assert heading_selector.filter_shapes[1].sample_explain.warnings.len == 0
+
+	assert fts_selector.plugin_name == 'markdown'
+	assert fts_selector.value_type == 'string'
+	assert fts_selector.index_names == ['body_fts_any_idx']
+	assert fts_selector.filter_ops == ['eq', 'prefix', 'after', 'before', 'between']
+	assert fts_selector.planner_hints.len == 5
+	assert fts_selector.planner_hints[1].op == 'prefix'
+	assert fts_selector.planner_hints[1].index_name == 'body_fts_any_idx'
+	assert fts_selector.filter_shapes[1].indexed
+	assert fts_selector.filter_shapes[1].index_name == 'body_fts_any_idx'
+	assert fts_selector.filter_shapes[1].sample_explain.strategy == 'index_prefix'
 
 	assert links_selector.plugin_name == 'markdown'
 	assert links_selector.value_type == 'i64'

@@ -111,6 +111,33 @@ fn database_notes_value_indexed_spec() !TypedTableSpec {
 	])
 }
 
+fn database_notes_value_and_fts_indexed_spec() !TypedTableSpec {
+	table := TableDef.new('notes', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('title', .string_, false)!,
+		ColumnDef.new('body', .markdown_, false)!,
+	], ['id'])!
+	return TypedTableSpec.new(table, [
+		SchemaIndexDef.markdown_value('body_link_host_idx', 'body', 'link_host')!,
+		SchemaIndexDef.markdown_value_covering('body_code_lang_cover', 'body', 'code_block_lang')!,
+		SchemaIndexDef.markdown_value('body_heading_text_idx', 'body', 'heading_text:2')!,
+		SchemaIndexDef.markdown_value('body_fts_any_idx', 'body', 'fts')!,
+		SchemaIndexDef.markdown_value('body_fts_heading_idx', 'body', 'fts:heading')!,
+	])
+}
+
+fn database_notes_fts_indexed_spec() !TypedTableSpec {
+	table := TableDef.new('notes', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('title', .string_, false)!,
+		ColumnDef.new('body', .markdown_, false)!,
+	], ['id'])!
+	return TypedTableSpec.new(table, [
+		SchemaIndexDef.markdown_value('body_fts_any_idx', 'body', 'fts')!,
+		SchemaIndexDef.markdown_value('body_fts_heading_idx', 'body', 'fts:heading')!,
+	])
+}
+
 fn database_seed_tree(spec TypedTableSpec, primary_key string, name string, email string, cfg ChunkConfig) !Tree {
 	codec := TypedRowCodec.new(spec.table)
 	mut row := TypedRowData.new()
@@ -3288,6 +3315,148 @@ fn test_database_session_query_uses_markdown_selector_prefix_index() {
 	assert result.rows[0].primary_key.bytestr() == 'note-1'
 }
 
+fn test_database_session_lookup_markdown_fts_value_indexes() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-markdown-fts-indexes')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_notes_fts_indexed_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut row := TypedRowData.new()
+	row.set('id', 'note-1')
+	row.set('title', 'Roadmap')
+	row.set('body', MarkdownRef{
+		doc_root_id: 'seed-1'
+		source_hash: 'seed-1'
+		source_len: 0
+	})
+	seed_tree := Tree.build([
+		KVPair{
+			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			value: codec.encode(row)!
+		},
+	], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed notes'
+		timestamp: 1
+	}) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n', cfg,
+		CommitMeta{
+			author: 'gwg'
+			message: 'write body'
+			timestamp: 2
+		}) or { panic(err) }
+
+	heading_rows := session.lookup_index(mut db, 'notes', 'body_fts_heading_idx', 'roadmap', 10) or {
+		panic(err)
+	}
+	assert heading_rows.len == 1
+	assert heading_rows[0].primary_key.bytestr() == 'note-1'
+
+	prefix_rows := session.lookup_index_prefix(mut db, 'notes', 'body_fts_any_idx', 'agen', 10) or {
+		panic(err)
+	}
+	assert prefix_rows.len == 1
+	assert prefix_rows[0].primary_key.bytestr() == 'note-1'
+}
+
+fn test_database_session_query_page_uses_markdown_fts_selector_index() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-page-markdown-fts')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_notes_fts_indexed_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut note_1 := TypedRowData.new()
+	note_1.set('id', 'note-1')
+	note_1.set('title', 'Roadmap')
+	note_1.set('body', MarkdownRef{
+		doc_root_id: 'seed-1'
+		source_hash: 'seed-1'
+		source_len: 0
+	})
+	mut note_2 := TypedRowData.new()
+	note_2.set('id', 'note-2')
+	note_2.set('title', 'Changelog')
+	note_2.set('body', MarkdownRef{
+		doc_root_id: 'seed-2'
+		source_hash: 'seed-2'
+		source_len: 0
+	})
+	seed_tree := Tree.build([
+		KVPair{
+			key: TableView.new(Tree{}, spec.table.name).key_for('note-1'.bytes())
+			value: codec.encode(note_1)!
+		},
+		KVPair{
+			key: TableView.new(Tree{}, spec.table.name).key_for('note-2'.bytes())
+			value: codec.encode(note_2)!
+		},
+	], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed notes'
+		timestamp: 1
+	}) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n', cfg,
+		CommitMeta{
+			author: 'gwg'
+			message: 'write roadmap'
+			timestamp: 2
+		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Notes\n\nDiscuss metrics only.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'write notes'
+			timestamp: 3
+		}) or { panic(err) }
+
+	page := session.query_page(mut db, QueryRequest{
+		table_name: 'notes'
+		filters: [QueryFilter.field_prefix('body', 'markdown', 'fts', 'agen')]
+		select_columns: ['title']
+		limit: 10
+	}) or { panic(err) }
+
+	assert page.plan.strategy == 'index_prefix'
+	assert page.plan.index_name == 'body_fts_any_idx'
+	assert page.plan.index_filter.column_name == 'body'
+	assert page.plan.index_filter.plugin_name == 'markdown'
+	assert page.plan.index_filter.selector == 'fts'
+	assert page.rows.len == 1
+	assert page.rows[0].primary_key.bytestr() == 'note-1'
+	assert page.rows[0].data.has('title')
+}
+
 fn test_transaction_session_query_uses_index_and_post_filters() {
 	cfg := ChunkConfig{
 		min_size: 64
@@ -3748,7 +3917,7 @@ fn test_database_table_query_schema_exposes_selectors_and_projection_metrics() {
 	defer {
 		os.rmdir_all(dir) or {}
 	}
-	spec := database_notes_value_indexed_spec() or { panic(err) }
+	spec := database_notes_value_and_fts_indexed_spec() or { panic(err) }
 	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
 	defer {
 		db.close() or {}
@@ -3785,11 +3954,16 @@ fn test_database_table_query_schema_exposes_selectors_and_projection_metrics() {
 	assert body_column.filter_shapes[0].sample_explain.warnings[0].contains('table scan')
 
 	mut heading_selector := QueryFieldSelectorCapability{}
+	mut fts_selector := QueryFieldSelectorCapability{}
 	mut links_selector := QueryFieldSelectorCapability{}
 	for selector in schema.field_selectors {
 		if selector.column_name == 'body' && selector.plugin_name == 'markdown'
 			&& selector.selector == 'heading_text:2' {
 			heading_selector = selector
+		}
+		if selector.column_name == 'body' && selector.plugin_name == 'markdown'
+			&& selector.selector == 'fts' {
+			fts_selector = selector
 		}
 		if selector.column_name == 'body' && selector.plugin_name == 'markdown'
 			&& selector.selector == 'links' {
@@ -3813,6 +3987,17 @@ fn test_database_table_query_schema_exposes_selectors_and_projection_metrics() {
 	assert heading_selector.filter_shapes[1].sample_explain.strategy == 'index_prefix'
 	assert heading_selector.filter_shapes[1].sample_explain.index_name == 'body_heading_text_idx'
 	assert heading_selector.filter_shapes[1].sample_explain.warnings.len == 0
+
+	assert fts_selector.selector == 'fts'
+	assert fts_selector.value_type == .string_
+	assert fts_selector.index_names == ['body_fts_any_idx']
+	assert fts_selector.filter_ops == [.eq, .prefix, .after, .before, .between]
+	assert fts_selector.planner_hints.len == 5
+	assert fts_selector.planner_hints[1].op == .prefix
+	assert fts_selector.planner_hints[1].index_name == 'body_fts_any_idx'
+	assert fts_selector.filter_shapes[1].indexed
+	assert fts_selector.filter_shapes[1].index_name == 'body_fts_any_idx'
+	assert fts_selector.filter_shapes[1].sample_explain.strategy == 'index_prefix'
 
 	assert links_selector.selector == 'links'
 	assert links_selector.value_type == .i64_
