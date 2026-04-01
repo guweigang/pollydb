@@ -22,6 +22,7 @@ pub:
 	scope       FtsScope = .any
 	kind        FtsQueryKind
 	terms       []string
+	select_columns []string
 	limit       int
 }
 

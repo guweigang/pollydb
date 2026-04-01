@@ -3457,6 +3457,257 @@ fn test_database_session_query_page_uses_markdown_fts_selector_index() {
 	assert page.rows[0].data.has('title')
 }
 
+fn test_database_session_query_fts_all_intersects_exact_term_indexes() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-fts-all')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_notes_fts_indexed_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut rows := []KVPair{}
+	for id, title in {
+		'note-1': 'Roadmap'
+		'note-2': 'PollyDB'
+		'note-3': 'Merge'
+	} {
+		mut row := TypedRowData.new()
+		row.set('id', id)
+		row.set('title', title)
+		row.set('body', MarkdownRef{
+			doc_root_id: 'seed-${id}'
+			source_hash: 'seed-${id}'
+			source_len: 0
+		})
+		rows << KVPair{
+			key: TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
+			value: codec.encode(row)!
+		}
+	}
+	seed_tree := Tree.build(rows, cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed notes'
+		timestamp: 1
+	}) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\nParagraph about PollyDB merge and agent sync.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'write note-1'
+			timestamp: 2
+		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Intro\n\nParagraph about PollyDB only.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'write note-2'
+			timestamp: 3
+		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body',
+		'# Intro\n\nParagraph about merge only.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'write note-3'
+			timestamp: 4
+		}) or { panic(err) }
+
+	preview := session.preview_fts_query_details(FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		kind: .all
+		terms: ['PollyDB', 'merge']
+		select_columns: ['title']
+		limit: 10
+	}) or { panic(err) }
+	assert preview.plan.strategy == 'fts_index_all'
+	assert preview.plan.index_name == 'body_fts_any_idx'
+	assert preview.notes.len == 1
+
+	result := session.query_fts(mut db, FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		kind: .all
+		terms: ['PollyDB', 'merge']
+		select_columns: ['title']
+		limit: 10
+	}) or { panic(err) }
+	assert result.plan.strategy == 'fts_index_all'
+	assert result.rows.len == 1
+	assert result.rows[0].primary_key.bytestr() == 'note-1'
+	assert result.rows[0].data.has('title')
+	assert !result.rows[0].data.has('body')
+}
+
+fn test_database_session_query_fts_any_unions_exact_term_indexes() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-fts-any')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_notes_fts_indexed_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut rows := []KVPair{}
+	for id, title in {
+		'note-1': 'Roadmap'
+		'note-2': 'Metrics'
+		'note-3': 'Other'
+	} {
+		mut row := TypedRowData.new()
+		row.set('id', id)
+		row.set('title', title)
+		row.set('body', MarkdownRef{
+			doc_root_id: 'seed-${id}'
+			source_hash: 'seed-${id}'
+			source_len: 0
+		})
+		rows << KVPair{
+			key: TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
+			value: codec.encode(row)!
+		}
+	}
+	seed_tree := Tree.build(rows, cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed notes'
+		timestamp: 1
+	}) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Roadmap\n\nShip agent sync.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'write note-1'
+			timestamp: 2
+		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Metrics\n\nTrack dashboard metrics.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'write note-2'
+			timestamp: 3
+		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body',
+		'# Notes\n\nNothing relevant.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'write note-3'
+			timestamp: 4
+		}) or { panic(err) }
+
+	result := session.query_fts(mut db, FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		kind: .any
+		terms: ['metrics', 'sync']
+		select_columns: ['title']
+		limit: 10
+	}) or { panic(err) }
+	assert result.plan.strategy == 'fts_index_any'
+	assert result.plan.index_name == 'body_fts_any_idx'
+	assert result.rows.len == 2
+	assert result.rows[0].primary_key.bytestr() == 'note-1'
+	assert result.rows[1].primary_key.bytestr() == 'note-2'
+}
+
+fn test_database_session_query_fts_falls_back_to_scan_without_fts_index() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-fts-scan')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_notes_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut rows := []KVPair{}
+	for id, title in {
+		'note-1': 'Roadmap'
+		'note-2': 'Notes'
+	} {
+		mut row := TypedRowData.new()
+		row.set('id', id)
+		row.set('title', title)
+		row.set('body', MarkdownRef{
+			doc_root_id: 'seed-${id}'
+			source_hash: 'seed-${id}'
+			source_len: 0
+		})
+		rows << KVPair{
+			key: TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
+			value: codec.encode(row)!
+		}
+	}
+	seed_tree := Tree.build(rows, cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed notes'
+		timestamp: 1
+	}) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Roadmap\n\nShip agent sync.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'write note-1'
+			timestamp: 2
+		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Notes\n\nDiscuss metrics.\n', cfg, CommitMeta{
+			author: 'gwg'
+			message: 'write note-2'
+			timestamp: 3
+		}) or { panic(err) }
+
+	preview := session.preview_fts_query_details(FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		scope: .heading
+		kind: .any
+		terms: ['roadmap', 'notes']
+		limit: 10
+	}) or { panic(err) }
+	assert preview.plan.strategy == 'fts_scan_any'
+	assert preview.warnings.len == 1
+	assert preview.warnings[0].contains('table scan')
+
+	result := session.query_fts(mut db, FtsQuery{
+		table_name: 'notes'
+		column_name: 'body'
+		scope: .heading
+		kind: .any
+		terms: ['roadmap', 'notes']
+		limit: 10
+	}) or { panic(err) }
+	assert result.plan.strategy == 'fts_scan_any'
+	assert result.rows.len == 2
+}
+
 fn test_transaction_session_query_uses_index_and_post_filters() {
 	cfg := ChunkConfig{
 		min_size: 64
