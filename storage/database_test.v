@@ -3623,8 +3623,17 @@ fn test_database_session_query_fts_any_unions_exact_term_indexes() {
 	assert result.plan.strategy == 'fts_index_any'
 	assert result.plan.index_name == 'body_fts_any_idx'
 	assert result.rows.len == 2
-	assert result.rows[0].primary_key.bytestr() == 'note-1'
-	assert result.rows[1].primary_key.bytestr() == 'note-2'
+	assert result.hits.len == 2
+	assert result.rows[0].primary_key.bytestr() == 'note-2'
+	assert result.rows[1].primary_key.bytestr() == 'note-1'
+	assert result.hits[0].primary_key.bytestr() == 'note-2'
+	assert result.hits[1].primary_key.bytestr() == 'note-1'
+	assert result.hits[0].score > result.hits[1].score
+	assert result.hits[0].matched_terms == ['metrics']
+	assert result.hits[0].matched_scopes == [.heading, .paragraph]
+	assert result.hits[0].summary.contains('terms=[metrics]')
+	assert result.hits[1].matched_terms == ['sync']
+	assert result.hits[1].matched_scopes == [.paragraph]
 }
 
 fn test_database_session_query_fts_falls_back_to_scan_without_fts_index() {

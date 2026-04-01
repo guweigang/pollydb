@@ -20,9 +20,19 @@ pub:
 	notes    []string
 }
 
+pub struct FtsHit {
+pub:
+	primary_key     []u8
+	score           int
+	matched_terms   []string
+	matched_scopes  []FtsScope
+	summary         string
+}
+
 pub struct FtsQueryResult {
 pub:
 	rows  []TypedSchemaRow
+	hits  []FtsHit
 	plan  FtsQueryPlan
 }
 
@@ -73,9 +83,13 @@ pub fn (session DatabaseSession) query_fts(mut db PersistentDatabase, query FtsQ
 	} else {
 		query_fts_rows_from_database_scan(session, mut db, spec, normalized)!
 	}
+	ranked := fts_rank_rows(db.root_dir, spec.table, normalized, rows)!
+	rows = ranked.rows.clone()
+	mut hits := ranked.hits.clone()
 	rows = project_query_rows(rows, normalized.select_columns)!
 	return FtsQueryResult{
 		rows: rows
+		hits: hits
 		plan: plan
 	}
 }
@@ -111,9 +125,13 @@ pub fn (session TransactionSession) query_fts(query FtsQuery) !FtsQueryResult {
 	} else {
 		query_fts_rows_from_transaction_scan(session, spec, normalized)!
 	}
+	ranked := fts_rank_rows(session.root_dir, spec.table, normalized, rows)!
+	rows = ranked.rows.clone()
+	mut hits := ranked.hits.clone()
 	rows = project_query_rows(rows, normalized.select_columns)!
 	return FtsQueryResult{
 		rows: rows
+		hits: hits
 		plan: plan
 	}
 }
@@ -409,4 +427,138 @@ fn fts_sorted_rows_from_map(rows_map map[string]TypedSchemaRow, limit int) []Typ
 		return rows[..limit]
 	}
 	return rows
+}
+
+struct FtsRankedRows {
+	rows []TypedSchemaRow
+	hits []FtsHit
+}
+
+fn fts_rank_rows(root_dir string, table TableDef, query FtsQuery, rows []TypedSchemaRow) !FtsRankedRows {
+	column := table.column(query.column_name)!
+	mut ranked := []FtsRankedRow{}
+	for row in rows {
+		hit := fts_explain_row(root_dir, column, query, row) or { continue }
+		ranked << FtsRankedRow{
+			row: row
+			hit: hit
+		}
+	}
+	ranked.sort_with_compare(fn (a &FtsRankedRow, b &FtsRankedRow) int {
+		if a.hit.score > b.hit.score {
+			return -1
+		}
+		if a.hit.score < b.hit.score {
+			return 1
+		}
+		return compare_key_bytes(a.row.primary_key, b.row.primary_key)
+	})
+	mut out_rows := []TypedSchemaRow{cap: ranked.len}
+	mut out_hits := []FtsHit{cap: ranked.len}
+	for item in ranked {
+		out_rows << item.row
+		out_hits << item.hit
+	}
+	if query.limit > 0 && out_rows.len > query.limit {
+		return FtsRankedRows{
+			rows: out_rows[..query.limit]
+			hits: out_hits[..query.limit]
+		}
+	}
+	return FtsRankedRows{
+		rows: out_rows
+		hits: out_hits
+	}
+}
+
+struct FtsRankedRow {
+	row TypedSchemaRow
+	hit FtsHit
+}
+
+fn fts_explain_row(root_dir string, column ColumnDef, query FtsQuery, row TypedSchemaRow) !FtsHit {
+	if !row.data.has(column.name) {
+		return error('missing markdown payload')
+	}
+	stored := row.data.get(column.name)!
+	raw := match stored {
+		MarkdownRef { load_markdown_source(root_dir, stored.doc_root_id)! }
+		string { stored }
+		else { return error('fts explanation requires markdown payload') }
+	}
+	emissions := emit_markdown_fts_tokens(raw)!
+	mut matched_terms_seen := map[string]bool{}
+	mut matched_scopes_seen := map[string]bool{}
+	mut matched_terms := []string{}
+	mut matched_scopes := []FtsScope{}
+	mut score := 0
+	for emission in emissions {
+		if query.scope != .any && emission.scope != query.scope {
+			continue
+		}
+		if !fts_emission_matches_query(emission.term, query) {
+			continue
+		}
+		score += fts_scope_weight(emission.scope)
+		if !matched_terms_seen[emission.term] {
+			matched_terms_seen[emission.term] = true
+			matched_terms << emission.term
+		}
+		scope_name := fts_scope_name(emission.scope)
+		if !matched_scopes_seen[scope_name] {
+			matched_scopes_seen[scope_name] = true
+			matched_scopes << emission.scope
+		}
+	}
+	if score == 0 {
+		return error('row does not match fts query')
+	}
+	matched_terms.sort()
+	matched_scopes.sort_with_compare(fn (a &FtsScope, b &FtsScope) int {
+		left := fts_scope_weight(*a)
+		right := fts_scope_weight(*b)
+		if left > right {
+			return -1
+		}
+		if left < right {
+			return 1
+		}
+		return 0
+	})
+	return FtsHit{
+		primary_key: row.primary_key.clone()
+		score: score
+		matched_terms: matched_terms
+		matched_scopes: matched_scopes
+		summary: fts_hit_summary(matched_terms, matched_scopes)
+	}
+}
+
+fn fts_emission_matches_query(term string, query FtsQuery) bool {
+	match query.kind {
+		.term, .all, .any {
+			return term in query.terms
+		}
+		.prefix {
+			return term.starts_with(query.terms[0])
+		}
+	}
+}
+
+fn fts_scope_weight(scope FtsScope) int {
+	return match scope {
+		.heading { 8 }
+		.paragraph { 4 }
+		.list_item { 3 }
+		.code_block { 2 }
+		.any { 1 }
+	}
+}
+
+fn fts_hit_summary(terms []string, scopes []FtsScope) string {
+	mut scope_names := []string{cap: scopes.len}
+	for scope in scopes {
+		scope_names << fts_scope_name(scope)
+	}
+	return 'terms=[' + terms.join(', ') + '] scopes=[' + scope_names.join(', ') + ']'
 }

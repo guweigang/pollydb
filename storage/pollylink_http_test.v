@@ -1645,9 +1645,15 @@ fn test_sidecar_query_fts_returns_any_matches() {
 	assert dto.plan.index_name == 'body_fts_any_idx'
 	assert dto.plan.selector == 'fts'
 	assert dto.rows.len == 2
-	assert dto.rows[0].primary_key == 'note-1'
-	assert dto.rows[1].primary_key == 'note-2'
-	assert dto.rows[0].values['title'] == 'Roadmap'
+	assert dto.hits.len == 2
+	assert dto.rows[0].primary_key == 'note-2'
+	assert dto.rows[1].primary_key == 'note-1'
+	assert dto.hits[0].primary_key == 'note-2'
+	assert dto.hits[0].score > dto.hits[1].score
+	assert dto.hits[0].matched_terms == ['metrics']
+	assert dto.hits[0].matched_scopes == ['heading', 'paragraph']
+	assert dto.hits[1].matched_terms == ['sync']
+	assert dto.rows[0].values['title'] == 'Metrics'
 	assert 'body' !in dto.rows[0].values
 }
 

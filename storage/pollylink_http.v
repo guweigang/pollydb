@@ -673,7 +673,16 @@ struct SidecarFtsQueryResultDto {
 	terms          []string
 	select_columns []string
 	plan           SidecarFtsQueryPlanDto
+	hits           []SidecarFtsHitDto
 	rows           []SidecarTypedRowDto
+}
+
+struct SidecarFtsHitDto {
+	primary_key    string
+	score          int
+	matched_terms  []string
+	matched_scopes []string
+	summary        string
 }
 
 pub struct SidecarQuerySchemaProjection {
@@ -881,7 +890,17 @@ pub:
 	terms          []string
 	select_columns []string
 	plan           SidecarFtsQueryPlan
+	hits           []SidecarFtsHit
 	rows           []SidecarTypedRow
+}
+
+pub struct SidecarFtsHit {
+pub:
+	primary_key    string
+	score          int
+	matched_terms  []string
+	matched_scopes []string
+	summary        string
 }
 
 pub struct SidecarBranchLogEntry {
@@ -1442,6 +1461,20 @@ fn sidecar_fts_query_plan_dto(plan FtsQueryPlan) SidecarFtsQueryPlanDto {
 		query_kind: sidecar_fts_kind_name(plan.kind)
 		term_count: plan.term_count
 		limit: plan.limit
+	}
+}
+
+fn sidecar_fts_hit_dto(hit FtsHit) SidecarFtsHitDto {
+	mut scopes := []string{cap: hit.matched_scopes.len}
+	for scope in hit.matched_scopes {
+		scopes << fts_scope_name(scope)
+	}
+	return SidecarFtsHitDto{
+		primary_key: hit.primary_key.bytestr()
+		score: hit.score
+		matched_terms: hit.matched_terms.clone()
+		matched_scopes: scopes
+		summary: hit.summary
 	}
 }
 
@@ -2789,6 +2822,7 @@ fn (handler PollyLinkSidecarHandler) serve_query_fts(req http.Request) http.Resp
 		terms: payload.terms.clone()
 		select_columns: payload.select_columns.clone()
 		plan: sidecar_fts_query_plan_dto(result.plan)
+		hits: result.hits.map(sidecar_fts_hit_dto(it))
 		rows: result.rows.map(sidecar_typed_row_dto(it))
 	}))
 }
@@ -4227,6 +4261,16 @@ pub fn (client PollyLinkClient) query_fts(query SidecarFtsQueryRequest) !Sidecar
 	for row in dto.rows {
 		rows << sidecar_typed_row(row)
 	}
+	mut hits := []SidecarFtsHit{cap: dto.hits.len}
+	for hit in dto.hits {
+		hits << SidecarFtsHit{
+			primary_key: hit.primary_key
+			score: hit.score
+			matched_terms: hit.matched_terms.clone()
+			matched_scopes: hit.matched_scopes.clone()
+			summary: hit.summary
+		}
+	}
 	return SidecarFtsQueryResult{
 		branch_name: dto.branch_name
 		table_name: dto.table_name
@@ -4244,6 +4288,7 @@ pub fn (client PollyLinkClient) query_fts(query SidecarFtsQueryRequest) !Sidecar
 			term_count: dto.plan.term_count
 			limit: dto.plan.limit
 		}
+		hits: hits
 		rows: rows
 	}
 }
