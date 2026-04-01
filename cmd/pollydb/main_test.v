@@ -95,6 +95,50 @@ fn test_parse_register_table_spec_json_path_indexes() {
 	assert spec.indexes[1].stores_row
 }
 
+fn test_parse_register_table_spec_markdown_selector_indexes() {
+	spec := parse_register_table_spec(
+		'notes',
+		'id',
+		'id:string,body:markdown',
+		'body_heading_text_idx:body#heading_text:2:string,body_link_count_idx:body#links:i64,body_code_lang_cover:body#code_block_lang:string:covering',
+	) or { panic(err) }
+	assert spec.indexes.len == 3
+	assert spec.indexes[0].is_field_selector()
+	assert spec.indexes[0].column == 'body'
+	assert spec.indexes[0].field_selector_plugin() == 'markdown'
+	assert spec.indexes[0].field_selector() == 'heading_text:2'
+	assert spec.indexes[0].json_field_type == .string_
+	assert !spec.indexes[0].stores_row
+	assert spec.indexes[1].is_field_selector()
+	assert spec.indexes[1].field_selector() == 'links'
+	assert spec.indexes[1].json_field_type == .i64_
+	assert spec.indexes[2].is_field_selector()
+	assert spec.indexes[2].field_selector() == 'code_block_lang'
+	assert spec.indexes[2].json_field_type == .string_
+	assert spec.indexes[2].stores_row
+}
+
+fn test_parse_index_defs_rejects_invalid_markdown_selector_type() {
+	parse_index_defs('body_heading_text_idx:body#heading_text:2:bool') or {
+		assert err.msg().contains('markdown selector index type must be string or i64')
+		return
+	}
+	panic('expected parse_index_defs to reject invalid markdown selector type')
+}
+
+fn test_format_table_spec_round_trips_markdown_selector_indexes() {
+	spec := parse_register_table_spec(
+		'notes',
+		'id',
+		'id:string,body:markdown',
+		'body_heading_text_idx:body#heading_text:2:string,body_link_count_idx:body#links:i64,body_code_lang_cover:body#code_block_lang:string:covering',
+	) or { panic(err) }
+	rendered := format_table_spec(spec)
+	assert rendered.contains('body_heading_text_idx:body#heading_text:2:string')
+	assert rendered.contains('body_link_count_idx:body#links:i64')
+	assert rendered.contains('body_code_lang_cover:body#code_block_lang:string:covering')
+}
+
 fn test_parse_index_defs_dash_means_empty() {
 	indexes := parse_index_defs('-') or { panic(err) }
 	assert indexes.len == 0
@@ -156,6 +200,12 @@ fn test_usage_includes_prefix_index_projected() {
 	assert cli.usage().contains('prefix-index-projected')
 }
 
+fn test_usage_includes_query_fts_commands() {
+	cli := PollyDbCli.new([])
+	assert cli.usage().contains('query-fts-preview')
+	assert cli.usage().contains('query-fts')
+}
+
 fn test_usage_includes_scan_index_between() {
 	cli := PollyDbCli.new([])
 	assert cli.usage().contains('scan-index-between')
@@ -197,6 +247,35 @@ fn test_parse_aggregate_projection_cost_hint() {
 	assert parse_aggregate_projection_cost_hint('low') or { panic(err) } == .low
 	assert parse_aggregate_projection_cost_hint('medium') or { panic(err) } == .medium
 	assert parse_aggregate_projection_cost_hint('high') or { panic(err) } == .high
+}
+
+fn test_parse_fts_scope() {
+	assert parse_fts_scope('heading') or { panic(err) } == .heading
+	assert parse_fts_scope('code_block') or { panic(err) } == .code_block
+	parse_fts_scope('regex') or {
+		assert err.msg().contains('unknown fts scope')
+		return
+	}
+	panic('expected parse_fts_scope to reject invalid scope')
+}
+
+fn test_parse_fts_query_kind() {
+	assert parse_fts_query_kind('term') or { panic(err) } == .term
+	assert parse_fts_query_kind('any') or { panic(err) } == .any
+	parse_fts_query_kind('regex') or {
+		assert err.msg().contains('unknown fts query kind')
+		return
+	}
+	panic('expected parse_fts_query_kind to reject invalid kind')
+}
+
+fn test_parse_optional_columns_and_limit() {
+	columns, limit := parse_optional_columns_and_limit(['body,title', '5'], 0) or { panic(err) }
+	assert columns == ['body', 'title']
+	assert limit == 5
+	columns_only_limit, limit_only := parse_optional_columns_and_limit(['7'], 0) or { panic(err) }
+	assert columns_only_limit.len == 0
+	assert limit_only == 7
 }
 
 fn test_usage_includes_set_json_path() {

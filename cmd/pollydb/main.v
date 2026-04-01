@@ -463,6 +463,8 @@ fn (cli PollyDbCli) usage() string {
   pollydb scan-index [root_dir] [branch] <table_name> <index_name> <value> [start_primary_key] [limit]
   pollydb prefix-index [root_dir] [branch] <table_name> <index_name> <prefix> [limit]
   pollydb prefix-index-projected [root_dir] [branch] <table_name> <index_name> <prefix> <columns_csv> [limit]
+  pollydb query-fts-preview [root_dir] [branch] <table_name> <column_name> <scope> <kind> <terms_csv> [select_columns_csv] [limit]
+  pollydb query-fts [root_dir] [branch] <table_name> <column_name> <scope> <kind> <terms_csv> [select_columns_csv] [limit]
 
 Repository:
   init     Initialize a pollydb repository if needed and print its status.
@@ -533,6 +535,8 @@ Data and Aggregates:
   scan-index  Scan rows for one index value with optional primary-key continuation.
   prefix-index  Scan rows for a string/bytes index prefix.
   prefix-index-projected  Scan rows for a covering string/bytes index prefix and decode only selected columns.
+  query-fts-preview  Print planner preview for one lightweight Markdown FTS query.
+  query-fts  Execute one lightweight Markdown FTS query and print ranked rows plus hit explanations.
 
 Defaults:
   root_dir defaults to the current working directory.
@@ -562,6 +566,7 @@ JSON Workflow:
   pollydb set-json-path items 001 meta kind string alpha
   pollydb patch-json-paths items 001 meta "kind=string:beta,enabled=bool:true,legacy=delete"
   pollydb prefix-index-projected items kind_idx al "meta" 10
+  pollydb query-fts notes body heading prefix intro title 5
 
 Formats:
   primary_key_csv: id or id,tenant_id
@@ -784,6 +789,12 @@ fn (mut cli PollyDbCli) run() ! {
 	}
 	if command == 'prefix-index-projected' {
 		return cli.run_prefix_index_projected()
+	}
+	if command == 'query-fts-preview' {
+		return cli.run_query_fts_preview()
+	}
+	if command == 'query-fts' {
+		return cli.run_query_fts()
 	}
 	if command in ['help', '--help', '-h'] {
 		println(cli.usage())
@@ -1314,6 +1325,7 @@ fn format_column_type(column storage.ColumnDef) string {
 		.enum_ { 'enum(${column.enum_values.join("|")})' }
 		.json_ { 'json' }
 		.datetime_ { 'datetime' }
+		.markdown_ { 'markdown' }
 	}
 }
 
@@ -1357,13 +1369,17 @@ fn format_table_spec(spec storage.TypedTableSpec) string {
 		for index in spec.indexes {
 			target := index.target_label()
 			indexes << if index.stores_row {
-				if index.is_json_path() {
+				if index.is_field_selector() {
+					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.field_selector(), index.json_field_type, true) or { panic(err) })}:covering'
+				} else if index.is_json_path() {
 					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.json_field, index.json_field_type, true) or { panic(err) })}:covering'
 				} else {
 					'${index.name}:${target}:covering'
 				}
 			} else {
-				if index.is_json_path() {
+				if index.is_field_selector() {
+					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.field_selector(), index.json_field_type, true) or { panic(err) })}'
+				} else if index.is_json_path() {
 					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.json_field, index.json_field_type, true) or { panic(err) })}'
 				} else {
 					'${index.name}:${target}'
@@ -1425,6 +1441,7 @@ fn parse_column_type(value string) !storage.ColumnType {
 		'bytes' { .bytes_ }
 		'json' { .json_ }
 		'datetime' { .datetime_ }
+		'markdown' { .markdown_ }
 		else { error('unsupported column type: ${value}') }
 	}
 }
@@ -1439,6 +1456,27 @@ fn parse_enum_values(type_name string) ![]string {
 		return error('enum type requires values')
 	}
 	return values
+}
+
+fn parse_fts_scope(value string) !storage.FtsScope {
+	return match value.trim_space().to_lower() {
+		'any' { .any }
+		'heading' { .heading }
+		'paragraph' { .paragraph }
+		'code_block' { .code_block }
+		'list_item' { .list_item }
+		else { error('unknown fts scope: ${value}') }
+	}
+}
+
+fn parse_fts_query_kind(value string) !storage.FtsQueryKind {
+	return match value.trim_space().to_lower() {
+		'term' { .term }
+		'prefix' { .prefix }
+		'all' { .all }
+		'any' { .any }
+		else { error('unknown fts query kind: ${value}') }
+	}
 }
 
 fn parse_csv_values(value string) []string {
@@ -1587,41 +1625,54 @@ fn parse_index_defs(spec string) ![]storage.SchemaIndexDef {
 	parts := parse_csv_values(spec)
 	mut indexes := []storage.SchemaIndexDef{cap: parts.len}
 	for part in parts {
-		field := part.split(':')
-		if field.len != 2 && field.len != 3 && field.len != 4 {
+		name_and_rest := part.split_nth(':', 2)
+		if name_and_rest.len != 2 {
 			return error('invalid index spec: ${part}')
 		}
-		name := field[0].trim_space()
-		target := field[1].trim_space()
-		if field.len == 2 {
-			indexes << storage.SchemaIndexDef.new(name, target)!
-			continue
+		name := name_and_rest[0].trim_space()
+		mut rest := name_and_rest[1].trim_space()
+		mut stores_row := false
+		if rest.ends_with(':covering') {
+			stores_row = true
+			rest = rest[..rest.len - ':covering'.len]
 		}
-		if field.len == 3 && field[2].trim_space() == 'covering' {
-			indexes << storage.SchemaIndexDef.covering(name, target)!
-			continue
-		}
-		if field.len == 3 || field.len == 4 {
-			target_parts := target.split_nth('.', 2)
-			if target_parts.len != 2 {
-				if field.len == 3 {
-					return error('unsupported index mode: ${field[2].trim_space()}')
-				}
-				return error('json-path index target must be column.field: ${target}')
-			}
-			json_type := parse_column_type(field[2].trim_space())!
-			if field.len == 4 {
-				mode := field[3].trim_space()
-				if mode != 'covering' {
-					return error('unsupported index mode: ${mode}')
-				}
-				indexes << storage.SchemaIndexDef.json_path_covering(name, target_parts[0], target_parts[1], json_type)!
+		if !rest.contains(':') {
+			if stores_row {
+				indexes << storage.SchemaIndexDef.covering(name, rest)!
 			} else {
-				indexes << storage.SchemaIndexDef.json_path(name, target_parts[0], target_parts[1], json_type)!
+				indexes << storage.SchemaIndexDef.new(name, rest)!
 			}
 			continue
 		}
-		return error('invalid index spec: ${part}')
+		split_at := rest.last_index(':') or { return error('invalid index spec: ${part}') }
+		target := rest[..split_at].trim_space()
+		value_type_name := rest[split_at + 1..].trim_space()
+		if target.contains('#') {
+			target_parts := target.split_nth('#', 2)
+			if target_parts.len != 2 {
+				return error('markdown selector index target must be column#selector: ${target}')
+			}
+			value_type := parse_column_type(value_type_name)!
+			match value_type {
+				.string_, .i64_ {}
+				else { return error('markdown selector index type must be string or i64: ${part}') }
+			}
+			indexes << storage.SchemaIndexDef.field_selector(name, target_parts[0], 'markdown', target_parts[1], value_type, stores_row)!
+			continue
+		}
+		if !target.contains('.') {
+			return error('unsupported index mode: ${value_type_name}')
+		}
+		target_parts := target.split_nth('.', 2)
+		if target_parts.len != 2 {
+			return error('json-path index target must be column.field: ${target}')
+		}
+		json_type := parse_column_type(value_type_name)!
+		if stores_row {
+			indexes << storage.SchemaIndexDef.json_path_covering(name, target_parts[0], target_parts[1], json_type)!
+		} else {
+			indexes << storage.SchemaIndexDef.json_path(name, target_parts[0], target_parts[1], json_type)!
+		}
 	}
 	return indexes
 }
@@ -1649,6 +1700,39 @@ fn parse_field_assignments(spec string) !map[string]string {
 		values[field[0].trim_space()] = field[1].trim_space()
 	}
 	return values
+}
+
+fn cli_looks_like_int(raw string) bool {
+	value := raw.trim_space()
+	if value.len == 0 {
+		return false
+	}
+	start := if value[0] == `-` || value[0] == `+` { 1 } else { 0 }
+	if start >= value.len {
+		return false
+	}
+	for idx in start .. value.len {
+		if value[idx] < `0` || value[idx] > `9` {
+			return false
+		}
+	}
+	return true
+}
+
+fn parse_optional_columns_and_limit(args []string, start_idx int) !([]string, int) {
+	if args.len <= start_idx {
+		return []string{}, 0
+	}
+	extra := args[start_idx]
+	if cli_looks_like_int(extra) {
+		return []string{}, extra.int()
+	}
+	columns := parse_csv_values(extra)
+	if columns.len == 0 {
+		return error('select_columns_csv cannot be empty')
+	}
+	limit := if args.len > start_idx + 1 { args[start_idx + 1].int() } else { 0 }
+	return columns, limit
 }
 
 fn parse_bytes_value(value string) ![]u8 {
@@ -1723,6 +1807,9 @@ fn parse_typed_value(column storage.ColumnDef, raw string) !storage.ColumnValue 
 				storage.TypedValueEncoder.validate(column, raw)!
 				raw
 			}
+		}
+		.markdown_ {
+			raw
 		}
 	}
 }
@@ -1800,6 +1887,27 @@ fn build_typed_row(spec storage.TypedTableSpec, field_values_csv string) !storag
 	return row
 }
 
+fn ingest_external_columns(mut db storage.PersistentDatabase, spec storage.TypedTableSpec, row storage.TypedRowData) !storage.TypedRowData {
+	mut next_row := row.clone()
+	for column in spec.table.columns {
+		if column.typ != .markdown_ || !next_row.has(column.name) {
+			continue
+		}
+		value := next_row.get(column.name)!
+		match value {
+			storage.NullValue, storage.MarkdownRef {}
+			string {
+				stored := storage.ingest_external_field_value(mut db, column, value)!
+				next_row.set(column.name, stored)
+			}
+			else {
+				return error('unsupported external field payload for ${column.name}')
+			}
+		}
+	}
+	return next_row
+}
+
 fn apply_insert_defaults(spec storage.TypedTableSpec, row storage.TypedRowData) storage.TypedRowData {
 	mut next_row := row.clone()
 	current_timestamp := storage.current_datetime_string()
@@ -1852,7 +1960,28 @@ fn format_column_value(value storage.ColumnValue) string {
 		i64 { value.str() }
 		string { value }
 		[]u8 { 'hex:${value.hex()}' }
+		storage.MarkdownRef { 'markdown:${value.doc_root_id}' }
 	}
+}
+
+fn cli_render_fts_hits(hits []storage.FtsHit) string {
+	if hits.len == 0 {
+		return cli_empty('no hits', 'no ranked FTS matches were produced')
+	}
+	mut rows := [][]string{cap: hits.len}
+	for hit in hits {
+		rows << [
+			hit.primary_key.bytestr(),
+			hit.score.str(),
+			hit.matched_terms.join(','),
+			hit.matched_scopes.map(storage.fts_scope_name(it)).join(','),
+			hit.summary,
+		]
+	}
+	mut lines := []string{}
+	lines << cli_title('FTS Hits')
+	lines << cli_render_table(['pk', 'score', 'terms', 'scopes', 'summary'], rows)
+	return lines.join('\n')
 }
 
 fn format_typed_row(row storage.TypedSchemaRow, spec storage.TypedTableSpec) string {
@@ -2873,7 +3002,7 @@ fn (mut cli PollyDbCli) run_put_row() ! {
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	spec := session.table_spec(table_name)!
 	input_row := build_typed_row(spec, field_values_csv)!
-	row := apply_insert_defaults(spec, input_row)
+	row := ingest_external_columns(mut db, spec, apply_insert_defaults(spec, input_row))!
 	auto_filled := detect_auto_filled_columns(spec, input_row, row)
 	cfg := storage.ChunkConfig.default()
 	if !branch_exists(mut db, ctx.branch) {
@@ -3382,6 +3511,103 @@ fn (mut cli PollyDbCli) run_prefix_index_projected() ! {
 	for row in rows {
 		println(format_typed_row(row, spec))
 	}
+}
+
+fn (mut cli PollyDbCli) run_query_fts_preview() ! {
+	ctx := cli.resolve_db_context(1, true)!
+	if cli.args.len <= ctx.next_idx + 4 {
+		return error('query-fts-preview requires [root_dir] [branch] <table_name> <column_name> <scope> <kind> <terms_csv> [select_columns_csv] [limit]')
+	}
+	table_name := cli.args[ctx.next_idx]
+	column_name := cli.args[ctx.next_idx + 1]
+	scope := parse_fts_scope(cli.args[ctx.next_idx + 2])!
+	kind := parse_fts_query_kind(cli.args[ctx.next_idx + 3])!
+	terms := parse_csv_values(cli.args[ctx.next_idx + 4])
+	select_columns, limit := parse_optional_columns_and_limit(cli.args, ctx.next_idx + 5)!
+	query := storage.FtsQuery{
+		table_name: table_name
+		column_name: column_name
+		scope: scope
+		kind: kind
+		terms: terms
+		select_columns: select_columns
+		limit: limit
+	}
+	mut db := storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
+	preview := session.preview_fts_query_details(query)!
+	mut lines := []string{}
+	lines << cli_render_field_card('FTS Query Preview', [
+		CliField{'table', preview.plan.table_name}
+		CliField{'column', preview.plan.column_name}
+		CliField{'scope', storage.fts_scope_name(preview.plan.scope)}
+		CliField{'kind', storage.fts_query_kind_name(preview.plan.kind)}
+		CliField{'selector', preview.plan.selector}
+		CliField{'strategy', preview.plan.strategy}
+		CliField{'index', if preview.plan.index_name.len > 0 { preview.plan.index_name } else { cli_dim('(scan)') }}
+		CliField{'terms', preview.plan.term_count.str()}
+		CliField{'limit', preview.plan.limit.str()}
+	])
+	if preview.warnings.len > 0 {
+		lines << ''
+		lines << cli_render_field_card('Warnings', preview.warnings.map(CliField{'warning', it}))
+	}
+	if preview.notes.len > 0 {
+		lines << ''
+		lines << cli_render_field_card('Notes', preview.notes.map(CliField{'note', it}))
+	}
+	println(lines.join('\n'))
+}
+
+fn (mut cli PollyDbCli) run_query_fts() ! {
+	ctx := cli.resolve_db_context(1, true)!
+	if cli.args.len <= ctx.next_idx + 4 {
+		return error('query-fts requires [root_dir] [branch] <table_name> <column_name> <scope> <kind> <terms_csv> [select_columns_csv] [limit]')
+	}
+	table_name := cli.args[ctx.next_idx]
+	column_name := cli.args[ctx.next_idx + 1]
+	scope := parse_fts_scope(cli.args[ctx.next_idx + 2])!
+	kind := parse_fts_query_kind(cli.args[ctx.next_idx + 3])!
+	terms := parse_csv_values(cli.args[ctx.next_idx + 4])
+	select_columns, limit := parse_optional_columns_and_limit(cli.args, ctx.next_idx + 5)!
+	query := storage.FtsQuery{
+		table_name: table_name
+		column_name: column_name
+		scope: scope
+		kind: kind
+		terms: terms
+		select_columns: select_columns
+		limit: limit
+	}
+	mut db := storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
+	spec := session.table_spec(table_name)!
+	result := session.query_fts(mut db, query)!
+	if result.rows.len == 0 {
+		println(cli_empty('no rows', 'no rows matched this FTS query'))
+		return
+	}
+	mut lines := []string{}
+	lines << cli_render_field_card('FTS Query', [
+		CliField{'table', result.plan.table_name}
+		CliField{'column', result.plan.column_name}
+		CliField{'scope', storage.fts_scope_name(result.plan.scope)}
+		CliField{'kind', storage.fts_query_kind_name(result.plan.kind)}
+		CliField{'strategy', result.plan.strategy}
+		CliField{'index', if result.plan.index_name.len > 0 { result.plan.index_name } else { cli_dim('(scan)') }}
+		CliField{'matches', result.rows.len.str()}
+	])
+	lines << ''
+	lines << cli_render_fts_hits(result.hits)
+	lines << ''
+	lines << cli_render_rows('Rows', spec, result.rows)
+	println(lines.join('\n'))
 }
 
 fn main() {
