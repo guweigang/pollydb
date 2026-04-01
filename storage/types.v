@@ -11,6 +11,7 @@ pub enum ColumnType {
 	enum_
 	json_
 	datetime_
+	markdown_
 }
 
 pub enum ColumnAggregate {
@@ -25,7 +26,17 @@ pub enum JsonPathUpdateOp {
 
 pub struct NullValue {}
 
-pub type ColumnValue = NullValue | bool | i64 | string | []u8
+pub struct MarkdownRef {
+pub:
+	version     u8 = 1
+	doc_root_id string
+	source_hash string
+	source_len  i64
+	ast_version u8 = 1
+	parse_flags u32
+}
+
+pub type ColumnValue = MarkdownRef | NullValue | bool | i64 | string | []u8
 
 pub struct JsonPathUpdate {
 pub:
@@ -391,6 +402,9 @@ pub fn TypedIndexedSchemaView.new(schema TypedSchemaView, indexes []SchemaIndexD
 			if column.typ != .json_ {
 				return error('typed schema json-path index requires json column: ${index.column}')
 			}
+		} else if index.is_field_selector() {
+			column := schema.codec.table.column(index.column)!
+			validate_field_selector_index(column, index)!
 		}
 	}
 	return TypedIndexedSchemaView{
@@ -420,6 +434,9 @@ pub fn TypedTableSpec.new(table TableDef, indexes []SchemaIndexDef) !TypedTableS
 			if column.typ != .json_ {
 				return error('typed table spec json-path index requires json column: ${index.column}')
 			}
+		} else if index.is_field_selector() {
+			column := table.column(index.column)!
+			validate_field_selector_index(column, index)!
 		}
 	}
 	return TypedTableSpec{
@@ -859,7 +876,7 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 fn is_fixed_width_column(column ColumnDef) bool {
 	return match column.typ {
 		.bool_, .i64_ { true }
-		.string_, .bytes_, .enum_, .json_, .datetime_ { false }
+		.string_, .bytes_, .enum_, .json_, .datetime_, .markdown_ { false }
 	}
 }
 
@@ -1160,6 +1177,9 @@ fn json_scalar_value_for_index(raw string, index SchemaIndexDef) !ColumnValue {
 }
 
 fn typed_index_value_from_row(row TypedRowData, index SchemaIndexDef, table TableDef) !ColumnValue {
+	if index.is_field_selector() {
+		return ColumnValue(i64(0))
+	}
 	if !index.is_json_path() {
 		return row.get(index.column)
 	}
@@ -1617,6 +1637,27 @@ pub fn TypedValueEncoder.validate(column ColumnDef, value ColumnValue) ! {
 			}
 			time.parse_rfc3339(value as string)!
 		}
+		.markdown_ {
+			if value !is MarkdownRef {
+				return error('column ${column.name} expects MarkdownRef')
+			}
+			markdown := value as MarkdownRef
+			if markdown.doc_root_id.len == 0 {
+				return error('column ${column.name} requires markdown doc_root_id')
+			}
+			if markdown.source_hash.len == 0 {
+				return error('column ${column.name} requires markdown source_hash')
+			}
+			if markdown.source_len < 0 {
+				return error('column ${column.name} requires non-negative markdown source_len')
+			}
+			if markdown.version == 0 {
+				return error('column ${column.name} requires markdown version')
+			}
+			if markdown.ast_version == 0 {
+				return error('column ${column.name} requires markdown ast_version')
+			}
+		}
 	}
 }
 
@@ -1654,6 +1695,11 @@ pub fn TypedValueEncoder.encode_value(value ColumnValue, typ ColumnType) ![]u8 {
 				return value.clone()
 			}
 		}
+		.markdown_ {
+			if value is MarkdownRef {
+				return value.encode()
+			}
+		}
 	}
 	return error('value does not match requested column type')
 }
@@ -1688,6 +1734,9 @@ pub fn TypedValueEncoder.decode_value(data []u8, typ ColumnType) !ColumnValue {
 		}
 		.bytes_ {
 			return ColumnValue(data.clone())
+		}
+		.markdown_ {
+			return ColumnValue(decode_markdown_ref(data)!)
 		}
 	}
 	return error('unsupported column type')
@@ -1735,6 +1784,7 @@ pub fn TypedValueEncoder.encode_index_prefix(value ColumnValue, column ColumnDef
 
 fn clone_column_value(value ColumnValue) ColumnValue {
 	return match value {
+		MarkdownRef { value }
 		NullValue { NullValue{} }
 		bool { value }
 		i64 { value }
@@ -1745,10 +1795,92 @@ fn clone_column_value(value ColumnValue) ColumnValue {
 
 fn column_values_equal(left ColumnValue, right ColumnValue) bool {
 	return match left {
+		MarkdownRef { right is MarkdownRef && left == right }
 		NullValue { right is NullValue }
 		bool { right is bool && left == right }
 		i64 { right is i64 && left == right }
 		string { right is string && left == right }
 		[]u8 { right is []u8 && left == right }
 	}
+}
+
+pub fn (ref MarkdownRef) encode() []u8 {
+	mut out := ByteWriter{}
+	doc_root_id := ref.doc_root_id.bytes()
+	source_hash := ref.source_hash.bytes()
+	out.write_u8(ref.version)
+	out.write_u16(u16(doc_root_id.len))
+	out.write_bytes(doc_root_id)
+	out.write_u16(u16(source_hash.len))
+	out.write_bytes(source_hash)
+	out.write_u32(u32(ref.source_len & 0xffffffff))
+	out.write_u32(u32((u64(ref.source_len) >> 32) & 0xffffffff))
+	out.write_u8(ref.ast_version)
+	out.write_u32(ref.parse_flags)
+	return out.bytes()
+}
+
+pub fn decode_markdown_ref(data []u8) !MarkdownRef {
+	if data.len < 18 {
+		return error('markdown ref payload too short')
+	}
+	mut cursor := 0
+	version := data[cursor]
+	cursor++
+	if cursor + 2 > data.len {
+		return error('markdown ref missing doc_root_id length')
+	}
+	doc_root_len := int(markdown_read_u16_le(data[cursor..cursor + 2]))
+	cursor += 2
+	if cursor + doc_root_len > data.len {
+		return error('markdown ref doc_root_id overflow')
+	}
+	doc_root_id := data[cursor..cursor + doc_root_len].bytestr()
+	cursor += doc_root_len
+	if cursor + 2 > data.len {
+		return error('markdown ref missing source_hash length')
+	}
+	source_hash_len := int(markdown_read_u16_le(data[cursor..cursor + 2]))
+	cursor += 2
+	if cursor + source_hash_len > data.len {
+		return error('markdown ref source_hash overflow')
+	}
+	source_hash := data[cursor..cursor + source_hash_len].bytestr()
+	cursor += source_hash_len
+	if cursor + 4 > data.len {
+		return error('markdown ref missing source_len low bits')
+	}
+	low := u64(read_u32_le(data[cursor..cursor + 4]))
+	cursor += 4
+	if cursor + 4 > data.len {
+		return error('markdown ref missing source_len high bits')
+	}
+	high := u64(read_u32_le(data[cursor..cursor + 4]))
+	cursor += 4
+	source_len := i64(low | (high << 32))
+	if cursor + 1 > data.len {
+		return error('markdown ref missing ast_version')
+	}
+	ast_version := data[cursor]
+	cursor++
+	if cursor + 4 > data.len {
+		return error('markdown ref missing parse_flags')
+	}
+	parse_flags := read_u32_le(data[cursor..cursor + 4])
+	cursor += 4
+	if cursor != data.len {
+		return error('markdown ref trailing bytes')
+	}
+	return MarkdownRef{
+		version: version
+		doc_root_id: doc_root_id
+		source_hash: source_hash
+		source_len: source_len
+		ast_version: ast_version
+		parse_flags: parse_flags
+	}
+}
+
+fn markdown_read_u16_le(data []u8) u16 {
+	return u16(data[0]) | (u16(data[1]) << 8)
 }

@@ -1242,6 +1242,17 @@ fn three_way_merge(base_commit Commit, ours_commit Commit, theirs_commit Commit,
 		theirs_root)!
 	mut refs := merged_result.refs.clone()
 	mut level := merged_result.level + 1
+	if refs.len == 0 {
+		return MergeResult{
+			base_commit: base_commit
+			ours_commit: ours_commit
+			theirs_commit: theirs_commit
+			tree: base_tree
+			conflicts: merged_result.conflicts
+			changed_keys: merged_result.changed_keys
+			changed_subtrees: merged_result.changed_subtrees
+		}
+	}
 	for refs.len > 1 {
 		refs = builder.build_internal_level(level, refs)!
 		level++

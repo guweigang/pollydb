@@ -245,3 +245,41 @@ fn test_indexed_schema_view_apply_mutations_coalesces_repeated_primary_key_chang
 	assert final_rows.len == 1
 	assert final_rows[0].primary_key.bytestr() == '001'
 }
+
+fn test_schema_index_def_exposes_field_selector_metadata() {
+	index := SchemaIndexDef.markdown_value('body_link_host_idx', 'body', 'link_host') or {
+		panic(err)
+	}
+	table := TableDef.new('notes', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('body', .markdown_, false)!,
+	], ['id']) or { panic(err) }
+
+	assert index.is_markdown_selector()
+	assert index.is_field_selector()
+	assert index.field_selector_plugin() == 'markdown'
+	assert index.field_selector() == 'link_host'
+	assert index.target_label() == 'body#link_host'
+	assert (index.value_column(table) or { panic(err) }).typ == .string_
+}
+
+fn test_schema_index_def_field_selector_constructor_supports_markdown_plugin() {
+	index := SchemaIndexDef.field_selector('body_links_idx', 'body', 'markdown', 'links', .i64_, false) or {
+		panic(err)
+	}
+
+	assert index.is_field_selector()
+	assert index.field_selector_plugin() == 'markdown'
+	assert index.field_selector() == 'links'
+	selector_ref := index.field_selector_ref() or { panic('expected field selector ref') }
+	assert selector_ref.plugin_name == 'markdown'
+	assert selector_ref.selector == 'links'
+	assert selector_ref.value_type == .i64_
+	selector_meta := index.field_selector_meta() or { panic('expected field selector meta') }
+	assert selector_meta.plugin_name == 'markdown'
+	assert selector_meta.selector == 'links'
+	assert selector_meta.value_type == .i64_
+	assert !selector_meta.stores_row
+	assert index.json_field_type == .i64_
+	assert !index.stores_row
+}

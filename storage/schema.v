@@ -28,6 +28,14 @@ pub:
 	row         RowData
 }
 
+pub struct FieldSelectorRef {
+pub:
+	plugin_name string
+	selector    string
+	value_type  ColumnType
+	stores_row  bool
+}
+
 pub struct SchemaView {
 pub:
 	table TableView
@@ -39,6 +47,7 @@ pub:
 	name       string
 	column     string
 	json_field string
+	markdown_selector string
 	json_field_type ColumnType
 	stores_row bool
 }
@@ -306,6 +315,7 @@ pub fn SchemaIndexDef.new(name string, column string) !SchemaIndexDef {
 		name: name
 		column: column
 		json_field: ''
+		markdown_selector: ''
 		json_field_type: .string_
 		stores_row: false
 	}
@@ -322,6 +332,7 @@ pub fn SchemaIndexDef.covering(name string, column string) !SchemaIndexDef {
 		name: name
 		column: column
 		json_field: ''
+		markdown_selector: ''
 		json_field_type: .string_
 		stores_row: true
 	}
@@ -345,6 +356,7 @@ pub fn SchemaIndexDef.json_path(name string, column string, json_field string, j
 		name: name
 		column: column
 		json_field: json_field
+		markdown_selector: ''
 		json_field_type: json_field_type
 		stores_row: false
 	}
@@ -368,8 +380,115 @@ pub fn SchemaIndexDef.json_path_covering(name string, column string, json_field 
 		name: name
 		column: column
 		json_field: json_field
+		markdown_selector: ''
 		json_field_type: json_field_type
 		stores_row: true
+	}
+}
+
+pub fn SchemaIndexDef.markdown_metric(name string, column string, selector string) !SchemaIndexDef {
+	if name.len == 0 {
+		return error('schema index name cannot be empty')
+	}
+	if column.len == 0 {
+		return error('schema index column cannot be empty')
+	}
+	validate_markdown_index_selector(selector, .i64_)!
+	return SchemaIndexDef{
+		name: name
+		column: column
+		json_field: ''
+		markdown_selector: selector
+		json_field_type: .i64_
+		stores_row: false
+	}
+}
+
+pub fn SchemaIndexDef.markdown_metric_covering(name string, column string, selector string) !SchemaIndexDef {
+	if name.len == 0 {
+		return error('schema index name cannot be empty')
+	}
+	if column.len == 0 {
+		return error('schema index column cannot be empty')
+	}
+	validate_markdown_index_selector(selector, .i64_)!
+	return SchemaIndexDef{
+		name: name
+		column: column
+		json_field: ''
+		markdown_selector: selector
+		json_field_type: .i64_
+		stores_row: true
+	}
+}
+
+pub fn SchemaIndexDef.markdown_value(name string, column string, selector string) !SchemaIndexDef {
+	if name.len == 0 {
+		return error('schema index name cannot be empty')
+	}
+	if column.len == 0 {
+		return error('schema index column cannot be empty')
+	}
+	validate_markdown_index_selector(selector, .string_)!
+	return SchemaIndexDef{
+		name: name
+		column: column
+		json_field: ''
+		markdown_selector: selector
+		json_field_type: .string_
+		stores_row: false
+	}
+}
+
+pub fn SchemaIndexDef.markdown_value_covering(name string, column string, selector string) !SchemaIndexDef {
+	if name.len == 0 {
+		return error('schema index name cannot be empty')
+	}
+	if column.len == 0 {
+		return error('schema index column cannot be empty')
+	}
+	validate_markdown_index_selector(selector, .string_)!
+	return SchemaIndexDef{
+		name: name
+		column: column
+		json_field: ''
+		markdown_selector: selector
+		json_field_type: .string_
+		stores_row: true
+	}
+}
+
+pub fn SchemaIndexDef.field_selector(name string, column string, plugin_name string, selector string, value_type ColumnType, stores_row bool) !SchemaIndexDef {
+	if name.len == 0 {
+		return error('schema index name cannot be empty')
+	}
+	if column.len == 0 {
+		return error('schema index column cannot be empty')
+	}
+	if plugin_name.len == 0 {
+		return error('schema field selector plugin cannot be empty')
+	}
+	if selector.len == 0 {
+		return error('schema field selector cannot be empty')
+	}
+	validate_named_field_selector(plugin_name, selector, value_type)!
+	return match plugin_name {
+		'markdown' {
+			if value_type == .i64_ {
+				if stores_row {
+					SchemaIndexDef.markdown_metric_covering(name, column, selector)!
+				} else {
+					SchemaIndexDef.markdown_metric(name, column, selector)!
+				}
+			} else if stores_row {
+				SchemaIndexDef.markdown_value_covering(name, column, selector)!
+			} else {
+				SchemaIndexDef.markdown_value(name, column, selector)!
+			}
+		}
+		else {
+			return error('unsupported field selector plugin: ${plugin_name}')
+		}
 	}
 }
 
@@ -377,14 +496,71 @@ pub fn (index SchemaIndexDef) is_json_path() bool {
 	return index.json_field.len > 0
 }
 
+pub fn (index SchemaIndexDef) is_markdown_selector() bool {
+	return index.markdown_selector.len > 0
+}
+
+pub fn (index SchemaIndexDef) is_field_selector() bool {
+	return index.is_markdown_selector()
+}
+
+pub fn (index SchemaIndexDef) field_selector_plugin() string {
+	if index.is_markdown_selector() {
+		return 'markdown'
+	}
+	return ''
+}
+
+pub fn (index SchemaIndexDef) field_selector() string {
+	if index.is_markdown_selector() {
+		return index.markdown_selector
+	}
+	return ''
+}
+
+pub fn (index SchemaIndexDef) field_selector_ref() ?FieldSelectorRef {
+	plugin_name := index.field_selector_plugin()
+	selector := index.field_selector()
+	if plugin_name.len == 0 || selector.len == 0 {
+		return none
+	}
+	return FieldSelectorRef{
+		plugin_name: plugin_name
+		selector: selector
+		value_type: index.json_field_type
+		stores_row: index.stores_row
+	}
+}
+
+pub fn (index SchemaIndexDef) field_selector_meta() ?FieldSelectorMeta {
+	plugin_name := index.field_selector_plugin()
+	selector := index.field_selector()
+	if plugin_name.len == 0 || selector.len == 0 {
+		return none
+	}
+	return FieldSelectorMeta{
+		plugin_name: plugin_name
+		selector: selector
+		value_type: index.json_field_type
+		stores_row: index.stores_row
+	}
+}
+
 pub fn (index SchemaIndexDef) target_label() string {
 	if index.json_field.len == 0 {
-		return index.column
+		selector := index.field_selector()
+		if selector.len == 0 {
+			return index.column
+		}
+		return '${index.column}#${selector}'
 	}
 	return '${index.column}.${index.json_field}'
 }
 
 pub fn (index SchemaIndexDef) value_column(table TableDef) !ColumnDef {
+	if index.is_field_selector() {
+		return ColumnDef.new('field_index', index.json_field_type, false)
+	}
 	if index.json_field.len == 0 {
 		return table.column(index.column)
 	}
@@ -400,7 +576,7 @@ pub fn IndexedSchemaView.new(schema SchemaView, indexes []SchemaIndexDef) !Index
 		if !schema.codec.has_column(index.column) {
 			return error('schema index column not in codec: ${index.column}')
 		}
-		if index.is_json_path() {
+		if index.is_json_path() || index.is_field_selector() {
 			return error('schema json-path indexes are only supported by typed tables')
 		}
 		names[index.name] = true

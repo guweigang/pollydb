@@ -155,6 +155,66 @@ fn test_datetime_column_def_and_codec_roundtrip() {
 	}
 }
 
+fn test_markdown_ref_encode_decode_roundtrip() {
+	ref := MarkdownRef{
+		version: 1
+		doc_root_id: 'doc:abc123'
+		source_hash: 'src:def456'
+		source_len: 1024
+		ast_version: 3
+		parse_flags: u32(7)
+	}
+	encoded := ref.encode()
+	decoded := decode_markdown_ref(encoded) or { panic(err) }
+	assert decoded == ref
+}
+
+fn test_typed_row_codec_roundtrip_preserves_markdown_ref() {
+	table := TableDef.new('notes', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('body', .markdown_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table)
+	mut row := TypedRowData.new()
+	row.set('id', 'note-1')
+	row.set('body', MarkdownRef{
+		doc_root_id: 'doc:root-1'
+		source_hash: 'src:hash-1'
+		source_len: 2048
+		ast_version: 1
+		parse_flags: u32(0)
+	})
+
+	encoded := codec.encode(row) or { panic(err) }
+	decoded := codec.decode(encoded) or { panic(err) }
+	body := decoded.get('body') or { panic(err) }
+	match body {
+		MarkdownRef {
+			assert body.doc_root_id == 'doc:root-1'
+			assert body.source_hash == 'src:hash-1'
+			assert body.source_len == 2048
+			assert body.ast_version == 1
+		}
+		else {
+			panic('expected markdown ref')
+		}
+	}
+}
+
+fn test_typed_value_encoder_rejects_invalid_markdown_ref() {
+	column := ColumnDef.new('body', .markdown_, false) or { panic(err) }
+	if _ := TypedValueEncoder.validate(column, MarkdownRef{
+		doc_root_id: ''
+		source_hash: 'src:hash-1'
+		source_len: 1
+		ast_version: 1
+	}) {
+		assert false
+	} else {
+		assert err.msg().contains('doc_root_id')
+	}
+}
+
 fn test_typed_schema_view_put_and_get_roundtrip() {
 	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
 	table_def := TableDef.new('users', [
