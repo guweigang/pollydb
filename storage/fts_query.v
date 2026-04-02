@@ -461,8 +461,8 @@ fn fts_rank_rows(root_dir string, table TableDef, query FtsQuery, rows []TypedSc
 	}
 	if query.limit > 0 && out_rows.len > query.limit {
 		return FtsRankedRows{
-			rows: out_rows[..query.limit]
-			hits: out_hits[..query.limit]
+			rows: out_rows[..query.limit].clone()
+			hits: out_hits[..query.limit].clone()
 		}
 	}
 	return FtsRankedRows{

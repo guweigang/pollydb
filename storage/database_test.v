@@ -3457,6 +3457,71 @@ fn test_database_session_query_page_uses_markdown_fts_selector_index() {
 	assert page.rows[0].data.has('title')
 }
 
+fn test_database_session_put_row_rebuilds_markdown_selector_indexes() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-put-row-markdown-selector-indexes')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_notes_fts_indexed_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut seed := TypedRowData.new()
+	seed.set('id', 'note-1')
+	seed.set('title', 'Seed')
+	seed.set('body', MarkdownRef{
+		doc_root_id: 'seed-1'
+		source_hash: 'seed-1'
+		source_len: 0
+	})
+	seed_tree := Tree.build([
+		KVPair{
+			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			value: codec.encode(seed)!
+		},
+	], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed notes'
+		timestamp: 1
+	}) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	body_column := spec.table.column('body') or { panic(err) }
+	stored := ingest_external_field_value(mut db, body_column,
+		'# Intro\n\nInspect the patch.\n\n## Roadmap\n\nShip agent sync.\n') or { panic(err) }
+	mut updated := TypedRowData.new()
+	updated.set('id', 'note-1')
+	updated.set('title', 'Roadmap')
+	updated.set('body', stored)
+	_ = session.put_row(mut db, 'notes', 'note-1'.bytes(), updated, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'rewrite note row'
+		timestamp: 2
+	}) or { panic(err) }
+
+	prefix_rows := session.lookup_index_prefix(mut db, 'notes', 'body_fts_any_idx', 'insp', 10) or {
+		panic(err)
+	}
+	assert prefix_rows.len == 1
+	assert prefix_rows[0].primary_key.bytestr() == 'note-1'
+
+	heading_rows := session.lookup_index(mut db, 'notes', 'body_fts_heading_idx', 'roadmap', 10) or {
+		panic(err)
+	}
+	assert heading_rows.len == 1
+	assert heading_rows[0].primary_key.bytestr() == 'note-1'
+}
+
 fn test_database_session_query_fts_all_intersects_exact_term_indexes() {
 	cfg := ChunkConfig{
 		min_size: 64

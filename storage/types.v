@@ -811,6 +811,9 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 			false {
 				upsert_item(mut items, view.schema.table.key_for(op.primary_key), codec.encode(op.row)!)
 				for index in view.indexes {
+					if index.is_field_selector() {
+						continue
+					}
 					column := index.value_column(codec.table)!
 					mut old_value := ColumnValue(NullValue{})
 					old_has := had_old && old_row.has(index.column)
@@ -842,6 +845,9 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 				}
 				delete_item(mut items, view.schema.table.key_for(op.primary_key))
 				for index in view.indexes {
+					if index.is_field_selector() {
+						continue
+					}
 					if !old_row.has(index.column) {
 						continue
 					}
@@ -927,6 +933,9 @@ fn rebuild_typed_indexes_for_tables(tree Tree, specs []TypedTableSpec, table_nam
 			primary_key := row_key.bytes()[row_prefix.len..]
 			row := codec.decode(item_map[row_key])!
 			for index in spec.indexes {
+				if index.is_field_selector() {
+					continue
+				}
 				if !row.has(index.column) {
 					continue
 				}
@@ -1359,6 +1368,9 @@ fn rebuild_typed_indexes_for_changed_rows(tree Tree, specs []TypedTableSpec, cha
 			}
 			row := codec.decode(item_map[row_key])!
 			for index in spec.indexes {
+				if index.is_field_selector() {
+					continue
+				}
 				if !row.has(index.column) {
 					continue
 				}

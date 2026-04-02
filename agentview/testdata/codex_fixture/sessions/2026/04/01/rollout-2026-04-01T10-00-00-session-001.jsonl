@@ -1,0 +1,6 @@
+{"timestamp":"2026-04-01T10:00:00Z","type":"session_meta","payload":{"id":"session-001","timestamp":"2026-04-01T10:00:00Z","cwd":"/tmp/work","originator":"Codex Desktop","cli_version":"0.1.0","source":"vscode"}}
+{"timestamp":"2026-04-01T10:00:05Z","type":"user_message","payload":{"text":"Review this patch"}}
+{"timestamp":"2026-04-01T10:00:06Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will inspect the patch."}]}}
+{"timestamp":"2026-04-01T10:00:07Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"Checking changed files"}]}}
+{"timestamp":"2026-04-01T10:00:08Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"git diff --stat\"}","call_id":"call_001"}}
+{"timestamp":"2026-04-01T10:00:09Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_001","output":" file.txt | 2 +-"}}
