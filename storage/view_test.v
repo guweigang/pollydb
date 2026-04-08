@@ -114,3 +114,92 @@ fn test_index_view_orders_entries_by_index_key_then_primary_key() {
 	assert entries[1].primary_key.bytestr() == '001'
 	assert entries[2].primary_key.bytestr() == '002'
 }
+
+fn test_split_table_view_from_mixed_tree_exposes_rows_and_indexes() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	base := Tree.build([
+		KVPair{
+			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			value: 'row-001'.bytes()
+		},
+		KVPair{
+			key: IndexView.new(Tree{}, 'users', 'email').key_for('ada@example.com'.bytes(), '001'.bytes())
+			value: 'row-001'.bytes()
+		},
+	], cfg) or { panic(err) }
+	split := SplitTableView.from_mixed_tree(base, 'users', ['email'])
+
+	row := split.rows_view().get('001'.bytes()) or { panic(err) }
+	entry := split.index_view('email') or { panic(err) }
+		.get('ada@example.com'.bytes(), '001'.bytes()) or { panic(err) }
+
+	assert row.primary_key.bytestr() == '001'
+	assert row.value.bytestr() == 'row-001'
+	assert entry.index_key.bytestr() == 'ada@example.com'
+	assert entry.primary_key.bytestr() == '001'
+	assert split.has_index('email')
+	assert !split.has_index('missing')
+}
+
+fn test_split_table_view_materialize_from_mixed_tree_builds_separate_trees() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	mixed := Tree.build([
+		KVPair{
+			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			value: 'row-001'.bytes()
+		},
+		KVPair{
+			key: IndexView.new(Tree{}, 'users', 'email').key_for('ada@example.com'.bytes(), '001'.bytes())
+			value: []u8{}
+		},
+	], cfg) or { panic(err) }
+	split := SplitTableView.materialize_from_mixed_tree(mixed, 'users', ['email'], cfg) or {
+		panic(err)
+	}
+	row := split.rows_view().get('001'.bytes()) or { panic(err) }
+	entry := (split.index_view('email') or { panic(err) }).get('ada@example.com'.bytes(), '001'.bytes()) or {
+		panic(err)
+	}
+
+	assert split.rows_tree.root.cid != mixed.root.cid
+	assert (split.index_view('email') or { panic(err) }).tree.root.cid != mixed.root.cid
+	assert row.primary_key.bytestr() == '001'
+	assert entry.primary_key.bytestr() == '001'
+}
+
+fn test_split_table_view_materialize_mixed_tree_roundtrips_rows_and_indexes() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	mixed := Tree.build([
+		KVPair{
+			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			value: 'row-001'.bytes()
+		},
+		KVPair{
+			key: IndexView.new(Tree{}, 'users', 'email').key_for('ada@example.com'.bytes(), '001'.bytes())
+			value: []u8{}
+		},
+	], cfg) or { panic(err) }
+	split := SplitTableView.materialize_from_mixed_tree(mixed, 'users', ['email'], cfg) or {
+		panic(err)
+	}
+	roundtrip := split.materialize_mixed_tree(cfg) or { panic(err) }
+	row := TableView.new(roundtrip, 'users').get('001'.bytes()) or { panic(err) }
+	entry := (IndexView.new(roundtrip, 'users', 'email')).get('ada@example.com'.bytes(), '001'.bytes()) or {
+		panic(err)
+	}
+
+	assert row.primary_key.bytestr() == '001'
+	assert entry.primary_key.bytestr() == '001'
+}

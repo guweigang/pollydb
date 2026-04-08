@@ -32,6 +32,38 @@ That means `vsql` should reuse PollyDB for:
 - continuation/page semantics
 - request-time planner preview
 
+This also implies an important architectural dependency:
+
+- `vsql` should not be forced to compensate for a weak query executor
+- the `pollydb` query layer must already be able to execute index-backed requests efficiently
+
+The current `agentview browser` work is the practical proving ground for this.
+If an interactive transcript browser still experiences high read amplification even when using indexes,
+`vsql` would inherit the same weakness.
+
+So the intended layering is:
+
+1. strengthen `pollydb` query execution
+2. expose stable planner/introspection hooks
+3. let `vsql` remain a thin SQL-to-query adapter
+
+In other words:
+
+`vsql` should depend on a strong PollyDB query layer, not replace it.`
+
+## Query-Layer Prerequisites For VSQL
+
+Before `vsql` grows much beyond simple lowering, `pollydb` should provide these execution-layer guarantees:
+
+- covering scan paths that avoid unnecessary row fetch/decode
+- projection pushdown for index-backed reads
+- reverse/range/top-N index scans as first-class operations
+- stable `EXPLAIN` / planner preview output
+- lower read amplification from versioned storage into typed rows
+
+These are not optional polish items.
+They are what will make `vsql` feel like a database frontend instead of a thin syntax layer over a heavy storage engine.
+
 ## Main Mapping
 
 For the currently supported lightweight query layer, `vsql` should map:

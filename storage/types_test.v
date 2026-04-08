@@ -243,6 +243,561 @@ fn test_typed_schema_view_put_and_get_roundtrip() {
 	assert name is string && name == 'grace'
 }
 
+fn test_typed_indexed_schema_split_storage_exposes_compat_views() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table_def)
+	base_schema := TypedSchemaView.new(TableView.new(Tree{}, 'users'), codec)
+	indexed := TypedIndexedSchemaView.new(base_schema, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+	]) or { panic(err) }
+	mut row := TypedRowData.new()
+	row.set('id', '001')
+	row.set('email', 'ada@example.com')
+	next := indexed.put('001'.bytes(), row, cfg) or { panic(err) }
+
+	split := next.split_storage()
+	stored_row := split.rows_view().get('001'.bytes()) or { panic(err) }
+	email_col := table_def.column('email') or { panic(err) }
+	encoded_email := TypedValueEncoder.encode_index_value('ada@example.com', email_col) or {
+		panic(err)
+	}
+	stored_entry := (split.index_view('email') or { panic(err) }).get(encoded_email, '001'.bytes()) or {
+		panic(err)
+	}
+
+	assert stored_row.primary_key.bytestr() == '001'
+	assert stored_entry.index_key.bytestr().contains('ada@example.com')
+	assert stored_entry.primary_key.bytestr() == '001'
+}
+
+fn test_typed_transaction_indexed_view_builds_split_storage() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	spec := TypedTableSpec.new(table_def, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+	]) or { panic(err) }
+	mut tx := new_typed_transaction_with_specs(Tree{}, [spec]) or { panic(err) }
+	mut write_set := TypedWriteSet.new()
+	mut row := TypedRowData.new()
+	row.set('id', '001')
+	row.set('email', 'ada@example.com')
+	write_set.put('users', '001'.bytes(), row)
+	result := tx.apply_write_set(write_set, cfg) or { panic(err) }
+	indexed := result.tx.indexed_view('users') or { panic(err) }
+	split := indexed.split_storage()
+
+	assert split.has_index('email')
+	stored_row := split.rows_view().get('001'.bytes()) or { panic(err) }
+	email_col := table_def.column('email') or { panic(err) }
+	encoded_email := TypedValueEncoder.encode_index_value('ada@example.com', email_col) or {
+		panic(err)
+	}
+	stored_entry := (split.index_view('email') or { panic(err) }).get(encoded_email, '001'.bytes()) or {
+		panic(err)
+	}
+	assert stored_row.primary_key.bytestr() == '001'
+	assert stored_entry.primary_key.bytestr() == '001'
+}
+
+fn test_typed_transaction_indexed_view_split_backed_materializes_separate_trees() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	spec := TypedTableSpec.new(table_def, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+	]) or { panic(err) }
+	mut tx := new_typed_transaction_with_specs(Tree{}, [spec]) or { panic(err) }
+	mut write_set := TypedWriteSet.new()
+	mut row := TypedRowData.new()
+	row.set('id', '001')
+	row.set('email', 'ada@example.com')
+	write_set.put('users', '001'.bytes(), row)
+	result := tx.apply_write_set(write_set, cfg) or { panic(err) }
+	split_backed := result.tx.indexed_view_split_backed('users', cfg) or { panic(err) }
+
+	assert split_backed.is_split_backed()
+	assert split_backed.split_storage().rows_tree.root.cid == split_backed.schema.table.tree.root.cid
+	assert (split_backed.split_storage().index_view('email') or { panic(err) }).tree.root.cid != split_backed.schema.table.tree.root.cid
+	rows := split_backed.find_by_index('email', 'ada@example.com', 0) or { panic(err) }
+	assert rows.len == 1
+	assert rows[0].primary_key.bytestr() == '001'
+}
+
+fn test_typed_indexed_schema_can_read_from_truly_split_trees() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table_def)
+	mut row := TypedRowData.new()
+	row.set('id', '001')
+	row.set('email', 'ada@example.com')
+	encoded_row := codec.encode(row) or { panic(err) }
+	row_tree := Tree.build([
+		KVPair{
+			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			value: encoded_row
+		},
+	], cfg) or { panic(err) }
+	email_col := table_def.column('email') or { panic(err) }
+	encoded_email := TypedValueEncoder.encode_index_value('ada@example.com', email_col) or {
+		panic(err)
+	}
+	index_tree := Tree.build([
+		KVPair{
+			key: IndexView.new(Tree{}, 'users', 'email').key_for(encoded_email, '001'.bytes())
+			value: []u8{}
+		},
+	], cfg) or { panic(err) }
+	split := SplitTableView.new('users', row_tree, {
+		'email': index_tree
+	})
+	schema := TypedSchemaView.new_with_split_storage(split, codec)
+	indexed := TypedIndexedSchemaView.new_with_split_storage(schema, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+	], split) or { panic(err) }
+
+	got := indexed.get('001'.bytes()) or { panic(err) }
+	rows := indexed.find_by_index('email', 'ada@example.com', 0) or { panic(err) }
+
+	assert got.primary_key.bytestr() == '001'
+	assert rows.len == 1
+	assert rows[0].primary_key.bytestr() == '001'
+}
+
+fn test_typed_indexed_schema_materialize_split_storage_from_mixed_tree() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table_def)
+	base_schema := TypedSchemaView.new(TableView.new(Tree{}, 'users'), codec)
+	indexed := TypedIndexedSchemaView.new(base_schema, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+	]) or { panic(err) }
+	mut row := TypedRowData.new()
+	row.set('id', '001')
+	row.set('email', 'ada@example.com')
+	next := indexed.put('001'.bytes(), row, cfg) or { panic(err) }
+
+	split := next.materialize_split_storage(cfg) or { panic(err) }
+	email_col := table_def.column('email') or { panic(err) }
+	encoded_email := TypedValueEncoder.encode_index_value('ada@example.com', email_col) or {
+		panic(err)
+	}
+	got := (split.index_view('email') or { panic(err) }).get(encoded_email, '001'.bytes()) or {
+		panic(err)
+	}
+
+	assert split.rows_tree.root.cid != next.schema.table.tree.root.cid
+	assert got.primary_key.bytestr() == '001'
+}
+
+fn test_typed_indexed_schema_split_backed_returns_split_view() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table_def)
+	base_schema := TypedSchemaView.new(TableView.new(Tree{}, 'users'), codec)
+	indexed := TypedIndexedSchemaView.new(base_schema, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+	]) or { panic(err) }
+	mut row := TypedRowData.new()
+	row.set('id', '001')
+	row.set('email', 'ada@example.com')
+	next := indexed.put('001'.bytes(), row, cfg) or { panic(err) }
+
+	split_backed := next.split_backed(cfg) or { panic(err) }
+
+	assert split_backed.is_split_backed()
+	assert split_backed.get('001'.bytes()) or { panic(err) }.primary_key.bytestr() == '001'
+	rows := split_backed.find_by_index('email', 'ada@example.com', 0) or { panic(err) }
+	assert rows.len == 1
+	assert rows[0].primary_key.bytestr() == '001'
+}
+
+fn test_typed_indexed_schema_mixed_backed_roundtrips_from_split_view() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table_def)
+	base_schema := TypedSchemaView.new(TableView.new(Tree{}, 'users'), codec)
+	indexed := TypedIndexedSchemaView.new(base_schema, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+	]) or { panic(err) }
+	mut row := TypedRowData.new()
+	row.set('id', '001')
+	row.set('email', 'ada@example.com')
+	next := indexed.put('001'.bytes(), row, cfg) or { panic(err) }
+
+	split_backed := next.split_backed(cfg) or { panic(err) }
+	mixed_backed := split_backed.mixed_backed(cfg) or { panic(err) }
+
+	assert !mixed_backed.is_split_backed()
+	assert mixed_backed.get('001'.bytes()) or { panic(err) }.primary_key.bytestr() == '001'
+	rows := mixed_backed.find_by_index('email', 'ada@example.com', 0) or { panic(err) }
+	assert rows.len == 1
+	assert rows[0].primary_key.bytestr() == '001'
+}
+
+fn test_typed_transaction_split_backed_apply_matches_mixed_apply_after_materialize() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0, enable_partitioned_rebuild: true}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+		ColumnDef.new('role', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	spec := TypedTableSpec.new(table_def, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+		SchemaIndexDef.new('role', 'role') or { panic(err) },
+	]) or { panic(err) }
+	mut tx := new_typed_transaction_with_specs(Tree{}, [spec]) or { panic(err) }
+	mut seed := TypedWriteSet.new()
+	for i in 0 .. 16 {
+		mut row := TypedRowData.new()
+		row.set('id', 'user-${i:03}')
+		row.set('email', 'user-${i:03}@example.com')
+		row.set('role', if i % 2 == 0 { 'user' } else { 'assistant' })
+		seed.put('users', 'user-${i:03}'.bytes(), row)
+	}
+	seed_result := tx.apply_write_set(seed, cfg) or { panic(err) }
+	mixed_base := seed_result.tx
+	split_base := mixed_base.split_backed(cfg) or { panic(err) }
+
+	mut updated_row := TypedRowData.new()
+	updated_row.set('id', 'user-005')
+	updated_row.set('email', 'user-005@updated.example.com')
+	updated_row.set('role', 'assistant')
+	mut inserted_row := TypedRowData.new()
+	inserted_row.set('id', 'user-999')
+	inserted_row.set('email', 'user-999@example.com')
+	inserted_row.set('role', 'user')
+	mut writes := TypedWriteSet.new()
+	writes.put('users', 'user-005'.bytes(), updated_row)
+	writes.delete('users', 'user-007'.bytes())
+	writes.put('users', 'user-999'.bytes(), inserted_row)
+
+	mixed_result := mixed_base.apply_write_set(writes, cfg) or { panic(err) }
+	split_result := split_base.apply_write_set(writes, cfg) or { panic(err) }
+	split_mixed := split_result.tx.materialize_mixed_tree(cfg) or { panic(err) }
+
+	mixed_view := mixed_result.tx.indexed_view('users') or { panic(err) }
+	split_view := TypedTransaction.new(split_mixed)
+	mut split_tx := split_view
+	split_tx.register_table(spec) or { panic(err) }
+	rehydrated := split_tx.indexed_view('users') or { panic(err) }
+	email_col := table_def.column('email') or { panic(err) }
+	updated_email := TypedValueEncoder.encode_index_value('user-005@updated.example.com', email_col) or { panic(err) }
+
+	assert mixed_view.get('user-005'.bytes()) or { panic(err) }.primary_key.bytestr() == 'user-005'
+	assert rehydrated.get('user-005'.bytes()) or { panic(err) }.primary_key.bytestr() == 'user-005'
+	assert (rehydrated.split_storage().index_view('email') or { panic(err) }).get(updated_email, 'user-005'.bytes()) or {
+		panic(err)
+	}.primary_key.bytestr() == 'user-005'
+	if _ := (rehydrated.split_storage().index_view('email') or { panic(err) }).get((TypedValueEncoder.encode_index_value('user-007@example.com',
+		email_col) or { panic(err) }), 'user-007'.bytes()) {
+		assert false
+	}
+}
+
+fn test_typed_working_set_can_convert_to_split_backed() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0, enable_partitioned_rebuild: true}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	spec := TypedTableSpec.new(table_def, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+	]) or { panic(err) }
+	mut set := TypedWorkingSet.new('main', 'base', Tree{}, [spec]) or { panic(err) }
+	split_set := set.split_backed(cfg) or { panic(err) }
+	view := split_set.indexed_view('users') or { panic(err) }
+
+	assert !(set.has_changes())
+	assert !split_set.has_changes(cfg)
+	assert view.schema.table.name == 'users'
+}
+
+fn test_typed_split_working_set_apply_matches_mixed_after_materialize() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0, enable_partitioned_rebuild: true}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+		ColumnDef.new('role', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	spec := TypedTableSpec.new(table_def, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+		SchemaIndexDef.new('role', 'role') or { panic(err) },
+	]) or { panic(err) }
+	mut set := TypedWorkingSet.new('main', 'base', Tree{}, [spec]) or { panic(err) }
+	mut seed := TypedWriteSet.new()
+	for i in 0 .. 16 {
+		mut row := TypedRowData.new()
+		row.set('id', 'user-${i:03}')
+		row.set('email', 'user-${i:03}@example.com')
+		row.set('role', if i % 2 == 0 { 'user' } else { 'assistant' })
+		seed.put('users', 'user-${i:03}'.bytes(), row)
+	}
+	seed_result := set.apply_write_set(seed, cfg) or { panic(err) }
+	set.tx = seed_result.tx
+	mut split_set := set.split_backed(cfg) or { panic(err) }
+
+	mut updated_row := TypedRowData.new()
+	updated_row.set('id', 'user-005')
+	updated_row.set('email', 'user-005@updated.example.com')
+	updated_row.set('role', 'assistant')
+	mut inserted_row := TypedRowData.new()
+	inserted_row.set('id', 'user-999')
+	inserted_row.set('email', 'user-999@example.com')
+	inserted_row.set('role', 'user')
+	mut writes := TypedWriteSet.new()
+	writes.put('users', 'user-005'.bytes(), updated_row)
+	writes.delete('users', 'user-007'.bytes())
+	writes.put('users', 'user-999'.bytes(), inserted_row)
+
+	mixed_result := set.apply_write_set(writes, cfg) or { panic(err) }
+	split_result := split_set.apply_write_set(writes, cfg) or { panic(err) }
+	split_mixed := split_result.tx.materialize_mixed_tree(cfg) or { panic(err) }
+	mut compare_tx := TypedTransaction.new(split_mixed)
+	compare_tx.register_table(spec) or { panic(err) }
+	mixed_view := mixed_result.tx.indexed_view('users') or { panic(err) }
+	compare_view := compare_tx.indexed_view('users') or { panic(err) }
+
+	assert mixed_view.get('user-005'.bytes()) or { panic(err) } == compare_view.get('user-005'.bytes()) or {
+		panic(err)
+	}
+	assert (compare_view.find_by_index('role', 'user', 0) or { panic(err) }).len == (mixed_view.find_by_index('role',
+		'user', 0) or { panic(err) }).len
+}
+
+fn test_typed_indexed_schema_split_apply_prototype_matches_mixed_apply() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+		ColumnDef.new('role', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table_def)
+	base_schema := TypedSchemaView.new(TableView.new(Tree{}, 'users'), codec)
+	mut indexed := TypedIndexedSchemaView.new(base_schema, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+		SchemaIndexDef.new('role', 'role') or { panic(err) },
+	]) or { panic(err) }
+	for i in 0 .. 32 {
+		mut row := TypedRowData.new()
+		row.set('id', 'user-${i:03}')
+		row.set('email', 'user-${i:03}@example.com')
+		row.set('role', if i % 2 == 0 { 'user' } else { 'assistant' })
+		indexed = indexed.put('user-${i:03}'.bytes(), row, cfg) or { panic(err) }
+	}
+	mut updated_row := TypedRowData.new()
+	updated_row.set('id', 'user-005')
+	updated_row.set('email', 'user-005@updated.example.com')
+	updated_row.set('role', 'assistant')
+	mut inserted_row := TypedRowData.new()
+	inserted_row.set('id', 'user-999')
+	inserted_row.set('email', 'user-999@example.com')
+	inserted_row.set('role', 'user')
+	ops := [
+		TypedWriteOp{
+			table_name: 'users'
+			primary_key: 'user-005'.bytes()
+			row: updated_row
+			delete: false
+		},
+		TypedWriteOp{
+			table_name: 'users'
+			primary_key: 'user-007'.bytes()
+			row: TypedRowData.new()
+			delete: true
+		},
+		TypedWriteOp{
+			table_name: 'users'
+			primary_key: 'user-999'.bytes()
+			row: inserted_row
+			delete: false
+		},
+	]
+	mixed_update := indexed.apply_write_ops(ops, cfg) or { panic(err) }
+	split := indexed.apply_write_ops_split_rebuild(ops, cfg) or { panic(err) }
+
+	mixed_rows := mixed_update.view.find_by_index('role', 'user', 0) or { panic(err) }
+	email_col := table_def.column('email') or { panic(err) }
+	updated_email := TypedValueEncoder.encode_index_value('user-005@updated.example.com', email_col) or {
+		panic(err)
+	}
+	updated_entry := (split.index_view('email') or { panic(err) }).get(updated_email, 'user-005'.bytes()) or {
+		panic(err)
+	}
+	new_entry := (split.index_view('email') or { panic(err) }).get((TypedValueEncoder.encode_index_value('user-999@example.com',
+		email_col) or { panic(err) }), 'user-999'.bytes()) or { panic(err) }
+
+	assert mixed_rows.len > 0
+	assert updated_entry.primary_key.bytestr() == 'user-005'
+	assert new_entry.primary_key.bytestr() == 'user-999'
+	if _ := (split.index_view('email') or { panic(err) }).get((TypedValueEncoder.encode_index_value('user-007@example.com',
+		email_col) or { panic(err) }), 'user-007'.bytes()) {
+		assert false
+	}
+}
+
+fn test_typed_indexed_schema_split_apply_delta_matches_mixed_apply() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+		ColumnDef.new('role', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table_def)
+	base_schema := TypedSchemaView.new(TableView.new(Tree{}, 'users'), codec)
+	mut indexed := TypedIndexedSchemaView.new(base_schema, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+		SchemaIndexDef.new('role', 'role') or { panic(err) },
+	]) or { panic(err) }
+	for i in 0 .. 32 {
+		mut row := TypedRowData.new()
+		row.set('id', 'user-${i:03}')
+		row.set('email', 'user-${i:03}@example.com')
+		row.set('role', if i % 2 == 0 { 'user' } else { 'assistant' })
+		indexed = indexed.put('user-${i:03}'.bytes(), row, cfg) or { panic(err) }
+	}
+	mut updated_row := TypedRowData.new()
+	updated_row.set('id', 'user-005')
+	updated_row.set('email', 'user-005@updated.example.com')
+	updated_row.set('role', 'assistant')
+	mut inserted_row := TypedRowData.new()
+	inserted_row.set('id', 'user-999')
+	inserted_row.set('email', 'user-999@example.com')
+	inserted_row.set('role', 'user')
+	ops := [
+		TypedWriteOp{
+			table_name: 'users'
+			primary_key: 'user-005'.bytes()
+			row: updated_row
+			delete: false
+		},
+		TypedWriteOp{
+			table_name: 'users'
+			primary_key: 'user-007'.bytes()
+			row: TypedRowData.new()
+			delete: true
+		},
+		TypedWriteOp{
+			table_name: 'users'
+			primary_key: 'user-999'.bytes()
+			row: inserted_row
+			delete: false
+		},
+	]
+	mixed_update := indexed.apply_write_ops(ops, cfg) or { panic(err) }
+	split := indexed.apply_write_ops_split_delta(ops, cfg) or { panic(err) }
+
+	mixed_rows := mixed_update.view.find_by_index('role', 'user', 0) or { panic(err) }
+	email_col := table_def.column('email') or { panic(err) }
+	updated_email := TypedValueEncoder.encode_index_value('user-005@updated.example.com', email_col) or {
+		panic(err)
+	}
+	updated_entry := (split.index_view('email') or { panic(err) }).get(updated_email, 'user-005'.bytes()) or {
+		panic(err)
+	}
+	new_entry := (split.index_view('email') or { panic(err) }).get((TypedValueEncoder.encode_index_value('user-999@example.com',
+		email_col) or { panic(err) }), 'user-999'.bytes()) or { panic(err) }
+
+	assert mixed_rows.len > 0
+	assert updated_entry.primary_key.bytestr() == 'user-005'
+	assert new_entry.primary_key.bytestr() == 'user-999'
+	if _ := (split.index_view('email') or { panic(err) }).get((TypedValueEncoder.encode_index_value('user-007@example.com',
+		email_col) or { panic(err) }), 'user-007'.bytes()) {
+		assert false
+	}
+}
+
+fn test_typed_indexed_schema_split_apply_batched_matches_mixed_apply() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0, enable_partitioned_rebuild: true}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+		ColumnDef.new('role', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table_def)
+	base_schema := TypedSchemaView.new(TableView.new(Tree{}, 'users'), codec)
+	mut indexed := TypedIndexedSchemaView.new(base_schema, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+		SchemaIndexDef.new('role', 'role') or { panic(err) },
+	]) or { panic(err) }
+	for i in 0 .. 32 {
+		mut row := TypedRowData.new()
+		row.set('id', 'user-${i:03}')
+		row.set('email', 'user-${i:03}@example.com')
+		row.set('role', if i % 2 == 0 { 'user' } else { 'assistant' })
+		indexed = indexed.put('user-${i:03}'.bytes(), row, cfg) or { panic(err) }
+	}
+	mut updated_row := TypedRowData.new()
+	updated_row.set('id', 'user-005')
+	updated_row.set('email', 'user-005@updated.example.com')
+	updated_row.set('role', 'assistant')
+	mut inserted_row := TypedRowData.new()
+	inserted_row.set('id', 'user-999')
+	inserted_row.set('email', 'user-999@example.com')
+	inserted_row.set('role', 'user')
+	ops := [
+		TypedWriteOp{
+			table_name: 'users'
+			primary_key: 'user-005'.bytes()
+			row: updated_row
+			delete: false
+		},
+		TypedWriteOp{
+			table_name: 'users'
+			primary_key: 'user-007'.bytes()
+			row: TypedRowData.new()
+			delete: true
+		},
+		TypedWriteOp{
+			table_name: 'users'
+			primary_key: 'user-999'.bytes()
+			row: inserted_row
+			delete: false
+		},
+	]
+	mixed_update := indexed.apply_write_ops(ops, cfg) or { panic(err) }
+	split := indexed.apply_write_ops_split_batched(ops, cfg) or { panic(err) }
+
+	mixed_rows := mixed_update.view.find_by_index('role', 'user', 0) or { panic(err) }
+	email_col := table_def.column('email') or { panic(err) }
+	updated_email := TypedValueEncoder.encode_index_value('user-005@updated.example.com', email_col) or {
+		panic(err)
+	}
+	updated_entry := (split.index_view('email') or { panic(err) }).get(updated_email, 'user-005'.bytes()) or {
+		panic(err)
+	}
+	new_entry := (split.index_view('email') or { panic(err) }).get((TypedValueEncoder.encode_index_value('user-999@example.com',
+		email_col) or { panic(err) }), 'user-999'.bytes()) or { panic(err) }
+
+	assert mixed_rows.len > 0
+	assert updated_entry.primary_key.bytestr() == 'user-005'
+	assert new_entry.primary_key.bytestr() == 'user-999'
+	if _ := (split.index_view('email') or { panic(err) }).get((TypedValueEncoder.encode_index_value('user-007@example.com',
+		email_col) or { panic(err) }), 'user-007'.bytes()) {
+		assert false
+	}
+}
+
 fn test_typed_indexed_schema_view_put_updates_index() {
 	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
 	table_def := TableDef.new('users', [
@@ -359,6 +914,69 @@ fn test_typed_transaction_apply_write_set_handles_put_and_delete() {
 	assert new_rows[0].primary_key.bytestr() == '002'
 }
 
+fn test_partitioned_rebuild_matches_full_rebuild_for_update_batch() {
+	cfg_base := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	cfg_partition := cfg_base.with_partitioned_rebuild(true)
+	cfg_full := cfg_base.with_partitioned_rebuild(false)
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .i64_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+		ColumnDef.new('active', .bool_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	spec := TypedTableSpec.new(table_def, [
+		SchemaIndexDef.new('email', 'email') or { panic(err) },
+	]) or { panic(err) }
+	codec := TypedRowCodec.new(table_def)
+	mut seed_items := []KVPair{}
+	for i := 0; i < 256; i++ {
+		id := '${i:03}'
+		mut row := TypedRowData.new()
+		row.set('id', i64(i))
+		row.set('email', 'user${i}@example.com')
+		row.set('active', i % 2 == 0)
+		encoded := codec.encode(row) or { panic(err) }
+		seed_items << KVPair{
+			key: TableView.new(Tree{}, 'users').key_for(id.bytes())
+			value: encoded
+		}
+		encoded_email := TypedValueEncoder.encode_index_value('user${i}@example.com',
+			table_def.column('email') or { panic(err) }) or { panic(err) }
+		seed_items << KVPair{
+			key: IndexView.new(Tree{}, 'users', 'email').key_for(encoded_email, id.bytes())
+			value: []u8{}
+		}
+	}
+	base := Tree.build(seed_items, cfg_base) or { panic(err) }
+	schema := TypedSchemaView.new(TableView.new(base, 'users'), codec)
+	indexed := TypedIndexedSchemaView.new(schema, spec.indexes) or { panic(err) }
+	mut ops := []TypedWriteOp{}
+	for i := 32; i < 160; i++ {
+		id := '${i:03}'
+		mut row := TypedRowData.new()
+		row.set('id', i64(i))
+		row.set('email', 'user${i}+updated@example.com')
+		row.set('active', i % 2 != 0)
+		ops << TypedWriteOp{
+			table_name: 'users'
+			primary_key: id.bytes()
+			row: row
+			delete: false
+		}
+	}
+	partitioned := indexed.apply_write_ops(ops, cfg_partition) or { panic(err) }
+	full := indexed.apply_write_ops(ops, cfg_full) or { panic(err) }
+	partition_items := partitioned.view.schema.table.tree.items() or { panic(err) }
+	full_items := full.view.schema.table.tree.items() or { panic(err) }
+	assert partition_items.len == full_items.len
+	for idx, item in partition_items {
+		assert item.key == full_items[idx].key
+		assert item.value == full_items[idx].value
+	}
+	rows := partitioned.view.find_by_index('email', 'user64+updated@example.com', 0) or { panic(err) }
+	assert rows.len == 1
+	assert rows[0].primary_key.bytestr() == '064'
+}
+
 fn test_typed_indexed_schema_view_fast_update_preserves_indexes_for_fixed_width_non_index_columns() {
 	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
 	table_def := TableDef.new('users', [
@@ -451,6 +1069,16 @@ fn test_emit_markdown_fts_tokens_collects_scoped_terms() {
 	assert tokens.any(it.scope == .paragraph && it.term == 'pollydb')
 	assert tokens.any(it.scope == .list_item && it.term == 'list')
 	assert tokens.any(it.scope == .code_block && it.term == 'println')
+}
+
+fn test_emit_markdown_fts_tokens_includes_meta_node_values() {
+	tokens := emit_markdown_fts_tokens('<cwd>/Users/guweigang/Source/vphpx</cwd>\n<shell>zsh</shell>\n') or {
+		panic(err)
+	}
+	assert tokens.any(it.scope == .paragraph && it.term == 'cwd')
+	assert tokens.any(it.scope == .paragraph && it.term == 'vphpx')
+	assert tokens.any(it.scope == .paragraph && it.term == 'shell')
+	assert tokens.any(it.scope == .paragraph && it.term == 'zsh')
 }
 
 fn test_fts_distinct_keys_adds_scope_specific_and_any_scope_terms() {

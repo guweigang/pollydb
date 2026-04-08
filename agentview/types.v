@@ -52,6 +52,8 @@ pub struct SearchHit {
 pub:
 	session_id    string
 	session_title string
+	session_cwd   string
+	session_source string
 	path          string
 	entry_seq     int
 	kind          EntryKind

@@ -236,6 +236,11 @@ fn test_usage_includes_create_table_alias() {
 	assert cli.usage().contains('create-table')
 }
 
+fn test_usage_includes_rebuild_indexes() {
+	cli := PollyDbCli.new([])
+	assert cli.usage().contains('rebuild-indexes')
+}
+
 fn test_parse_aggregate_projection_refresh_policy() {
 	assert parse_aggregate_projection_refresh_policy('none') or { panic(err) } == .none
 	assert parse_aggregate_projection_refresh_policy('stale_one') or { panic(err) } == .stale_one

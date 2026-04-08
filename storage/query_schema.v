@@ -7,6 +7,8 @@ pub:
 	index_name string
 	stores_row bool
 	score      int
+	supports_reverse_scan bool
+	supports_top_n        bool
 }
 
 pub struct QueryFilterShapeCapability {
@@ -19,6 +21,8 @@ pub:
 	planner_score       int
 	projection_only     bool
 	continuation_anchor bool
+	supports_reverse_scan bool
+	supports_top_n        bool
 	sample_explain      QuerySamplePlanExplain
 }
 
@@ -39,6 +43,22 @@ pub:
 	notes                       []string
 	default_result_shape        string
 	supports_continuation_token bool
+	supports_reverse_scan       bool
+	supports_top_n              bool
+}
+
+pub struct QueryOrderCapability {
+pub:
+	column_name            string
+	direction              QueryOrderDirection
+	filter_op              QueryFilterOp
+	indexed                bool
+	index_name             string
+	planner_strategy       string
+	supports_continuation  bool
+	supports_reverse_scan  bool
+	supports_top_n         bool
+	sample_explain         QuerySamplePlanExplain
 }
 
 pub struct QueryColumnCapability {
@@ -50,6 +70,7 @@ pub:
 	index_names   []string
 	planner_hints []QueryPlannerHint
 	filter_shapes []QueryFilterShapeCapability
+	order_shapes  []QueryOrderCapability
 }
 
 pub struct QueryIndexCapability {
@@ -75,6 +96,7 @@ pub:
 	projection_names  []string
 	planner_hints     []QueryPlannerHint
 	filter_shapes     []QueryFilterShapeCapability
+	order_shapes      []QueryOrderCapability
 	fts_query_kinds   []FtsQueryKind
 	fts_shapes        []QueryFtsShapeCapability
 }
@@ -168,22 +190,43 @@ fn query_planner_hints_for_target(spec TypedTableSpec, column_name string, plugi
 		if best_score < 0 {
 			continue
 		}
+		supports_ordered_reverse := best_score >= 0 && plugin_name.len == 0 && selector.len == 0
+			&& op in [.before, .after, .between, .prefix]
+		supports_ordered_top_n := best_score >= 0 && plugin_name.len == 0 && selector.len == 0
+			&& op in [.eq, .before, .after, .between, .prefix]
+		planner_strategy := query_sample_plan_explain(spec, map[string]AggregateProjectionDef{}, spec.table.name, filter).strategy
 		hints << QueryPlannerHint{
 			op: op
-			strategy: query_plan_strategy_name(op)
+			strategy: planner_strategy
 			index_name: best_index.name
 			stores_row: best_index.stores_row
 			score: best_score
+			supports_reverse_scan: supports_ordered_reverse
+			supports_top_n: supports_ordered_top_n
 		}
 	}
 	return hints
 }
 
 fn query_sample_plan_explain(spec TypedTableSpec, projectors map[string]AggregateProjectionDef, table_name string, filter QueryFilter) QuerySamplePlanExplain {
-	plan := plan_query_request(spec, QueryRequest{
+	mut order_by := QueryOrder{}
+	if filter.plugin_name.len == 0 && filter.selector.len == 0
+		&& best_index_for_filter(spec, filter) != none {
+		match filter.op {
+			.before, .after, .between, .prefix, .eq {
+				order_by = QueryOrder{
+					column_name: filter.column_name
+					direction: if filter.op in [.before, .after, .between, .prefix, .eq] { .desc } else { .asc }
+				}
+			}
+		}
+	}
+	request := QueryRequest{
 		table_name: table_name
 		filters: [filter]
-	}) or {
+		order_by: order_by
+	}
+	plan := plan_query_request(spec, request) or {
 		return QuerySamplePlanExplain{
 			strategy: 'table_scan'
 			index_name: ''
@@ -191,12 +234,11 @@ fn query_sample_plan_explain(spec TypedTableSpec, projectors map[string]Aggregat
 			notes: []string{}
 			default_result_shape: 'page'
 			supports_continuation_token: true
+			supports_reverse_scan: false
+			supports_top_n: false
 		}
 	}
-	preview := build_query_plan_preview(spec, projectors, QueryRequest{
-		table_name: table_name
-		filters: [filter]
-	}, plan, false)
+	preview := build_query_plan_preview(spec, projectors, request, plan, false)
 	return preview.sample_explain()
 }
 
@@ -216,16 +258,60 @@ fn query_filter_shapes_for_target(spec TypedTableSpec, projectors map[string]Agg
 				best_score = score
 			}
 		}
+		planner_strategy := if best_score >= 0 {
+			query_sample_plan_explain(spec, projectors, table_name, filter).strategy
+		} else {
+			'table_scan'
+		}
 		shapes << QueryFilterShapeCapability{
 			op: op
 			value_type: value_type
 			indexed: best_score >= 0
 			index_name: if best_score >= 0 { best_index.name } else { '' }
-			planner_strategy: if best_score >= 0 { query_plan_strategy_name(op) } else { 'table_scan' }
+			planner_strategy: planner_strategy
 			planner_score: if best_score >= 0 { best_score } else { -1 }
 			projection_only: best_score < 0 && projection_names.len > 0
 			continuation_anchor: best_score >= 0
+			supports_reverse_scan: best_score >= 0 && plugin_name.len == 0 && selector.len == 0
+				&& op in [.before, .after, .between, .prefix]
+			supports_top_n: best_score >= 0 && plugin_name.len == 0 && selector.len == 0
+				&& op in [.eq, .before, .after, .between, .prefix]
 			sample_explain: query_sample_plan_explain(spec, projectors, table_name, filter)
+		}
+	}
+	return shapes
+}
+
+fn query_order_shapes_for_target(spec TypedTableSpec, projectors map[string]AggregateProjectionDef, table_name string, column_name string, plugin_name string, selector string, value_type ColumnType) []QueryOrderCapability {
+	mut shapes := []QueryOrderCapability{}
+	if plugin_name.len > 0 || selector.len > 0 {
+		return shapes
+	}
+	for op in query_supported_ops_for_type(value_type) {
+		for direction in [QueryOrderDirection.asc, .desc] {
+			request := QueryRequest{
+				table_name: table_name
+				filters: [query_sample_filter(column_name, plugin_name, selector, value_type, op)]
+				order_by: QueryOrder{
+					column_name: column_name
+					direction: direction
+				}
+				limit: 10
+			}
+			plan := plan_query_request(spec, request) or { continue }
+			preview := build_query_plan_preview(spec, projectors, request, plan, false)
+			shapes << QueryOrderCapability{
+				column_name: column_name
+				direction: direction
+				filter_op: op
+				indexed: plan.index_name.len > 0
+				index_name: plan.index_name
+				planner_strategy: plan.strategy
+				supports_continuation: preview.supports_continuation_token
+				supports_reverse_scan: query_plan_supports_reverse_executor(plan)
+				supports_top_n: query_plan_supports_top_n_executor(plan)
+				sample_explain: preview.sample_explain()
+			}
 		}
 	}
 	return shapes
@@ -265,6 +351,8 @@ fn query_sample_fts_explain(spec TypedTableSpec, column_name string, scope FtsSc
 		notes: preview.notes.clone()
 		default_result_shape: 'rows'
 		supports_continuation_token: false
+		supports_reverse_scan: false
+		supports_top_n: false
 	}
 }
 
@@ -315,6 +403,8 @@ pub fn (database PersistentDatabase) table_query_schema(table_name string) !Tabl
 			planner_hints: query_planner_hints_for_target(spec, column.name, '', '', column.typ)
 			filter_shapes: query_filter_shapes_for_target(spec, database.projectors, table_name,
 				column.name, '', '', column.typ, []string{})
+			order_shapes: query_order_shapes_for_target(spec, database.projectors, table_name,
+				column.name, '', '', column.typ)
 		}
 	}
 	mut indexes := []QueryIndexCapability{cap: spec.indexes.len}
@@ -347,6 +437,7 @@ pub fn (database PersistentDatabase) table_query_schema(table_name string) !Tabl
 				planner_hints: query_planner_hints_for_target(spec, index.column, meta.plugin_name,
 					meta.selector, meta.value_type)
 				filter_shapes: []QueryFilterShapeCapability{}
+				order_shapes: []QueryOrderCapability{}
 				fts_query_kinds: query_supported_fts_kinds_for_selector(meta.plugin_name,
 					meta.selector)
 				fts_shapes: query_fts_shapes_for_selector(spec, index.column, meta.plugin_name,
@@ -355,16 +446,17 @@ pub fn (database PersistentDatabase) table_query_schema(table_name string) !Tabl
 		}
 		mut index_names := capability.index_names.clone()
 		index_names << index.name
-		field_selector_entries[key] = QueryFieldSelectorCapability{
-			...capability
-			stores_row: capability.stores_row || meta.stores_row
-			index_names: index_names
-			filter_shapes: query_filter_shapes_for_target(spec, database.projectors, table_name,
-				index.column, meta.plugin_name, meta.selector, meta.value_type,
-				capability.projection_names)
-			fts_query_kinds: capability.fts_query_kinds.clone()
-			fts_shapes: capability.fts_shapes.clone()
-		}
+			field_selector_entries[key] = QueryFieldSelectorCapability{
+				...capability
+				stores_row: capability.stores_row || meta.stores_row
+				index_names: index_names
+				filter_shapes: query_filter_shapes_for_target(spec, database.projectors, table_name,
+					index.column, meta.plugin_name, meta.selector, meta.value_type,
+					capability.projection_names)
+				order_shapes: []QueryOrderCapability{}
+				fts_query_kinds: capability.fts_query_kinds.clone()
+				fts_shapes: capability.fts_shapes.clone()
+			}
 	}
 	mut projection_metrics := []QueryProjectionCapability{}
 	for name in sorted_projector_names(database.projectors) {
@@ -404,6 +496,7 @@ pub fn (database PersistentDatabase) table_query_schema(table_name string) !Tabl
 					planner_hints: query_planner_hints_for_target(spec, projector.column_name,
 						selector_meta.plugin_name, selector_meta.selector, selector_meta.value_type)
 					filter_shapes: []QueryFilterShapeCapability{}
+					order_shapes: []QueryOrderCapability{}
 					fts_query_kinds: query_supported_fts_kinds_for_selector(selector_meta.plugin_name,
 						selector_meta.selector)
 					fts_shapes: query_fts_shapes_for_selector(spec, projector.column_name,
@@ -418,6 +511,7 @@ pub fn (database PersistentDatabase) table_query_schema(table_name string) !Tabl
 				filter_shapes: query_filter_shapes_for_target(spec, database.projectors, table_name,
 					projector.column_name, selector_meta.plugin_name, selector_meta.selector,
 					selector_meta.value_type, projection_names)
+				order_shapes: []QueryOrderCapability{}
 				fts_query_kinds: selector_capability.fts_query_kinds.clone()
 				fts_shapes: selector_capability.fts_shapes.clone()
 			}

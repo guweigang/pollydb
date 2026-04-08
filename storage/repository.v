@@ -28,6 +28,35 @@ mut:
 	meta_dirty   bool
 }
 
+pub struct PersistentRepositoryOpenTimings {
+pub:
+	replay_journal_ms i64
+	repository_meta_ms i64
+	node_store_ms i64
+	commit_store_ms i64
+	total_ms i64
+}
+
+pub struct PersistentRepositoryOpenResult {
+pub:
+	repository PersistentRepository
+	timings    PersistentRepositoryOpenTimings
+}
+
+pub struct TypedTransactionOpenTimings {
+pub:
+	checkout_ms i64
+	tree_load_ms i64
+	wrap_ms i64
+	total_ms i64
+}
+
+pub struct TypedTransactionOpenResult {
+pub:
+	tx TypedTransaction
+	timings TypedTransactionOpenTimings
+}
+
 pub struct PersistentRepositoryCheckpointInfo {
 pub:
 	metadata_path         string
@@ -353,19 +382,41 @@ pub fn Repository.new(default_branch string) Repository {
 }
 
 pub fn PersistentRepository.open(path string, node_store_path string, commit_store_path string, default_branch string) !PersistentRepository {
+	return (PersistentRepository.open_profiled(path, node_store_path, commit_store_path, default_branch)!).repository
+}
+
+pub fn PersistentRepository.open_profiled(path string, node_store_path string, commit_store_path string, default_branch string) !PersistentRepositoryOpenResult {
+	mut total_sw := time.new_stopwatch()
+	mut meta_sw := time.new_stopwatch()
 	repo := if os.exists(path) {
 		Repository.open(path)!
 	} else {
 		Repository.new(default_branch)
 	}
-	return PersistentRepository{
+	repository_meta_ms := meta_sw.elapsed().milliseconds()
+	mut node_sw := time.new_stopwatch()
+	node_store := PersistentNodeStore.open_high_throughput(node_store_path)!
+	node_store_ms := node_sw.elapsed().milliseconds()
+	mut commit_sw := time.new_stopwatch()
+	commit_store := PersistentCommitStore.open_high_throughput(commit_store_path)!
+	commit_store_ms := commit_sw.elapsed().milliseconds()
+	repository := PersistentRepository{
 		path: path
 		node_store_path: node_store_path
 		commit_store_path: commit_store_path
 		repo: repo
-		node_store: PersistentNodeStore.open_high_throughput(node_store_path)!
-		commit_store: PersistentCommitStore.open_high_throughput(commit_store_path)!
+		node_store: node_store
+		commit_store: commit_store
 		meta_dirty: false
+	}
+	return PersistentRepositoryOpenResult{
+		repository: repository
+		timings: PersistentRepositoryOpenTimings{
+			repository_meta_ms: repository_meta_ms
+			node_store_ms: node_store_ms
+			commit_store_ms: commit_store_ms
+			total_ms: total_sw.elapsed().milliseconds()
+		}
 	}
 }
 
@@ -378,14 +429,30 @@ pub fn PersistentRepository.init(dir string, default_branch string) !PersistentR
 }
 
 pub fn PersistentRepository.open_default(dir string, default_branch string) !PersistentRepository {
+	return (PersistentRepository.open_default_profiled(dir, default_branch)!).repository
+}
+
+pub fn PersistentRepository.open_default_profiled(dir string, default_branch string) !PersistentRepositoryOpenResult {
 	os.mkdir_all(repository_layout_dir(dir))!
+	mut replay_sw := time.new_stopwatch()
 	replay_checkpoint_journal(dir)!
-	return PersistentRepository.open(
+	replay_journal_ms := replay_sw.elapsed().milliseconds()
+	result := PersistentRepository.open_profiled(
 		repository_metadata_path(dir),
 		repository_nodes_path(dir),
 		repository_commits_path(dir),
 		default_branch,
-	)
+	)!
+	return PersistentRepositoryOpenResult{
+		repository: result.repository
+		timings: PersistentRepositoryOpenTimings{
+			replay_journal_ms: replay_journal_ms
+			repository_meta_ms: result.timings.repository_meta_ms
+			node_store_ms: result.timings.node_store_ms
+			commit_store_ms: result.timings.commit_store_ms
+			total_ms: replay_journal_ms + result.timings.total_ms
+		}
+	}
 }
 
 pub fn Repository.open(path string) !Repository {
@@ -814,8 +881,29 @@ pub fn (mut repo Repository) apply_write_set_to_branch(branch_name string, specs
 }
 
 pub fn (repo Repository) typed_transaction_at_branch(branch_name string, specs []TypedTableSpec, mut node_store NodeStore, mut commit_store CommitStore) !TypedTransaction {
-	tree := repo.tree_at_branch(branch_name, mut node_store, mut commit_store)!
-	return new_typed_transaction_with_specs(tree, specs)
+	return (repo.typed_transaction_at_branch_profiled(branch_name, specs, mut node_store, mut commit_store)!).tx
+}
+
+pub fn (repo Repository) typed_transaction_at_branch_profiled(branch_name string, specs []TypedTableSpec, mut node_store NodeStore, mut commit_store CommitStore) !TypedTransactionOpenResult {
+	mut total_sw := time.new_stopwatch()
+	mut checkout_sw := time.new_stopwatch()
+	commit := repo.checkout(branch_name, mut commit_store)!
+	checkout_ms := checkout_sw.elapsed().milliseconds()
+	mut tree_sw := time.new_stopwatch()
+	tree := Tree.load(commit.root_cid, mut node_store)!
+	tree_load_ms := tree_sw.elapsed().milliseconds()
+	mut wrap_sw := time.new_stopwatch()
+	tx := new_typed_transaction_with_specs(tree, specs)!
+	wrap_ms := wrap_sw.elapsed().milliseconds()
+	return TypedTransactionOpenResult{
+		tx: tx
+		timings: TypedTransactionOpenTimings{
+			checkout_ms: checkout_ms
+			tree_load_ms: tree_load_ms
+			wrap_ms: wrap_ms
+			total_ms: total_sw.elapsed().milliseconds()
+		}
+	}
 }
 
 pub fn (mut repo Repository) apply_typed_write_set_to_branch(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta, mut node_store NodeStore, mut commit_store CommitStore) !BranchTypedTransactionResult {
@@ -861,6 +949,12 @@ pub fn (repo Repository) typed_working_set_at_branch(branch_name string, specs [
 	return TypedWorkingSet.new(branch_name, commit.cid, tree, specs)
 }
 
+pub fn (repo Repository) typed_split_working_set_at_branch(branch_name string, specs []TypedTableSpec, cfg ChunkConfig, mut node_store NodeStore, mut commit_store CommitStore) !TypedSplitWorkingSet {
+	commit := repo.checkout(branch_name, mut commit_store)!
+	tree := Tree.load(commit.root_cid, mut node_store)!
+	return TypedSplitWorkingSet.new(branch_name, commit.cid, tree, specs, cfg)
+}
+
 pub fn (mut repo Repository) commit_working_set(mut set WorkingSet, meta CommitMeta, mut node_store NodeStore, mut commit_store CommitStore) !BranchTransactionResult {
 	transaction_update := TransactionResult{
 		tx: set.transaction()
@@ -884,6 +978,25 @@ pub fn (mut repo Repository) commit_typed_working_set(mut set TypedWorkingSet, m
 	return BranchTypedWorkingSetResult{
 		update: update
 		transaction_update: transaction_update
+	}
+}
+
+pub fn (mut repo Repository) commit_typed_split_working_set(mut set TypedSplitWorkingSet, meta CommitMeta, cfg ChunkConfig, mut node_store NodeStore, mut commit_store CommitStore) !BranchTypedWorkingSetResult {
+	mixed_tree := set.current_tree(cfg)!
+	mut mixed_tx := new_typed_transaction_with_specs(mixed_tree, set.specs)!
+	transaction_update := TypedTransactionResult{
+		tx: mixed_tx
+		diff: set.base_tree.diff(mixed_tree)
+	}
+	update := repo.commit_to_branch(set.branch_name, mixed_tree, meta, mut node_store, mut commit_store)!
+	set.sync_to_tree(update.snapshot.tree, update.snapshot.commit.cid, cfg)!
+	mixed_tx = new_typed_transaction_with_specs(update.snapshot.tree, set.specs)!
+	return BranchTypedWorkingSetResult{
+		update: update
+		transaction_update: TypedTransactionResult{
+			tx: mixed_tx
+			diff: transaction_update.diff
+		}
 	}
 }
 

@@ -30,6 +30,16 @@ pub:
 	index_name string
 }
 
+// SplitTableView is a compatibility layer for the long-term "rows tree + index trees"
+// storage layout. Today it can still be backed by one mixed tree; later it can point
+// to physically separate trees without changing higher-level typed access paths.
+pub struct SplitTableView {
+pub:
+	name        string
+	rows_tree   Tree
+	index_trees map[string]Tree
+}
+
 pub struct TableCursor {
 pub:
 	view TableView
@@ -58,6 +68,99 @@ pub fn TableView.new(tree Tree, name string) TableView {
 	}
 }
 
+pub fn SplitTableView.new(name string, rows_tree Tree, index_trees map[string]Tree) SplitTableView {
+	return SplitTableView{
+		name: name
+		rows_tree: rows_tree
+		index_trees: index_trees.clone()
+	}
+}
+
+pub fn (view SplitTableView) clone() SplitTableView {
+	return SplitTableView.new(view.name, view.rows_tree, view.index_trees)
+}
+
+pub fn SplitTableView.from_mixed_tree(tree Tree, name string, index_names []string) SplitTableView {
+	mut index_trees := map[string]Tree{}
+	for index_name in index_names {
+		index_trees[index_name] = tree
+	}
+	return SplitTableView.new(name, tree, index_trees)
+}
+
+pub fn (view SplitTableView) rows_view() TableView {
+	return TableView.new(view.rows_tree, view.name)
+}
+
+pub fn (view SplitTableView) has_index(index_name string) bool {
+	return index_name in view.index_trees
+}
+
+pub fn (view SplitTableView) index_view(index_name string) !IndexView {
+	tree := view.index_trees[index_name] or {
+		return error('split table index not found: ${view.name}.${index_name}')
+	}
+	return IndexView.new(tree, view.name, index_name)
+}
+
+pub fn (view SplitTableView) with_rows_tree(tree Tree) SplitTableView {
+	return SplitTableView.new(view.name, tree, view.index_trees)
+}
+
+pub fn (view SplitTableView) with_index_tree(index_name string, tree Tree) SplitTableView {
+	mut next_indexes := view.index_trees.clone()
+	next_indexes[index_name] = tree
+	return SplitTableView.new(view.name, view.rows_tree, next_indexes)
+}
+
+pub fn SplitTableView.materialize_from_mixed_tree(tree Tree, name string, index_names []string, cfg ChunkConfig) !SplitTableView {
+	items := tree.items()!
+	row_prefix := encode_table_prefix(name)
+	mut index_prefixes := map[string][]u8{}
+	for index_name in index_names {
+		index_prefixes[index_name] = encode_index_prefix(name, index_name)
+	}
+	mut row_items := []KVPair{}
+	mut index_items := map[string][]KVPair{}
+	for index_name in index_names {
+		index_items[index_name] = []KVPair{}
+	}
+	for item in items {
+		if has_prefix_bytes(item.key, row_prefix) {
+			row_items << item
+			continue
+		}
+		for index_name, prefix in index_prefixes {
+			if has_prefix_bytes(item.key, prefix) {
+				mut bucket := index_items[index_name]
+				bucket << item
+				index_items[index_name] = bucket
+				break
+			}
+		}
+	}
+	row_tree := if row_items.len == 0 { Tree{} } else { Tree.build(row_items, cfg)! }
+	mut trees := map[string]Tree{}
+	for index_name, bucket in index_items {
+		trees[index_name] = if bucket.len == 0 { Tree{} } else { Tree.build(bucket, cfg)! }
+	}
+	return SplitTableView.new(name, row_tree, trees)
+}
+
+pub fn (view SplitTableView) materialize_mixed_tree(cfg ChunkConfig) !Tree {
+	mut items := []KVPair{}
+	row_items := view.rows_tree.items() or { []KVPair{} }
+	items << row_items
+	for _, index_tree in view.index_trees {
+		index_items := index_tree.items() or { []KVPair{} }
+		items << index_items
+	}
+	if items.len == 0 {
+		return Tree{}
+	}
+	return Tree.build(items, cfg)
+}
+
 pub fn (view TableView) with_tree(tree Tree) TableView {
 	return TableView.new(tree, view.name)
 }
@@ -71,9 +174,7 @@ fn (view TableView) row_prefix() []u8 {
 }
 
 fn (view TableView) key_for(primary_key []u8) []u8 {
-	mut out := view.row_prefix()
-	out << primary_key
-	return out
+	return build_table_row_key(view.row_prefix(), primary_key)
 }
 
 pub fn (view TableView) put(primary_key []u8, value []u8, cfg ChunkConfig) !TableView {
@@ -150,12 +251,28 @@ fn (view IndexView) entry_prefix() []u8 {
 	return encode_index_prefix(view.table_name, view.index_name)
 }
 
-fn (view IndexView) key_for(index_key []u8, primary_key []u8) []u8 {
-	mut out := view.entry_prefix()
+fn build_index_entry_key(prefix []u8, index_key []u8, primary_key []u8) []u8 {
+	mut out := []u8{cap: prefix.len + index_key.len + 1 + primary_key.len}
+	out << prefix
 	out << index_key
 	out << [u8(`|`)]
 	out << primary_key
 	return out
+}
+
+fn build_table_row_key(prefix []u8, primary_key []u8) []u8 {
+	mut out := []u8{cap: prefix.len + primary_key.len}
+	out << prefix
+	out << primary_key
+	return out
+}
+
+fn build_index_entry_key_string(prefix string, index_key []u8, primary_key string) string {
+	return prefix + index_key.bytestr() + '|' + primary_key
+}
+
+fn (view IndexView) key_for(index_key []u8, primary_key []u8) []u8 {
+	return build_index_entry_key(view.entry_prefix(), index_key, primary_key)
 }
 
 pub fn (view IndexView) put(index_key []u8, primary_key []u8, value []u8, cfg ChunkConfig) !IndexView {
@@ -186,6 +303,44 @@ pub fn (view IndexView) cursor(start_index_key []u8, start_primary_key []u8, lim
 	return IndexCursor{
 		view: view
 		cursor: view.tree.cursor(start_key, end_key, limit)!
+	}
+}
+
+pub fn (view IndexView) prefix_cursor(prefix_index_key []u8, limit int) !IndexCursor {
+	mut start_key := view.entry_prefix()
+	start_key << prefix_index_key
+	end_key := prefix_upper_bound(view.entry_prefix())!
+	return IndexCursor{
+		view: view
+		cursor: view.tree.cursor(start_key, end_key, limit)!
+	}
+}
+
+pub fn (view IndexView) reverse_prefix_cursor(prefix_index_key []u8, limit int) !IndexCursor {
+	mut start_key := view.entry_prefix()
+	start_key << prefix_index_key
+	mut end_key := view.entry_prefix()
+	end_key << prefix_upper_bound(prefix_index_key)!
+	return IndexCursor{
+		view: view
+		cursor: view.tree.reverse_cursor(start_key, end_key, limit)!
+	}
+}
+
+pub fn (view IndexView) reverse_cursor(start_index_key []u8, start_primary_key []u8, end_index_key []u8, end_primary_key []u8, limit int) !IndexCursor {
+	start_key := if start_index_key.len == 0 && start_primary_key.len == 0 {
+		view.entry_prefix()
+	} else {
+		view.key_for(start_index_key, start_primary_key)
+	}
+	end_key := if end_index_key.len == 0 && end_primary_key.len == 0 {
+		prefix_upper_bound(view.entry_prefix())!
+	} else {
+		view.key_for(end_index_key, end_primary_key)
+	}
+	return IndexCursor{
+		view: view
+		cursor: view.tree.reverse_cursor(start_key, end_key, limit)!
 	}
 }
 

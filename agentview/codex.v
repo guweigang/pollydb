@@ -142,6 +142,14 @@ fn load_codex_session_titles(root string) !map[string]string {
 }
 
 fn read_codex_session_summary(path string, mut titles map[string]string) !SessionSummary {
+	return scan_codex_session(path, mut titles, false)!.summary
+}
+
+fn read_codex_transcript(path string, mut titles map[string]string) !SessionTranscript {
+	return scan_codex_session(path, mut titles, true)!
+}
+
+fn scan_codex_session(path string, mut titles map[string]string, include_entries bool) !SessionTranscript {
 	lines := os.read_lines(path)!
 	mut id := ''
 	mut started_at := ''
@@ -153,6 +161,8 @@ fn read_codex_session_summary(path string, mut titles map[string]string) !Sessio
 	mut entry_count := 0
 	mut user_turns := 0
 	mut tool_calls := 0
+	mut entries := []SessionEntry{}
+	mut seq := 0
 	for line in lines {
 		trimmed := line.trim_space()
 		if trimmed.len == 0 {
@@ -175,63 +185,9 @@ fn read_codex_session_summary(path string, mut titles map[string]string) !Sessio
 			'user_message' {
 				user_turns++
 				entry_count++
-			}
-			'response_item' {
-				item := any_map(env.payload)
-				item_type := any_string(item['type'] or { json2.Any('') })
-				match item_type {
-					'message', 'reasoning', 'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output' {
-						entry_count++
-					}
-					else {}
+				if !include_entries {
+					continue
 				}
-				if item_type == 'function_call' || item_type == 'custom_tool_call' {
-					tool_calls++
-				}
-			}
-			'event_msg' {
-				msg := any_map(env.payload)
-				if any_string(msg['type'] or { json2.Any('') }) == 'agent_message' {
-					entry_count++
-				}
-			}
-			else {}
-		}
-	}
-	if id.len == 0 {
-		id = session_id_from_path(path)
-	}
-	title := titles[id] or { infer_title_from_path(path) }
-	return SessionSummary{
-		id: id
-		title: title
-		updated_at: updated_at
-		started_at: started_at
-		cwd: cwd
-		source: source
-		originator: originator
-		cli_version: cli_version
-		path: path
-		archived: path.contains('/archived_sessions/')
-		entry_count: entry_count
-		user_turns: user_turns
-		tool_calls: tool_calls
-	}
-}
-
-fn read_codex_transcript(path string, mut titles map[string]string) !SessionTranscript {
-	summary := read_codex_session_summary(path, mut titles)!
-	lines := os.read_lines(path)!
-	mut entries := []SessionEntry{}
-	mut seq := 0
-	for line in lines {
-		trimmed := line.trim_space()
-		if trimmed.len == 0 {
-			continue
-		}
-		env := json2.decode[CodexEventEnvelope](trimmed) or { continue }
-		match env.typ {
-			'user_message' {
 				payload := any_map(env.payload)
 				text := first_non_empty([
 					any_string(payload['text'] or { json2.Any('') }),
@@ -251,31 +207,21 @@ fn read_codex_transcript(path string, mut titles map[string]string) !SessionTran
 				}
 				seq++
 			}
-			'event_msg' {
-				payload := any_map(env.payload)
-				msg_type := any_string(payload['type'] or { json2.Any('') })
-				if msg_type != 'agent_message' {
-					continue
-				}
-				text := any_string(payload['message'] or { json2.Any('') })
-				if text.len == 0 {
-					continue
-				}
-				entries << SessionEntry{
-					seq: seq
-					timestamp: env.timestamp
-					kind: .message
-					role: 'assistant'
-					title: 'commentary'
-					text: text
-					phase: any_string(payload['phase'] or { json2.Any('') })
-					raw_type: msg_type
-				}
-				seq++
-			}
 			'response_item' {
 				item := any_map(env.payload)
 				item_type := any_string(item['type'] or { json2.Any('') })
+				match item_type {
+					'message', 'reasoning', 'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output' {
+						entry_count++
+					}
+					else {}
+				}
+				if item_type == 'function_call' || item_type == 'custom_tool_call' {
+					tool_calls++
+				}
+				if !include_entries {
+					continue
+				}
 				match item_type {
 					'message' {
 						role := any_string(item['role'] or { json2.Any('assistant') })
@@ -340,8 +286,52 @@ fn read_codex_transcript(path string, mut titles map[string]string) !SessionTran
 					else {}
 				}
 			}
+			'event_msg' {
+				msg := any_map(env.payload)
+				msg_type := any_string(msg['type'] or { json2.Any('') })
+				if msg_type == 'agent_message' {
+					entry_count++
+					if !include_entries {
+						continue
+					}
+					text := any_string(msg['message'] or { json2.Any('') })
+					if text.len == 0 {
+						continue
+					}
+					entries << SessionEntry{
+						seq: seq
+						timestamp: env.timestamp
+						kind: .message
+						role: 'assistant'
+						title: 'commentary'
+						text: text
+						phase: any_string(msg['phase'] or { json2.Any('') })
+						raw_type: msg_type
+					}
+					seq++
+				}
+			}
 			else {}
 		}
+	}
+	if id.len == 0 {
+		id = session_id_from_path(path)
+	}
+	title := titles[id] or { infer_title_from_path(path) }
+	summary := SessionSummary{
+		id: id
+		title: title
+		updated_at: updated_at
+		started_at: started_at
+		cwd: cwd
+		source: source
+		originator: originator
+		cli_version: cli_version
+		path: path
+		archived: path.contains('/archived_sessions/')
+		entry_count: entry_count
+		user_turns: user_turns
+		tool_calls: tool_calls
 	}
 	return SessionTranscript{
 		summary: summary

@@ -14,6 +14,15 @@ fn database_users_spec() !TypedTableSpec {
 	])
 }
 
+fn database_users_no_index_spec() !TypedTableSpec {
+	table := TableDef.new('users', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('name', .string_, false)!,
+		ColumnDef.new('email', .string_, false)!,
+	], ['id'])!
+	return TypedTableSpec.new(table, [])
+}
+
 fn database_users_covering_spec() !TypedTableSpec {
 	table := TableDef.new('users', [
 		ColumnDef.new('id', .string_, false)!,
@@ -222,6 +231,310 @@ fn test_persistent_database_catalog_preserves_column_aggregates() {
 	loaded := reopened.table_spec('metrics') or { panic(err) }
 	assert loaded.table.supports_sum_aggregate('id')
 	assert !(loaded.table.supports_sum_aggregate('name'))
+}
+
+fn test_persistent_database_register_or_update_table_adds_indexes() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-update-table-indexes')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	spec_without_index := database_users_no_index_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(spec_without_index) or { panic(err) }
+	seed_tree := database_seed_tree(spec_without_index, '001', 'ada', 'ada@example.com', cfg) or {
+		panic(err)
+	}
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+	changed := db.register_or_update_table(database_users_spec() or { panic(err) }) or { panic(err) }
+	assert changed
+	_ = db.rebuild_indexes_at_branch('main', ['users'], cfg) or { panic(err) }
+	db.close() or { panic(err) }
+
+	mut reopened := PersistentDatabase.open(dir, 'main') or { panic(err) }
+	defer {
+		reopened.close() or {}
+	}
+	spec := reopened.table_spec('users') or { panic(err) }
+	assert spec.indexes.len == 1
+	assert spec.indexes[0].name == 'email'
+	session := reopened.begin_session(SessionOptions.for_branch('main')) or { panic(err) }
+	rows := session.lookup_index(mut reopened, 'users', 'email', 'ada@example.com', 10) or {
+		panic(err)
+	}
+	assert rows.len == 1
+	assert rows[0].primary_key.bytestr() == '001'
+}
+
+fn test_database_session_lookup_index_ordered_projected_uses_covering_reader_path() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-ordered-projected')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	mut writes := TypedWriteSet.new()
+	for triple in [
+		['001', 'ada', 'ada@example.com'],
+		['002', 'bea', 'bea@example.com'],
+		['003', 'cy', 'cy@example.com'],
+	] {
+		mut row := TypedRowData.new()
+		row.set('id', triple[0])
+		row.set('name', triple[1])
+		row.set('email', triple[2])
+		writes.put('users', triple[0].bytes(), row)
+	}
+	_ = db.apply_typed_write_set('main', writes, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+	rows := session.lookup_index_ordered_projected(mut db, 'users', 'email', ColumnValue(NullValue{}),
+		false, []u8{}, 2, ['id', 'email'], true) or { panic(err) }
+	assert rows.len == 2
+	assert rows[0].primary_key.bytestr() == '003'
+	assert rows[1].primary_key.bytestr() == '002'
+	assert rows[0].data.has('id')
+	assert rows[0].data.has('email')
+	assert !rows[0].data.has('name')
+	db.close() or { panic(err) }
+}
+
+fn test_persistent_database_can_begin_split_working_set() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-split-working-set')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+		enable_partitioned_rebuild: true
+	}
+	spec := database_users_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	mut writes := TypedWriteSet.new()
+	mut row := TypedRowData.new()
+	row.set('id', '001')
+	row.set('name', 'ada')
+	row.set('email', 'ada@example.com')
+	writes.put('users', '001'.bytes(), row)
+	_ = db.apply_typed_write_set('main', writes, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+	mut split_set := db.begin_split_working_set_with_specs('main', [spec], cfg) or { panic(err) }
+	assert !split_set.has_changes(cfg)
+	view := split_set.indexed_view('users') or { panic(err) }
+	assert view.is_split_backed()
+	found := view.get('001'.bytes()) or { panic(err) }
+	assert found.primary_key.bytestr() == '001'
+	rows := view.find_by_index('email', 'ada@example.com', 0) or { panic(err) }
+	assert rows.len == 1
+	assert rows[0].primary_key.bytestr() == '001'
+	db.close() or { panic(err) }
+}
+
+fn test_persistent_database_split_backed_apply_matches_mixed_apply() {
+	dir_mixed := os.join_path(os.vtmp_dir(), 'pollydb-database-split-apply-mixed')
+	dir_split := os.join_path(os.vtmp_dir(), 'pollydb-database-split-apply-split')
+	defer {
+		os.rmdir_all(dir_mixed) or {}
+		os.rmdir_all(dir_split) or {}
+	}
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+		enable_partitioned_rebuild: true
+	}
+	spec := database_users_spec() or { panic(err) }
+	mut db_mixed := PersistentDatabase.init(dir_mixed, 'main') or { panic(err) }
+	mut db_split := PersistentDatabase.init(dir_split, 'main') or { panic(err) }
+	db_mixed.register_table(spec) or { panic(err) }
+	db_split.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db_mixed.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	_ = db_split.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	mut writes := TypedWriteSet.new()
+	mut row_001 := TypedRowData.new()
+	row_001.set('id', '001')
+	row_001.set('name', 'ada')
+	row_001.set('email', 'ada@example.com')
+	mut row_002 := TypedRowData.new()
+	row_002.set('id', '002')
+	row_002.set('name', 'grace')
+	row_002.set('email', 'grace@example.com')
+	writes.put('users', '001'.bytes(), row_001)
+	writes.put('users', '002'.bytes(), row_002)
+	_ = db_mixed.apply_typed_write_set('main', writes, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'mixed apply'
+		timestamp: 1
+	}) or { panic(err) }
+	_ = db_split.apply_typed_write_set_split_backed('main', writes, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'split apply'
+		timestamp: 1
+	}) or { panic(err) }
+	tx_mixed := db_mixed.begin_transaction('main') or { panic(err) }
+	tx_split := db_split.begin_transaction('main') or { panic(err) }
+	view_mixed := tx_mixed.indexed_view('users') or { panic(err) }
+	view_split := tx_split.indexed_view('users') or { panic(err) }
+	assert view_mixed.get('001'.bytes()) or { panic(err) } == view_split.get('001'.bytes()) or {
+		panic(err)
+	}
+	mixed_rows := view_mixed.find_by_index('email', 'grace@example.com', 0) or { panic(err) }
+	split_rows := view_split.find_by_index('email', 'grace@example.com', 0) or { panic(err) }
+	assert mixed_rows.len == split_rows.len
+	assert split_rows.len == 1
+	assert split_rows[0].primary_key.bytestr() == '002'
+	db_mixed.close() or { panic(err) }
+	db_split.close() or { panic(err) }
+}
+
+fn test_persistent_database_cfg_routed_split_backed_apply_matches_mixed_apply() {
+	dir_mixed := os.join_path(os.vtmp_dir(), 'pollydb-database-cfg-split-apply-mixed')
+	dir_split := os.join_path(os.vtmp_dir(), 'pollydb-database-cfg-split-apply-split')
+	defer {
+		os.rmdir_all(dir_mixed) or {}
+		os.rmdir_all(dir_split) or {}
+	}
+	base_cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+		enable_partitioned_rebuild: true
+	}
+	split_cfg := base_cfg.with_split_backed_working_set(true)
+	spec := database_users_spec() or { panic(err) }
+	mut db_mixed := PersistentDatabase.init(dir_mixed, 'main') or { panic(err) }
+	mut db_split := PersistentDatabase.init(dir_split, 'main') or { panic(err) }
+	db_mixed.register_table(spec) or { panic(err) }
+	db_split.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', base_cfg) or { panic(err) }
+	_ = db_mixed.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	_ = db_split.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	mut writes := TypedWriteSet.new()
+	mut row_001 := TypedRowData.new()
+	row_001.set('id', '001')
+	row_001.set('name', 'ada')
+	row_001.set('email', 'ada@example.com')
+	writes.put('users', '001'.bytes(), row_001)
+	_ = db_mixed.apply_typed_write_set('main', writes, base_cfg, CommitMeta{
+		author: 'gwg'
+		message: 'mixed routed apply'
+		timestamp: 1
+	}) or { panic(err) }
+	_ = db_split.apply_typed_write_set('main', writes, split_cfg, CommitMeta{
+		author: 'gwg'
+		message: 'split routed apply'
+		timestamp: 1
+	}) or { panic(err) }
+	tx_mixed := db_mixed.begin_transaction('main') or { panic(err) }
+	tx_split := db_split.begin_transaction('main') or { panic(err) }
+	view_mixed := tx_mixed.indexed_view('users') or { panic(err) }
+	view_split := tx_split.indexed_view('users') or { panic(err) }
+	assert view_mixed.get('001'.bytes()) or { panic(err) } == view_split.get('001'.bytes()) or {
+		panic(err)
+	}
+	db_mixed.close() or { panic(err) }
+	db_split.close() or { panic(err) }
+}
+
+fn test_persistent_database_split_group_commit_roundtrip() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-split-group-commit')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+		enable_partitioned_rebuild: true
+		enable_split_backed_working_set: true
+	}
+	spec := database_users_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	mut session := db.begin_default_split_group_commit_session(GroupCommitOptions{
+		checkpoint_every: 1
+		checkpoint_mode: .data_only
+	}, cfg) or { panic(err) }
+	mut rows := map[string]TypedRowData{}
+	mut row_001 := TypedRowData.new()
+	row_001.set('id', '001')
+	row_001.set('name', 'ada')
+	row_001.set('email', 'ada@example.com')
+	rows['001'] = row_001
+	mut row_002 := TypedRowData.new()
+	row_002.set('id', '002')
+	row_002.set('name', 'grace')
+	row_002.set('email', 'grace@example.com')
+	rows['002'] = row_002
+	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'split group commit'
+		timestamp: 1
+	}) or { panic(err) }
+	session.finish(mut db) or { panic(err) }
+	tx := db.begin_transaction('main') or { panic(err) }
+	view := tx.indexed_view('users') or { panic(err) }
+	assert (view.get('001'.bytes()) or { panic(err) }).primary_key.bytestr() == '001'
+	assert (view.find_by_index('email', 'grace@example.com', 0) or { panic(err) }).len == 1
+	db.close() or { panic(err) }
 }
 
 fn test_persistent_database_catalog_preserves_enum_json_and_json_path_indexes() {
@@ -1002,6 +1315,61 @@ fn test_persistent_database_session_roundtrip() {
 	}
 }
 
+fn test_persistent_database_session_put_rows_roundtrip() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-session-put-rows')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_users_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 1
+	}) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	mut rows := map[string]TypedRowData{}
+	mut row2 := TypedRowData.new()
+	row2.set('id', '002')
+	row2.set('name', 'grace')
+	row2.set('email', 'grace@example.com')
+	rows['002'] = row2
+	mut row3 := TypedRowData.new()
+	row3.set('id', '003')
+	row3.set('name', 'linus')
+	row3.set('email', 'linus@example.com')
+	rows['003'] = row3
+	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'bulk session put rows'
+		timestamp: 2
+	}) or { panic(err) }
+
+	tx := db.begin_transaction('main') or { panic(err) }
+	view := tx.indexed_view('users') or { panic(err) }
+	found := view.find_by_index('email', 'grace@example.com', 10) or { panic(err) }
+	assert found.len == 1
+	assert found[0].primary_key.bytestr() == '002'
+	loaded := view.get('003'.bytes()) or { panic(err) }
+	name := loaded.data.get('name') or { panic(err) }
+	match name {
+		string { assert name == 'linus' }
+		else { panic('expected string name') }
+	}
+}
+
 fn test_persistent_database_markdown_ref_helpers_roundtrip() {
 	cfg := ChunkConfig{
 		min_size: 64
@@ -1322,6 +1690,111 @@ fn test_transaction_session_markdown_selector_indexes_are_live_before_commit() {
 		panic(err)
 	}
 	assert between_rows.len == 1
+}
+
+fn test_transaction_session_lookup_index_prefix() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-tx-index-prefix')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_users_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
+	seed_tree = rebuild_typed_indexes_for_specs(seed_tree, [spec], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	mut tx := session.begin_working_set(mut db) or { panic(err) }
+	mut row := TypedRowData.new()
+	row.set('id', '002')
+	row.set('name', 'grace')
+	row.set('email', 'grace@example.com')
+	_ = tx.put_row('users', '002'.bytes(), row, cfg) or { panic(err) }
+
+	rows := tx.lookup_index_prefix('users', 'email', 'gr', 10) or { panic(err) }
+	assert rows.len == 1
+	assert rows[0].primary_key.bytestr() == '002'
+}
+
+fn test_persistent_database_lookup_index_before_reverse() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-index-before-reverse')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_events_datetime_indexed_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut row1 := TypedRowData.new()
+	row1.set('id', '001')
+	row1.set('title', 'a')
+	row1.set('created_at', '2026-03-30T10:00:00.000000Z')
+	mut row2 := TypedRowData.new()
+	row2.set('id', '002')
+	row2.set('title', 'b')
+	row2.set('created_at', '2026-03-30T11:00:00.000000Z')
+	mut row3 := TypedRowData.new()
+	row3.set('id', '003')
+	row3.set('title', 'c')
+	row3.set('created_at', '2026-03-30T12:00:00.000000Z')
+	mut seed_tree := Tree.build([
+		KVPair{
+			key: TableView.new(Tree{}, spec.table.name).key_for('001'.bytes())
+			value: codec.encode(row1)!
+		},
+		KVPair{
+			key: TableView.new(Tree{}, spec.table.name).key_for('002'.bytes())
+			value: codec.encode(row2)!
+		},
+		KVPair{
+			key: TableView.new(Tree{}, spec.table.name).key_for('003'.bytes())
+			value: codec.encode(row3)!
+		},
+	], cfg) or { panic(err) }
+	seed_tree = rebuild_typed_indexes_for_specs(seed_tree, [spec], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	rows := session.lookup_index_before_reverse(
+		mut db,
+		'events',
+		'created_at_idx',
+		'2026-03-30T12:00:00.000000Z',
+		10,
+	) or { panic(err) }
+	assert rows.len == 2
+	assert rows[0].primary_key.bytestr() == '002'
+	assert rows[1].primary_key.bytestr() == '001'
+	title := rows[0].data.get('title') or { panic(err) }
+	match title {
+		string { assert title == 'b' }
+		else { panic('expected string title') }
+	}
 }
 
 fn test_transaction_session_markdown_selector_index_cursor_supports_iteration() {
@@ -3154,7 +3627,8 @@ fn test_database_session_lookup_index_prefix_projected() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	seed_tree := database_seed_tree(spec, '001', 'ada', 'alice@example.com', cfg) or { panic(err) }
+	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'alice@example.com', cfg) or { panic(err) }
+	seed_tree = rebuild_typed_indexes_for_specs(seed_tree, [spec], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
 		author: 'gwg'
 		message: 'seed branch'
@@ -3237,6 +3711,432 @@ fn test_database_session_query_uses_plain_index_and_projection() {
 		string { assert name == 'ada' }
 		else { panic('expected projected string name') }
 	}
+}
+
+fn test_database_session_query_order_by_index_supports_continuation() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-order-continuation')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+	mut rows := map[string]TypedRowData{}
+	for seed in [
+		['001', 'Ada', 'ada@example.com'],
+		['002', 'Ben', 'ben@example.com'],
+		['003', 'Cara', 'cara@example.com'],
+	] {
+		mut row := TypedRowData.new()
+		row.set('id', seed[0])
+		row.set('name', seed[1])
+		row.set('email', seed[2])
+		rows[seed[0]] = row
+	}
+	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+
+	first_page := session.query_page(mut db, QueryRequest{
+		table_name: 'users'
+		order_by: QueryOrder{
+			column_name: 'email'
+			direction: .asc
+		}
+		select_columns: ['name']
+		limit: 2
+	}) or { panic(err) }
+
+	assert first_page.plan.strategy == 'index_order_asc_projected'
+	assert first_page.rows.len == 2
+	assert first_page.rows[0].primary_key.bytestr() == '001'
+	assert first_page.rows[1].primary_key.bytestr() == '002'
+	assert first_page.cursor.has_more
+	assert first_page.cursor.next_continuation_token.len > 0
+
+	second_page := session.query_page(mut db, QueryRequest{
+		table_name: 'users'
+		order_by: QueryOrder{
+			column_name: 'email'
+			direction: .asc
+		}
+		select_columns: ['name']
+		limit: 2
+		continuation_token: first_page.cursor.next_continuation_token
+	}) or { panic(err) }
+
+	assert second_page.rows.len == 1
+	assert second_page.rows[0].primary_key.bytestr() == '003'
+	assert !second_page.cursor.has_more
+}
+
+fn test_database_session_query_order_by_desc_top_n() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-order-desc-topn')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+	mut rows := map[string]TypedRowData{}
+	for seed in [
+		['001', 'Ada', 'ada@example.com'],
+		['002', 'Ben', 'ben@example.com'],
+		['003', 'Cara', 'cara@example.com'],
+	] {
+		mut row := TypedRowData.new()
+		row.set('id', seed[0])
+		row.set('name', seed[1])
+		row.set('email', seed[2])
+		rows[seed[0]] = row
+	}
+	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+
+	page := session.query_page(mut db, QueryRequest{
+		table_name: 'users'
+		order_by: QueryOrder{
+			column_name: 'email'
+			direction: .desc
+		}
+		select_columns: ['name']
+		limit: 2
+	}) or { panic(err) }
+
+	assert page.plan.strategy == 'index_order_desc_projected'
+	assert page.rows.len == 2
+	assert page.rows[0].primary_key.bytestr() == '003'
+	assert page.rows[1].primary_key.bytestr() == '002'
+	assert page.cursor.has_more
+}
+
+fn test_database_session_query_before_desc_top_n() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-before-desc-topn')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+	mut rows := map[string]TypedRowData{}
+	for seed in [
+		['001', 'Ada', 'ada@example.com'],
+		['002', 'Ben', 'ben@example.com'],
+		['003', 'Cara', 'cara@example.com'],
+	] {
+		mut row := TypedRowData.new()
+		row.set('id', seed[0])
+		row.set('name', seed[1])
+		row.set('email', seed[2])
+		rows[seed[0]] = row
+	}
+	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+
+	page := session.query_page(mut db, QueryRequest{
+		table_name: 'users'
+		filters: [QueryFilter.before('email', 'd')]
+		order_by: QueryOrder{
+			column_name: 'email'
+			direction: .desc
+		}
+		select_columns: ['name']
+		limit: 2
+	}) or { panic(err) }
+
+	assert page.plan.strategy == 'index_before_order_desc_projected'
+	assert page.rows.len == 2
+	assert page.rows[0].primary_key.bytestr() == '003'
+	assert page.rows[1].primary_key.bytestr() == '002'
+	assert page.cursor.has_more
+}
+
+fn test_database_session_query_after_desc_top_n() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-after-desc-topn')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+	mut rows := map[string]TypedRowData{}
+	for seed in [
+		['001', 'Ada', 'ada@example.com'],
+		['002', 'Ben', 'ben@example.com'],
+		['003', 'Cara', 'cara@example.com'],
+	] {
+		mut row := TypedRowData.new()
+		row.set('id', seed[0])
+		row.set('name', seed[1])
+		row.set('email', seed[2])
+		rows[seed[0]] = row
+	}
+	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+
+	page := session.query_page(mut db, QueryRequest{
+		table_name: 'users'
+		filters: [QueryFilter.after('email', 'a')]
+		order_by: QueryOrder{
+			column_name: 'email'
+			direction: .desc
+		}
+		select_columns: ['name']
+		limit: 2
+	}) or { panic(err) }
+
+	assert page.plan.strategy == 'index_after_order_desc_projected'
+	assert page.rows.len == 2
+	assert page.rows[0].primary_key.bytestr() == '003'
+	assert page.rows[1].primary_key.bytestr() == '002'
+}
+
+fn test_database_session_query_between_desc_top_n() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-between-desc-topn')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+	mut rows := map[string]TypedRowData{}
+	for seed in [
+		['001', 'Ada', 'ada@example.com'],
+		['002', 'Ben', 'ben@example.com'],
+		['003', 'Cara', 'cara@example.com'],
+	] {
+		mut row := TypedRowData.new()
+		row.set('id', seed[0])
+		row.set('name', seed[1])
+		row.set('email', seed[2])
+		rows[seed[0]] = row
+	}
+	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+
+	page := session.query_page(mut db, QueryRequest{
+		table_name: 'users'
+		filters: [QueryFilter.between('email', 'a', 'd')]
+		order_by: QueryOrder{
+			column_name: 'email'
+			direction: .desc
+		}
+		select_columns: ['name']
+		limit: 2
+	}) or { panic(err) }
+
+	assert page.plan.strategy == 'index_between_order_desc_projected'
+	assert page.rows.len == 2
+	assert page.rows[0].primary_key.bytestr() == '003'
+	assert page.rows[1].primary_key.bytestr() == '002'
+}
+
+fn test_database_session_lookup_index_prefix_reverse() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-prefix-reverse')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+	mut rows := map[string]TypedRowData{}
+	for seed in [
+		['001', 'Ada', 'anna@example.com'],
+		['002', 'Ben', 'andrew@example.com'],
+		['003', 'Cara', 'amy@example.com'],
+		['004', 'Drew', 'ben@example.com'],
+	] {
+		mut row := TypedRowData.new()
+		row.set('id', seed[0])
+		row.set('name', seed[1])
+		row.set('email', seed[2])
+		rows[seed[0]] = row
+	}
+	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+
+	reverse_rows := session.lookup_index_prefix_reverse(mut db, 'users', 'email', 'a', 3) or {
+		panic(err)
+	}
+
+	assert reverse_rows.len == 3
+	assert reverse_rows[0].primary_key.bytestr() == '001'
+	assert reverse_rows[1].primary_key.bytestr() == '002'
+	assert reverse_rows[2].primary_key.bytestr() == '003'
+}
+
+fn test_database_session_query_prefix_desc_top_n() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-prefix-desc-topn')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+	mut rows := map[string]TypedRowData{}
+	for seed in [
+		['001', 'Ada', 'anna@example.com'],
+		['002', 'Ben', 'andrew@example.com'],
+		['003', 'Cara', 'amy@example.com'],
+		['004', 'Drew', 'ben@example.com'],
+	] {
+		mut row := TypedRowData.new()
+		row.set('id', seed[0])
+		row.set('name', seed[1])
+		row.set('email', seed[2])
+		rows[seed[0]] = row
+	}
+	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+
+	page := session.query_page(mut db, QueryRequest{
+		table_name: 'users'
+		filters: [QueryFilter.prefix('email', 'a')]
+		order_by: QueryOrder{
+			column_name: 'email'
+			direction: .desc
+		}
+		select_columns: ['name']
+		limit: 2
+	}) or { panic(err) }
+
+	assert page.plan.strategy == 'index_prefix_order_desc_projected'
+	assert page.rows.len == 2
+	assert page.rows[0].primary_key.bytestr() == '001'
+	assert page.rows[1].primary_key.bytestr() == '002'
+	assert page.cursor.has_more
 }
 
 fn test_database_session_query_uses_markdown_selector_prefix_index() {
@@ -4170,6 +5070,62 @@ fn test_database_session_query_page_uses_plain_index_and_projection() {
 	}
 }
 
+fn test_database_session_query_page_marks_covering_projection_pushdown() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask: 0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-page-covering-projected')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author: 'gwg'
+		message: 'seed branch'
+		timestamp: 0
+	}) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+	mut row := TypedRowData.new()
+	row.set('id', '001')
+	row.set('name', 'ada')
+	row.set('email', 'ada@example.com')
+	_ = session.put_row(mut db, 'users', '001'.bytes(), row, cfg, CommitMeta{
+		author: 'gwg'
+		message: 'insert user'
+		timestamp: 1
+	}) or { panic(err) }
+
+	page := session.query_page(mut db, QueryRequest{
+		table_name: 'users'
+		filters: [QueryFilter.eq('email', 'ada@example.com')]
+		select_columns: ['email']
+		limit: 10
+	}) or { panic(err) }
+
+	assert page.plan.strategy == 'index_exact_projected'
+	assert page.rows.len == 1
+	assert page.rows[0].data.has('email')
+	assert !page.rows[0].data.has('name')
+
+	preview := db.preview_query_plan_details(QueryRequest{
+		table_name: 'users'
+		filters: [QueryFilter.eq('email', 'ada@example.com')]
+		select_columns: ['email']
+		limit: 10
+	}) or { panic(err) }
+	assert preview.plan.strategy == 'index_exact_projected'
+	assert preview.notes.any(it.contains('covering index'))
+}
+
 fn test_database_session_query_page_supports_primary_key_pagination() {
 	cfg := ChunkConfig{
 		min_size: 64
@@ -4356,6 +5312,279 @@ fn test_database_table_query_schema_exposes_selectors_and_projection_metrics() {
 	assert schema.projection_metrics[0].selector == 'links'
 	assert schema.projection_metrics[0].value_type == .i64_
 	assert schema.projection_metrics[0].aggregate == .sum
+}
+
+fn test_database_table_query_schema_marks_reverse_top_n_capability_for_before_filters() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-schema-before-capability')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_users_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+
+	schema := db.table_query_schema('users') or { panic(err) }
+	mut email_column := QueryColumnCapability{}
+	for column in schema.columns {
+		if column.name == 'email' {
+			email_column = column
+			break
+		}
+	}
+	assert email_column.name == 'email'
+
+	mut before_hint := QueryPlannerHint{}
+	for hint in email_column.planner_hints {
+		if hint.op == .before {
+			before_hint = hint
+			break
+		}
+	}
+	assert before_hint.op == .before
+	assert before_hint.strategy == 'index_before_order_desc'
+	assert before_hint.supports_reverse_scan
+	assert before_hint.supports_top_n
+
+	mut before_shape := QueryFilterShapeCapability{}
+	for shape in email_column.filter_shapes {
+		if shape.op == .before {
+			before_shape = shape
+			break
+		}
+	}
+	assert before_shape.op == .before
+	assert before_shape.indexed
+	assert before_shape.planner_strategy == 'index_before_order_desc'
+	assert before_shape.supports_reverse_scan
+	assert before_shape.supports_top_n
+	assert before_shape.sample_explain.supports_reverse_scan
+	assert before_shape.sample_explain.supports_top_n
+	assert before_shape.sample_explain.notes.any(it.contains('reverse index scan executor'))
+	assert before_shape.sample_explain.notes.any(it.contains('Top-N retrieval'))
+}
+
+fn test_database_table_query_schema_marks_reverse_top_n_capability_for_prefix_filters() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-schema-prefix-capability')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_users_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+
+	schema := db.table_query_schema('users') or { panic(err) }
+	mut email_column := QueryColumnCapability{}
+	for column in schema.columns {
+		if column.name == 'email' {
+			email_column = column
+			break
+		}
+	}
+	assert email_column.name == 'email'
+
+	mut prefix_hint := QueryPlannerHint{}
+	for hint in email_column.planner_hints {
+		if hint.op == .prefix {
+			prefix_hint = hint
+			break
+		}
+	}
+	assert prefix_hint.op == .prefix
+	assert prefix_hint.strategy == 'index_prefix_order_desc'
+	assert prefix_hint.supports_reverse_scan
+	assert prefix_hint.supports_top_n
+
+	mut prefix_shape := QueryFilterShapeCapability{}
+	for shape in email_column.filter_shapes {
+		if shape.op == .prefix {
+			prefix_shape = shape
+			break
+		}
+	}
+	assert prefix_shape.op == .prefix
+	assert prefix_shape.indexed
+	assert prefix_shape.planner_strategy == 'index_prefix_order_desc'
+	assert prefix_shape.supports_reverse_scan
+	assert prefix_shape.supports_top_n
+	assert prefix_shape.sample_explain.supports_reverse_scan
+	assert prefix_shape.sample_explain.supports_top_n
+	assert prefix_shape.sample_explain.notes.any(it.contains('reverse index scan executor'))
+	assert prefix_shape.sample_explain.notes.any(it.contains('Top-N retrieval'))
+}
+
+fn test_database_table_query_schema_exposes_order_shapes_for_indexed_column() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-schema-order-shapes')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_users_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+
+	schema := db.table_query_schema('users') or { panic(err) }
+	mut email_column := QueryColumnCapability{}
+	for column in schema.columns {
+		if column.name == 'email' {
+			email_column = column
+			break
+		}
+	}
+	assert email_column.name == 'email'
+	assert email_column.order_shapes.len > 0
+
+	mut prefix_desc := QueryOrderCapability{}
+	mut before_desc := QueryOrderCapability{}
+	for shape in email_column.order_shapes {
+		if shape.filter_op == .prefix && shape.direction == .desc {
+			prefix_desc = shape
+		}
+		if shape.filter_op == .before && shape.direction == .desc {
+			before_desc = shape
+		}
+	}
+
+	assert prefix_desc.filter_op == .prefix
+	assert prefix_desc.direction == .desc
+	assert prefix_desc.indexed
+	assert prefix_desc.index_name == 'email'
+	assert prefix_desc.planner_strategy == 'index_prefix_order_desc'
+	assert prefix_desc.supports_reverse_scan
+	assert prefix_desc.supports_top_n
+
+	assert before_desc.filter_op == .before
+	assert before_desc.direction == .desc
+	assert before_desc.indexed
+	assert before_desc.index_name == 'email'
+	assert before_desc.planner_strategy == 'index_before_order_desc'
+	assert before_desc.supports_reverse_scan
+	assert before_desc.supports_top_n
+}
+
+fn test_database_preview_query_plan_details_marks_reverse_top_n_for_before_index_strategy() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-plan-before-reverse-capability')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_users_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+
+	preview := db.preview_query_plan_details(QueryRequest{
+		table_name: 'users'
+		filters: [QueryFilter.before('email', 'm')]
+		limit: 10
+	}) or { panic(err) }
+
+	assert preview.plan.strategy == 'index_before'
+	explain := preview.sample_explain()
+	assert explain.supports_reverse_scan
+	assert explain.supports_top_n
+	assert explain.notes.any(it.contains('reverse index scan executor'))
+	assert explain.notes.any(it.contains('Top-N retrieval'))
+}
+
+fn test_database_preview_query_plan_details_marks_ordered_index_strategy() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-plan-order-capability')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+
+	preview := db.preview_query_plan_details(QueryRequest{
+		table_name: 'users'
+		order_by: QueryOrder{
+			column_name: 'email'
+			direction: .desc
+		}
+		select_columns: ['name']
+		limit: 5
+	}) or { panic(err) }
+
+	assert preview.plan.strategy == 'index_order_desc_projected'
+	assert preview.plan.index_name == 'email'
+	explain := preview.sample_explain()
+	assert explain.supports_reverse_scan
+	assert explain.supports_top_n
+	assert explain.notes.any(it.contains('Requested ordering can be satisfied directly from the chosen index'))
+}
+
+fn test_database_preview_query_plan_details_marks_before_desc_order_as_reverse_top_n() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-plan-before-desc-order')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+
+	preview := db.preview_query_plan_details(QueryRequest{
+		table_name: 'users'
+		filters: [QueryFilter.before('email', 'm')]
+		order_by: QueryOrder{
+			column_name: 'email'
+			direction: .desc
+		}
+		select_columns: ['name']
+		limit: 5
+	}) or { panic(err) }
+
+	assert preview.plan.strategy == 'index_before_order_desc_projected'
+	assert preview.plan.index_name == 'email'
+	explain := preview.sample_explain()
+	assert explain.supports_reverse_scan
+	assert explain.supports_top_n
+}
+
+fn test_database_preview_query_plan_details_marks_prefix_desc_order_as_reverse_top_n() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-plan-prefix-desc-order')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+
+	preview := db.preview_query_plan_details(QueryRequest{
+		table_name: 'users'
+		filters: [QueryFilter.prefix('email', 'a')]
+		order_by: QueryOrder{
+			column_name: 'email'
+			direction: .desc
+		}
+		select_columns: ['name']
+		limit: 5
+	}) or { panic(err) }
+
+	assert preview.plan.strategy == 'index_prefix_order_desc_projected'
+	assert preview.plan.index_name == 'email'
+	explain := preview.sample_explain()
+	assert explain.supports_reverse_scan
+	assert explain.supports_top_n
+	assert explain.notes.any(it.contains('reverse index scan executor'))
+	assert explain.notes.any(it.contains('Top-N retrieval'))
 }
 
 fn test_database_preview_query_plan_returns_expected_index_strategy() {

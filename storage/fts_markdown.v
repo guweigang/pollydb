@@ -51,7 +51,9 @@ pub fn emit_markdown_fts_tokens_from_doc(doc vmarkdown.Document) []FtsTokenEmiss
 fn collect_markdown_fts_tokens(nodes []vmarkdown.BlockNode, mut out []FtsTokenEmission) {
 	for node in nodes {
 		match node {
-			vmarkdown.MetaNode {}
+			vmarkdown.MetaNode {
+				fts_append_tokens(mut out, .paragraph, markdown_meta_text(node))
+			}
 			vmarkdown.HorizontalRuleNode {}
 			vmarkdown.HeadingNode {
 				fts_append_tokens(mut out, .heading, markdown_inline_text_value(node.children))
@@ -88,7 +90,7 @@ fn markdown_blocks_text(nodes []vmarkdown.BlockNode) string {
 
 fn markdown_block_text(node vmarkdown.BlockNode) string {
 	return match node {
-		vmarkdown.MetaNode { '' }
+		vmarkdown.MetaNode { markdown_meta_text(node) }
 		vmarkdown.HorizontalRuleNode { '' }
 		vmarkdown.HeadingNode { markdown_inline_text_value(node.children) }
 		vmarkdown.ParagraphNode { markdown_inline_text_value(node.children) }
@@ -105,6 +107,22 @@ fn markdown_block_text(node vmarkdown.BlockNode) string {
 			texts.join(' ').trim_space()
 		}
 	}
+}
+
+fn markdown_meta_text(node vmarkdown.MetaNode) string {
+	mut keys := node.data.keys()
+	keys.sort()
+	mut parts := []string{}
+	for key in keys {
+		value := node.data[key].trim_space()
+		if key.len > 0 {
+			parts << key
+		}
+		if value.len > 0 {
+			parts << value
+		}
+	}
+	return parts.join(' ').trim_space()
 }
 
 fn fts_append_tokens(mut out []FtsTokenEmission, scope FtsScope, raw string) {

@@ -424,7 +424,9 @@ pub fn (mut store ChunkStore) get(cid []u8) ![]u8 {
 	entry := store.index_get(cid) or {
 		return error('chunk not found: ${cid.hex()}')
 	}
-	store.file.flush()
+	if store.data_dirty {
+		store.file.flush()
+	}
 	mut record := []u8{len: 8 + cid.len + entry.length}
 	_ = store.file.read_bytes_into(entry.offset, mut record)!
 	cid_len := int(chunk_store_read_u32_le(record[..4]))
@@ -525,7 +527,7 @@ fn (mut store ChunkStore) load_index_snapshot() !bool {
 	mut cursor := 20
 	entry_count := int(chunk_store_read_u32_le(data[cursor..cursor + 4]))
 	cursor += 4
-	mut next_index := map[u64][]ChunkStoreIndexEntry{}
+	store.index = map[u64][]ChunkStoreIndexEntry{}
 	for _ in 0 .. entry_count {
 		if cursor + 28 > data.len {
 			os.rm(path) or {}
@@ -539,7 +541,7 @@ fn (mut store ChunkStore) load_index_snapshot() !bool {
 		cursor += 8
 		length := int(chunk_store_read_u32_le(data[cursor..cursor + 4]))
 		cursor += 4
-		mut bucket := next_index[prefix] or { []ChunkStoreIndexEntry{} }
+		mut bucket := store.index[prefix] or { []ChunkStoreIndexEntry{} }
 		bucket << ChunkStoreIndexEntry{
 			suffix: suffix
 			entry: ChunkStoreEntry{
@@ -547,15 +549,11 @@ fn (mut store ChunkStore) load_index_snapshot() !bool {
 				length: length
 			}
 		}
-		next_index[prefix] = bucket
+		store.index[prefix] = bucket
 	}
 	if cursor != data.len {
 		os.rm(path) or {}
 		return false
-	}
-	store.index = map[u64][]ChunkStoreIndexEntry{}
-	for prefix, bucket in next_index {
-		store.index[prefix] = bucket
 	}
 	store.index_snapshot_payload = data[24..].clone()
 	store.index_snapshot_entries = entry_count

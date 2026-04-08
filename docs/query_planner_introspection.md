@@ -163,6 +163,7 @@ than treating it as an unrelated subsystem.
 
 For a more concrete SQL-to-storage lowering guide, see [vsql_query_mapping.md](/Users/guweigang/Source/pollytree/docs/vsql_query_mapping.md).
 For a possible future lexical-search layer that should plug into the same planner metadata model, see [lightweight_fts_design.md](/Users/guweigang/Source/pollytree/docs/lightweight_fts_design.md).
+For the broader query execution roadmap that should make these planner surfaces genuinely performant for both `agentview` and future `vsql`, see [query_layer_roadmap.md](/Users/guweigang/Source/pollytree/docs/query_layer_roadmap.md).
 
 ## Recommended Consumer Rules
 

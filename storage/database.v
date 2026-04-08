@@ -22,6 +22,26 @@ mut:
 	catalog_dirty bool
 }
 
+pub struct PersistentDatabaseOpenTimings {
+pub:
+	backends_ms i64
+	catalog_ms  i64
+	engine      PersistentEngineOpenTimings
+	total_ms    i64
+}
+
+pub struct PersistentDatabaseOpenResult {
+pub:
+	database PersistentDatabase
+	timings  PersistentDatabaseOpenTimings
+}
+
+pub struct PersistentDatabaseTypedTransactionOpenResult {
+pub:
+	tx TypedTransaction
+	timings TypedTransactionOpenTimings
+}
+
 pub struct PersistentDatabaseCheckpointInfo {
 pub:
 	root_dir               string
@@ -265,6 +285,27 @@ pub:
 	row         TypedSchemaRow
 }
 
+enum TypedIndexScanMode {
+	all
+	exact
+	prefix
+	after
+	before
+	between
+}
+
+struct TypedIndexScanRequest {
+	mode TypedIndexScanMode
+	value ColumnValue
+	has_value bool
+	second_value ColumnValue = NullValue{}
+	has_second_value bool
+	start_primary_key []u8
+	limit int
+	columns []string
+	reverse bool
+}
+
 pub struct BranchTableReader {
 pub:
 	branch_name string
@@ -478,6 +519,21 @@ mut:
 	pending_writes int
 	working_set    TypedWorkingSet
 	last_meta      CommitMeta
+	has_pending_meta bool
+	refresh_handles []IndexSnapshotRefreshHandle
+	aggregate_refresh_handles []AggregateProjectionRefreshHandle
+}
+
+pub struct SplitGroupCommitSession {
+pub:
+	branch_name string
+	specs       []TypedTableSpec
+	options     GroupCommitOptions
+mut:
+	pending_writes int
+	working_set    TypedSplitWorkingSet
+	last_meta      CommitMeta
+	last_cfg       ChunkConfig
 	has_pending_meta bool
 	refresh_handles []IndexSnapshotRefreshHandle
 	aggregate_refresh_handles []AggregateProjectionRefreshHandle
@@ -861,6 +917,26 @@ fn transaction_markdown_index_lookup(root_dir string, view TypedIndexedSchemaVie
 	mut rows := []TypedSchemaRow{}
 	for entry in entries {
 		if compare_key_bytes(entry.encoded, target_encoded) != 0 {
+			continue
+		}
+		rows << entry.row
+		if limit > 0 && rows.len >= limit {
+			break
+		}
+	}
+	return rows
+}
+
+fn transaction_markdown_index_lookup_prefix(root_dir string, view TypedIndexedSchemaView, index SchemaIndexDef, target ColumnValue, limit int) ![]TypedSchemaRow {
+	column := index.value_column(view.schema.codec.table)!
+	target_encoded := TypedValueEncoder.encode_index_prefix(target, column)!
+	entries := transaction_markdown_index_entries(root_dir, view, index)!
+	mut rows := []TypedSchemaRow{}
+	for entry in entries {
+		if !has_prefix_bytes(entry.encoded, target_encoded) {
+			if compare_key_bytes(entry.encoded, target_encoded) > 0 {
+				break
+			}
 			continue
 		}
 		rows << entry.row
@@ -1874,7 +1950,7 @@ fn load_database_catalog(root_dir string) !(map[string]TypedTableSpec, map[strin
 }
 
 pub fn PersistentDatabase.open(root_dir string, default_branch string) !PersistentDatabase {
-	return PersistentDatabase.open_with_provider(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+	return (PersistentDatabase.open_profiled(root_dir, default_branch)!).database
 }
 
 pub fn PersistentDatabase.init(root_dir string, default_branch string) !PersistentDatabase {
@@ -1882,17 +1958,38 @@ pub fn PersistentDatabase.init(root_dir string, default_branch string) !Persiste
 }
 
 pub fn PersistentDatabase.open_with_provider(provider LocalDatabaseBackendProvider) !PersistentDatabase {
-	mut backends := provider.open_backends()!
-	catalog, projectors := backends.catalog_backend.load_catalog()!
-	backends.close()
-	return PersistentDatabase{
+	return (PersistentDatabase.open_with_provider_profiled(provider)!).database
+}
+
+pub fn PersistentDatabase.open_profiled(root_dir string, default_branch string) !PersistentDatabaseOpenResult {
+	return PersistentDatabase.open_with_provider_profiled(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+}
+
+pub fn PersistentDatabase.open_with_provider_profiled(provider LocalDatabaseBackendProvider) !PersistentDatabaseOpenResult {
+	mut total_sw := time.new_stopwatch()
+	os.mkdir_all(repository_layout_dir(provider.root_dir))!
+	backends_ms := i64(0)
+	mut catalog_sw := time.new_stopwatch()
+	catalog, projectors := load_database_catalog(provider.root_dir)!
+	catalog_ms := catalog_sw.elapsed().milliseconds()
+	engine_result := PersistentEngine.open_with_provider_profiled(provider)!
+	database := PersistentDatabase{
 		root_dir: provider.root_dir
 		default_branch: provider.default_branch()
-		engine: PersistentEngine.open_with_provider(provider)!
+		engine: engine_result.engine
 		catalog: catalog
 		projectors: projectors
 		field_registry: default_field_capability_registry()
 		catalog_dirty: false
+	}
+	return PersistentDatabaseOpenResult{
+		database: database
+		timings: PersistentDatabaseOpenTimings{
+			backends_ms: backends_ms
+			catalog_ms: catalog_ms
+			engine: engine_result.timings
+			total_ms: total_sw.elapsed().milliseconds()
+		}
 	}
 }
 
@@ -2413,6 +2510,40 @@ pub fn (mut database PersistentDatabase) register_table(spec TypedTableSpec) ! {
 	database.persist_catalog()!
 }
 
+pub fn (mut database PersistentDatabase) register_or_update_table(spec TypedTableSpec) !bool {
+	existing := database.catalog[spec.name()] or {
+		database.catalog[spec.name()] = spec
+		database.catalog_dirty = true
+		database.persist_catalog()!
+		return true
+	}
+	if !typed_table_schema_compatible(existing, spec) {
+		return error('typed table schema mismatch: ${spec.name()}')
+	}
+	merged_indexes := merge_schema_indexes(existing.indexes, spec.indexes)
+	if merged_indexes.len == existing.indexes.len {
+		return false
+	}
+	database.catalog[spec.name()] = TypedTableSpec.new(existing.table, merged_indexes)!
+	database.catalog_dirty = true
+	database.persist_catalog()!
+	return true
+}
+
+pub fn (mut database PersistentDatabase) rebuild_indexes_at_branch(branch_name string, table_names []string, cfg ChunkConfig) !BranchUpdate {
+	tree := database.tree_at_branch(branch_name)!
+	next_tree := rebuild_typed_indexes_for_tables(tree, database.registered_specs(), table_names, cfg)!
+	return database.commit_to_branch(branch_name, next_tree, CommitMeta{
+		author: 'pollydb'
+		message: if table_names.len > 0 {
+			'rebuild indexes for ${table_names.join(",")}'
+		} else {
+			'rebuild indexes'
+		}
+		timestamp: 0
+	})
+}
+
 pub fn (mut database PersistentDatabase) register_aggregate_projection(def AggregateProjectionDef) ! {
 	if def.name in database.projectors {
 		return error('aggregate projection already registered: ${def.name}')
@@ -2464,6 +2595,56 @@ pub fn (database PersistentDatabase) projector_spec(name string) !AggregateProje
 		return error('aggregate projection not registered: ${name}')
 	}
 	return projector
+}
+
+fn typed_table_schema_compatible(existing TypedTableSpec, incoming TypedTableSpec) bool {
+	if existing.table.name != incoming.table.name {
+		return false
+	}
+	if existing.table.primary_key != incoming.table.primary_key {
+		return false
+	}
+	if existing.table.columns.len != incoming.table.columns.len {
+		return false
+	}
+	for idx, column in existing.table.columns {
+		other := incoming.table.columns[idx]
+		if column.name != other.name || column.typ != other.typ || column.nullable != other.nullable
+			|| column.aggregate != other.aggregate || column.enum_values != other.enum_values
+			|| column.default_current_timestamp != other.default_current_timestamp
+			|| column.auto_update_current_timestamp != other.auto_update_current_timestamp {
+			return false
+		}
+	}
+	return true
+}
+
+fn merge_schema_indexes(existing []SchemaIndexDef, incoming []SchemaIndexDef) []SchemaIndexDef {
+	mut merged := existing.clone()
+	mut seen := map[string]bool{}
+	for index in existing {
+		seen[index_signature(index)] = true
+	}
+	for index in incoming {
+		signature := index_signature(index)
+		if seen[signature] {
+			continue
+		}
+		merged << index
+		seen[signature] = true
+	}
+	return merged
+}
+
+fn index_signature(index SchemaIndexDef) string {
+	return [
+		index.name,
+		index.column,
+		index.json_field,
+		index.markdown_selector,
+		'typ:${index.json_field_type.str()}',
+		'stores:${index.stores_row}',
+	].join('|')
 }
 
 pub fn (mut database PersistentDatabase) projection_states_at_branch(branch_name string) ![]AggregateProjectorState {
@@ -2635,8 +2816,50 @@ pub fn (mut database PersistentDatabase) begin_default_high_throughput_group_com
 	return database.begin_default_group_commit_session(GroupCommitOptions.high_throughput())
 }
 
+pub fn (mut database PersistentDatabase) begin_split_group_commit_session(options SessionOptions, group GroupCommitOptions, cfg ChunkConfig) !SplitGroupCommitSession {
+	if options.branch_name.len == 0 {
+		return error('session branch name cannot be empty')
+	}
+	return SplitGroupCommitSession{
+		branch_name: options.branch_name
+		specs: database.registered_specs()
+		options: GroupCommitOptions{
+			checkpoint_every: if group.checkpoint_every > 0 { group.checkpoint_every } else { 1 }
+			checkpoint_mode: group.checkpoint_mode
+			auto_refresh_index_snapshots: group.auto_refresh_index_snapshots
+			aggregate_projection_refresh_policy: group.aggregate_projection_refresh_policy
+			max_aggregate_projection_refreshes: group.max_aggregate_projection_refreshes
+		}
+		working_set: database.begin_split_working_set_with_specs(options.branch_name, database.registered_specs(), cfg)!
+		last_meta: CommitMeta{}
+		last_cfg: cfg
+		refresh_handles: []IndexSnapshotRefreshHandle{}
+		aggregate_refresh_handles: []AggregateProjectionRefreshHandle{}
+	}
+}
+
+pub fn (mut database PersistentDatabase) begin_default_split_group_commit_session(group GroupCommitOptions, cfg ChunkConfig) !SplitGroupCommitSession {
+	return database.begin_split_group_commit_session(SessionOptions.for_branch(database.default_branch), group, cfg)
+}
+
+pub fn (mut database PersistentDatabase) begin_split_high_throughput_group_commit_session(options SessionOptions, cfg ChunkConfig) !SplitGroupCommitSession {
+	return database.begin_split_group_commit_session(options, GroupCommitOptions.high_throughput(), cfg)
+}
+
+pub fn (mut database PersistentDatabase) begin_default_split_high_throughput_group_commit_session(cfg ChunkConfig) !SplitGroupCommitSession {
+	return database.begin_default_split_group_commit_session(GroupCommitOptions.high_throughput(), cfg)
+}
+
 pub fn (mut database PersistentDatabase) begin_transaction_with_specs(branch_name string, specs []TypedTableSpec) !TypedTransaction {
 	return database.engine.typed_transaction_at_branch(branch_name, specs)
+}
+
+pub fn (mut database PersistentDatabase) begin_transaction_profiled(branch_name string) !PersistentDatabaseTypedTransactionOpenResult {
+	result := database.engine.typed_transaction_at_branch_profiled(branch_name, database.registered_specs())!
+	return PersistentDatabaseTypedTransactionOpenResult{
+		tx: result.tx
+		timings: result.timings
+	}
 }
 
 pub fn (mut database PersistentDatabase) begin_transaction(branch_name string) !TypedTransaction {
@@ -2651,7 +2874,23 @@ pub fn (mut database PersistentDatabase) begin_working_set(branch_name string) !
 	return database.begin_working_set_with_specs(branch_name, database.registered_specs())
 }
 
+pub fn (mut database PersistentDatabase) begin_split_working_set_with_specs(branch_name string, specs []TypedTableSpec, cfg ChunkConfig) !TypedSplitWorkingSet {
+	return database.engine.typed_split_working_set_at_branch(branch_name, specs, cfg)
+}
+
+pub fn (mut database PersistentDatabase) begin_split_working_set(branch_name string, cfg ChunkConfig) !TypedSplitWorkingSet {
+	return database.begin_split_working_set_with_specs(branch_name, database.registered_specs(), cfg)
+}
+
 pub fn (mut database PersistentDatabase) apply_typed_write_set_with_specs(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
+	if cfg.enable_split_backed_working_set {
+		split_result := database.apply_typed_write_set_split_backed_with_specs(branch_name, specs, write_set, cfg, meta)!
+		return BranchTypedTransactionResult{
+			update: split_result.update
+			transaction_update: split_result.transaction_update
+			timings: BranchTypedTransactionTimings{}
+		}
+	}
 	tx := database.engine.typed_transaction_at_branch(branch_name, specs)!
 	base_tree := tx.current_tree()
 	normalized_write_set := normalize_temporal_write_set(tx, write_set)!
@@ -2676,7 +2915,26 @@ pub fn (mut database PersistentDatabase) apply_typed_write_set(branch_name strin
 	return database.apply_typed_write_set_with_specs(branch_name, database.registered_specs(), write_set, cfg, meta)
 }
 
+pub fn (mut database PersistentDatabase) apply_typed_write_set_split_backed_with_specs(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedWorkingSetResult {
+	mut set := database.begin_split_working_set_with_specs(branch_name, specs, cfg)!
+	normalized_write_set := normalize_temporal_split_write_set(set.transaction(), write_set)!
+	_ = set.apply_write_set(normalized_write_set, cfg)!
+	return database.commit_typed_split_working_set(mut set, meta, cfg)
+}
+
+pub fn (mut database PersistentDatabase) apply_typed_write_set_split_backed(branch_name string, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedWorkingSetResult {
+	return database.apply_typed_write_set_split_backed_with_specs(branch_name, database.registered_specs(), write_set, cfg, meta)
+}
+
 pub fn (mut database PersistentDatabase) apply_typed_write_set_buffered_with_specs(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
+	if cfg.enable_split_backed_working_set {
+		split_result := database.apply_typed_write_set_split_backed_with_specs(branch_name, specs, write_set, cfg, meta)!
+		return BranchTypedTransactionResult{
+			update: split_result.update
+			transaction_update: split_result.transaction_update
+			timings: BranchTypedTransactionTimings{}
+		}
+	}
 	tx := database.engine.typed_transaction_at_branch(branch_name, specs)!
 	base_tree := tx.current_tree()
 	normalized_write_set := normalize_temporal_write_set(tx, write_set)!
@@ -2715,6 +2973,30 @@ pub fn (mut database PersistentDatabase) commit_typed_working_set(mut set TypedW
 		update: update
 		transaction_update: TypedTransactionResult{
 			tx: set.transaction()
+			diff: diff
+		}
+	}
+}
+
+pub fn (mut database PersistentDatabase) commit_typed_split_working_set(mut set TypedSplitWorkingSet, meta CommitMeta, cfg ChunkConfig) !BranchTypedWorkingSetResult {
+	return database.commit_typed_split_working_set_mode(mut set, meta, cfg, true)
+}
+
+fn (mut database PersistentDatabase) commit_typed_split_working_set_mode(mut set TypedSplitWorkingSet, meta CommitMeta, cfg ChunkConfig, sync_back bool) !BranchTypedWorkingSetResult {
+	mixed_tree := set.current_tree(cfg)!
+	mut mixed_tx := new_typed_transaction_with_specs(mixed_tree, set.specs)!
+	diff := set.base_tree.diff(mixed_tree)
+	virtual_roots := database.virtual_roots_for_new_data_root(set.branch_name, mixed_tree.root.cid)
+	update := database.engine.commit_to_branch_with_virtual_roots(set.branch_name, mixed_tree, meta,
+		virtual_roots)!
+	if sync_back {
+		set.sync_to_tree(update.snapshot.tree, update.snapshot.commit.cid, cfg)!
+	}
+	mixed_tx = new_typed_transaction_with_specs(update.snapshot.tree, set.specs)!
+	return BranchTypedWorkingSetResult{
+		update: update
+		transaction_update: TypedTransactionResult{
+			tx: mixed_tx
 			diff: diff
 		}
 	}
@@ -2816,6 +3098,14 @@ pub fn (session DatabaseSession) begin_transaction(mut database PersistentDataba
 	return database.begin_transaction_with_specs(session.branch_name, session.specs)
 }
 
+pub fn (session DatabaseSession) begin_transaction_profiled(mut database PersistentDatabase) !PersistentDatabaseTypedTransactionOpenResult {
+	result := database.engine.typed_transaction_at_branch_profiled(session.branch_name, session.specs)!
+	return PersistentDatabaseTypedTransactionOpenResult{
+		tx: result.tx
+		timings: result.timings
+	}
+}
+
 pub fn (session DatabaseSession) begin_working_set(mut database PersistentDatabase) !TransactionSession {
 	return TransactionSession{
 		root_dir: session.root_dir
@@ -2825,12 +3115,24 @@ pub fn (session DatabaseSession) begin_working_set(mut database PersistentDataba
 	}
 }
 
+pub fn (session DatabaseSession) begin_split_working_set(mut database PersistentDatabase, cfg ChunkConfig) !TypedSplitWorkingSet {
+	return database.begin_split_working_set_with_specs(session.branch_name, session.specs, cfg)
+}
+
 pub fn (session DatabaseSession) begin_group_commit(mut database PersistentDatabase, group GroupCommitOptions) !GroupCommitSession {
 	return database.begin_group_commit_session(SessionOptions.for_branch(session.branch_name), group)
 }
 
 pub fn (session DatabaseSession) begin_high_throughput_group_commit(mut database PersistentDatabase) !GroupCommitSession {
 	return database.begin_high_throughput_group_commit_session(SessionOptions.for_branch(session.branch_name))
+}
+
+pub fn (session DatabaseSession) begin_split_group_commit(mut database PersistentDatabase, group GroupCommitOptions, cfg ChunkConfig) !SplitGroupCommitSession {
+	return database.begin_split_group_commit_session(SessionOptions.for_branch(session.branch_name), group, cfg)
+}
+
+pub fn (session DatabaseSession) begin_split_high_throughput_group_commit(mut database PersistentDatabase, cfg ChunkConfig) !SplitGroupCommitSession {
+	return database.begin_split_high_throughput_group_commit_session(SessionOptions.for_branch(session.branch_name), cfg)
 }
 
 pub fn (session DatabaseSession) apply_write_set(mut database PersistentDatabase, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
@@ -2954,6 +3256,18 @@ pub fn (session DatabaseSession) get_row(mut db PersistentDatabase, table_name s
 	return reader.get_row(primary_key)
 }
 
+pub fn (session DatabaseSession) get_rows_projected(mut db PersistentDatabase, table_name string, primary_keys [][]u8, columns []string) ![]TypedSchemaRow {
+	if primary_keys.len == 0 {
+		return []TypedSchemaRow{}
+	}
+	mut reader := session.table_reader(mut db, table_name)!
+	mut rows := []TypedSchemaRow{cap: primary_keys.len}
+	for primary_key in primary_keys {
+		rows << reader.get_row_projected(primary_key, columns)!
+	}
+	return rows
+}
+
 pub fn (session DatabaseSession) scan_table(mut db PersistentDatabase, table_name string, limit int) ![]TypedSchemaRow {
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
@@ -3021,6 +3335,53 @@ pub fn (session DatabaseSession) lookup_index(mut db PersistentDatabase, table_n
 	}
 }
 
+pub fn (session DatabaseSession) lookup_index_ordered(mut db PersistentDatabase, table_name string, index_name string, start_value ColumnValue, has_start_value bool, start_primary_key []u8, limit int, reverse bool) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .all
+		value: clone_column_value(start_value)
+		has_value: has_start_value
+		start_primary_key: start_primary_key.clone()
+		limit: limit
+		reverse: reverse
+	})!
+}
+
+pub fn (session DatabaseSession) lookup_index_ordered_projected(mut db PersistentDatabase, table_name string, index_name string, start_value ColumnValue, has_start_value bool, start_primary_key []u8, limit int, columns []string, reverse bool) ![]TypedSchemaRow {
+	mut reader := session.index_reader(mut db, table_name, index_name)!
+	if reader.index.stores_row {
+		return reader.find_rows_covering_ordered_projected(start_value, has_start_value, start_primary_key,
+			limit, columns, reverse)
+	}
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .all
+		value: clone_column_value(start_value)
+		has_value: has_start_value
+		start_primary_key: start_primary_key.clone()
+		limit: limit
+		columns: columns.clone()
+		reverse: reverse
+	})!
+}
+
+pub fn (session DatabaseSession) lookup_index_projected(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	mut reader := session.index_reader(mut db, table_name, index_name)!
+	if reader.index.stores_row {
+		return reader.find_rows_covering_projected(value, limit, columns)
+	}
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .exact
+		value: clone_column_value(value)
+		limit: limit
+		columns: columns.clone()
+	})
+}
+
 pub fn (session DatabaseSession) lookup_index_prefix(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
 	mut reader := session.index_reader(mut db, table_name, index_name)!
 	return if reader.index.stores_row {
@@ -3039,109 +3400,190 @@ pub fn (session DatabaseSession) lookup_index_prefix_projected(mut db Persistent
 	}
 }
 
+pub fn (session DatabaseSession) lookup_index_prefix_reverse(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .prefix
+		value: clone_column_value(value)
+		limit: limit
+		reverse: true
+	})
+}
+
+pub fn (session DatabaseSession) lookup_index_prefix_reverse_projected(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .prefix
+		value: clone_column_value(value)
+		limit: limit
+		columns: columns.clone()
+		reverse: true
+	})
+}
+
+pub fn (session DatabaseSession) lookup_index_between_projected(mut db PersistentDatabase, table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .between
+		value: clone_column_value(start_value)
+		second_value: clone_column_value(end_value)
+		has_second_value: true
+		limit: limit
+		columns: columns.clone()
+	})
+}
+
+pub fn (session DatabaseSession) lookup_index_after_projected(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .after
+		value: clone_column_value(value)
+		has_value: true
+		limit: limit
+		columns: columns.clone()
+	})
+}
+
+pub fn (session DatabaseSession) lookup_index_after_reverse(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .after
+		value: clone_column_value(value)
+		has_value: true
+		limit: limit
+		reverse: true
+	})
+}
+
+pub fn (session DatabaseSession) lookup_index_after_reverse_projected(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .after
+		value: clone_column_value(value)
+		has_value: true
+		limit: limit
+		columns: columns.clone()
+		reverse: true
+	})
+}
+
+pub fn (session DatabaseSession) lookup_index_before_projected(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .before
+		value: clone_column_value(value)
+		limit: limit
+		columns: columns.clone()
+	})
+}
+
 pub fn (session DatabaseSession) lookup_index_between(mut db PersistentDatabase, table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int) ![]TypedSchemaRow {
-	spec := session.table_spec(table_name)!
-	mut target_index := SchemaIndexDef{}
-	mut found := false
-	for index in spec.indexes {
-		if index.name == index_name {
-			target_index = index
-			found = true
-			break
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	for index in view.indexes {
+		if index.name == index_name && index.is_field_selector() {
+			return transaction_markdown_index_lookup_between(session.root_dir, view, index, start_value,
+				end_value, limit)
 		}
 	}
-	if !found {
-		return error('typed schema index not found: ${index_name}')
-	}
-	column := target_index.value_column(spec.table)!
-	end_encoded := TypedValueEncoder.encode_index_value(end_value, column)!
-	mut cursor := session.index_cursor(mut db, table_name, index_name, start_value, []u8{}, limit)!
-	mut rows := []TypedSchemaRow{}
-	for {
-		if limit > 0 && rows.len >= limit {
-			break
-		}
-		entry := cursor.peek() or {
-			break
-		}
-		if compare_key_bytes(entry.index_key, end_encoded) > 0 {
-			break
-		}
-		rows << (cursor.next()!).row
-	}
-	return rows
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .between
+		value: clone_column_value(start_value)
+		second_value: clone_column_value(end_value)
+		has_value: true
+		has_second_value: true
+		limit: limit
+	})
+}
+
+pub fn (session DatabaseSession) lookup_index_between_reverse(mut db PersistentDatabase, table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .between
+		value: clone_column_value(start_value)
+		second_value: clone_column_value(end_value)
+		has_value: true
+		has_second_value: true
+		limit: limit
+		reverse: true
+	})
+}
+
+pub fn (session DatabaseSession) lookup_index_between_reverse_projected(mut db PersistentDatabase, table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .between
+		value: clone_column_value(start_value)
+		second_value: clone_column_value(end_value)
+		has_value: true
+		has_second_value: true
+		limit: limit
+		columns: columns.clone()
+		reverse: true
+	})
 }
 
 pub fn (session DatabaseSession) lookup_index_after(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
-	spec := session.table_spec(table_name)!
-	mut target_index := SchemaIndexDef{}
-	mut found := false
-	for index in spec.indexes {
-		if index.name == index_name {
-			target_index = index
-			found = true
-			break
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	for index in view.indexes {
+		if index.name == index_name && index.is_field_selector() {
+			return transaction_markdown_index_lookup_after(session.root_dir, view, index, value, limit)
 		}
 	}
-	if !found {
-		return error('typed schema index not found: ${index_name}')
-	}
-	column := target_index.value_column(spec.table)!
-	encoded := TypedValueEncoder.encode_index_value(value, column)!
-	mut cursor := session.index_cursor(mut db, table_name, index_name, value, []u8{}, limit)!
-	mut rows := []TypedSchemaRow{}
-	for {
-		if limit > 0 && rows.len >= limit {
-			break
-		}
-		entry := cursor.peek() or {
-			break
-		}
-		if compare_key_bytes(entry.index_key, encoded) <= 0 {
-			_ = cursor.next()!
-			continue
-		}
-		rows << (cursor.next()!).row
-	}
-	return rows
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .after
+		value: clone_column_value(value)
+		has_value: true
+		limit: limit
+	})
 }
 
 pub fn (session DatabaseSession) lookup_index_before(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
-	mut target_index := SchemaIndexDef{}
-	mut found := false
 	for index in view.indexes {
-		if index.name == index_name {
-			target_index = index
-			found = true
-			break
+		if index.name == index_name && index.is_field_selector() {
+			return transaction_markdown_index_lookup_before(session.root_dir, view, index, value, limit)
 		}
 	}
-	if !found {
-		return error('typed schema index not found: ${index_name}')
-	}
-	column := target_index.value_column(view.schema.codec.table)!
-	encoded := TypedValueEncoder.encode_index_value(value, column)!
-	mut cursor := TypedIndexCursor{
-		view: view
-		index_name: index_name
-		cursor: IndexView.new(view.schema.table.tree, table_name, index_name).cursor([]u8{}, []u8{}, 0)!
-	}
-	mut rows := []TypedSchemaRow{}
-	for {
-		if limit > 0 && rows.len >= limit {
-			break
-		}
-		entry := cursor.peek() or {
-			break
-		}
-		if compare_key_bytes(entry.index_key, encoded) >= 0 {
-			break
-		}
-		rows << (cursor.next()!).row
-	}
-	return rows
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .before
+		value: clone_column_value(value)
+		limit: limit
+	})
+}
+
+pub fn (session DatabaseSession) lookup_index_before_reverse(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .before
+		value: clone_column_value(value)
+		limit: limit
+		reverse: true
+	})
+}
+
+pub fn (session DatabaseSession) lookup_index_before_reverse_projected(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	tx := session.begin_transaction(mut db)!
+	view := tx.indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .before
+		value: clone_column_value(value)
+		limit: limit
+		columns: columns.clone()
+		reverse: true
+	})
 }
 
 pub fn (session DatabaseSession) table_cursor(mut db PersistentDatabase, table_name string, start_primary_key []u8, limit int) !TypedTableCursor {
@@ -3203,7 +3645,7 @@ fn normalize_temporal_row(table TableDef, existing_row TypedRowData, has_existin
 	return next_row
 }
 
-fn normalize_temporal_write_set(tx TypedTransaction, write_set TypedWriteSet) !TypedWriteSet {
+fn normalize_temporal_write_set_with_views(specs map[string]TypedTableSpec, mut views map[string]TypedIndexedSchemaView, write_set TypedWriteSet) !TypedWriteSet {
 	if write_set.len() == 0 {
 		return write_set
 	}
@@ -3211,7 +3653,6 @@ fn normalize_temporal_write_set(tx TypedTransaction, write_set TypedWriteSet) !T
 	mut normalized := TypedWriteSet.new()
 	mut cached_rows := map[string]TypedRowData{}
 	mut cached_exists := map[string]bool{}
-	mut views := map[string]TypedIndexedSchemaView{}
 	for op in write_set.operations() {
 		cache_key := '${op.table_name}\x00${op.primary_key.hex()}'
 		if op.delete {
@@ -3220,7 +3661,7 @@ fn normalize_temporal_write_set(tx TypedTransaction, write_set TypedWriteSet) !T
 			cached_exists[cache_key] = false
 			continue
 		}
-		spec := tx.specs[op.table_name] or {
+		spec := specs[op.table_name] or {
 			return error('typed table not registered: ${op.table_name}')
 		}
 		mut existing_row := TypedRowData.new()
@@ -3230,7 +3671,7 @@ fn normalize_temporal_write_set(tx TypedTransaction, write_set TypedWriteSet) !T
 			existing_row = (cached_rows[cache_key] or { TypedRowData.new() }).clone()
 		} else {
 			if op.table_name !in views {
-				views[op.table_name] = tx.indexed_view(op.table_name)!
+				return error('typed indexed view not prepared: ${op.table_name}')
 			}
 			existing := views[op.table_name].get(op.primary_key) or { TypedSchemaRow{} }
 			if existing.primary_key.len > 0 {
@@ -3246,9 +3687,31 @@ fn normalize_temporal_write_set(tx TypedTransaction, write_set TypedWriteSet) !T
 	return normalized
 }
 
+fn normalize_temporal_write_set(tx TypedTransaction, write_set TypedWriteSet) !TypedWriteSet {
+	mut views := map[string]TypedIndexedSchemaView{}
+	for table_name, _ in tx.specs {
+		views[table_name] = tx.indexed_view(table_name)!
+	}
+	return normalize_temporal_write_set_with_views(tx.specs, mut views, write_set)
+}
+
+fn normalize_temporal_split_write_set(tx TypedSplitTransaction, write_set TypedWriteSet) !TypedWriteSet {
+	mut views := map[string]TypedIndexedSchemaView{}
+	for table_name, _ in tx.specs {
+		views[table_name] = tx.indexed_view(table_name)!
+	}
+	return normalize_temporal_write_set_with_views(tx.specs, mut views, write_set)
+}
+
 pub fn (session DatabaseSession) put_row(mut db PersistentDatabase, table_name string, primary_key []u8, row TypedRowData, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
 	mut write_set := TypedWriteSet.new()
 	write_set.put(table_name, primary_key, row)
+	return session.apply_write_set(mut db, write_set, cfg, meta)
+}
+
+pub fn (session DatabaseSession) put_rows(mut db PersistentDatabase, table_name string, rows map[string]TypedRowData, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
+	mut write_set := TypedWriteSet.new()
+	write_set.put_many(table_name, rows)
 	return session.apply_write_set(mut db, write_set, cfg, meta)
 }
 
@@ -3368,6 +3831,12 @@ pub fn (session DatabaseSession) delete_row(mut db PersistentDatabase, table_nam
 	return session.apply_write_set(mut db, write_set, cfg, meta)
 }
 
+pub fn (session DatabaseSession) delete_rows(mut db PersistentDatabase, table_name string, primary_keys [][]u8, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
+	mut write_set := TypedWriteSet.new()
+	write_set.delete_many(table_name, primary_keys)
+	return session.apply_write_set(mut db, write_set, cfg, meta)
+}
+
 pub fn (session TransactionSession) has_changes() bool {
 	return session.working_set.has_changes()
 }
@@ -3387,6 +3856,18 @@ pub fn (session TransactionSession) staged_diff() TreeDiff {
 pub fn (mut session TransactionSession) apply_write_set(write_set TypedWriteSet, cfg ChunkConfig) !TypedTransactionResult {
 	normalized_write_set := normalize_temporal_write_set(session.working_set.transaction(), write_set)!
 	return session.working_set.apply_write_set(normalized_write_set, cfg)
+}
+
+pub fn (mut session TransactionSession) put_rows(table_name string, rows map[string]TypedRowData, cfg ChunkConfig) !TypedTransactionResult {
+	mut write_set := TypedWriteSet.new()
+	write_set.put_many(table_name, rows)
+	return session.apply_write_set(write_set, cfg)
+}
+
+pub fn (mut session TransactionSession) delete_rows(table_name string, primary_keys [][]u8, cfg ChunkConfig) !TypedTransactionResult {
+	mut write_set := TypedWriteSet.new()
+	write_set.delete_many(table_name, primary_keys)
+	return session.apply_write_set(write_set, cfg)
 }
 
 pub fn (session TransactionSession) get_row(table_name string, primary_key []u8) !TypedSchemaRow {
@@ -3441,126 +3922,236 @@ pub fn (session TransactionSession) lookup_index(table_name string, index_name s
 	return view.find_by_index(index_name, value, limit)
 }
 
+pub fn (session TransactionSession) lookup_index_ordered(table_name string, index_name string, start_value ColumnValue, has_start_value bool, start_primary_key []u8, limit int, reverse bool) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .all
+		value: clone_column_value(start_value)
+		has_value: has_start_value
+		start_primary_key: start_primary_key.clone()
+		limit: limit
+		reverse: reverse
+	})!
+}
+
+pub fn (session TransactionSession) lookup_index_ordered_projected(table_name string, index_name string, start_value ColumnValue, has_start_value bool, start_primary_key []u8, limit int, columns []string, reverse bool) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .all
+		value: clone_column_value(start_value)
+		has_value: has_start_value
+		start_primary_key: start_primary_key.clone()
+		limit: limit
+		columns: columns.clone()
+		reverse: reverse
+	})!
+}
+
+pub fn (session TransactionSession) lookup_index_prefix(table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	for index in view.indexes {
+		if index.name == index_name && index.is_field_selector() {
+			return transaction_markdown_index_lookup_prefix(session.root_dir, view, index, value, limit)
+		}
+	}
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .prefix
+		value: clone_column_value(value)
+		limit: limit
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .exact
+		value: clone_column_value(value)
+		limit: limit
+		columns: columns.clone()
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_prefix_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .prefix
+		value: clone_column_value(value)
+		limit: limit
+		columns: columns.clone()
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_prefix_reverse(table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .prefix
+		value: clone_column_value(value)
+		limit: limit
+		reverse: true
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_prefix_reverse_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .prefix
+		value: clone_column_value(value)
+		limit: limit
+		columns: columns.clone()
+		reverse: true
+	})
+}
+
 pub fn (session TransactionSession) lookup_index_between(table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int) ![]TypedSchemaRow {
-	spec := session.working_set.transaction().specs[table_name] or {
-		return error('typed table not registered: ${table_name}')
-	}
-	mut target_index := SchemaIndexDef{}
-	mut found := false
-	for index in spec.indexes {
-		if index.name == index_name {
-			target_index = index
-			found = true
-			break
+	view := session.working_set.transaction().indexed_view(table_name)!
+	for index in view.indexes {
+		if index.name == index_name && index.is_field_selector() {
+			return transaction_markdown_index_lookup_between(session.root_dir, view, index, start_value,
+				end_value, limit)
 		}
 	}
-	if !found {
-		return error('typed schema index not found: ${index_name}')
-	}
-	if target_index.is_field_selector() {
-		view := session.working_set.transaction().indexed_view(table_name)!
-		return transaction_markdown_index_lookup_between(session.root_dir, view, target_index,
-			start_value, end_value, limit)
-	}
-	column := target_index.value_column(spec.table)!
-	end_encoded := TypedValueEncoder.encode_index_value(end_value, column)!
-	mut cursor := session.index_cursor(table_name, index_name, start_value, []u8{}, limit)!
-	mut rows := []TypedSchemaRow{}
-	for {
-		if limit > 0 && rows.len >= limit {
-			break
-		}
-		entry := cursor.peek() or {
-			break
-		}
-		if compare_key_bytes(entry.index_key, end_encoded) > 0 {
-			break
-		}
-		rows << (cursor.next()!).row
-	}
-	return rows
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .between
+		value: clone_column_value(start_value)
+		second_value: clone_column_value(end_value)
+		has_value: true
+		has_second_value: true
+		limit: limit
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_between_reverse(table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .between
+		value: clone_column_value(start_value)
+		second_value: clone_column_value(end_value)
+		has_value: true
+		has_second_value: true
+		limit: limit
+		reverse: true
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_between_reverse_projected(table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .between
+		value: clone_column_value(start_value)
+		second_value: clone_column_value(end_value)
+		has_value: true
+		has_second_value: true
+		limit: limit
+		columns: columns.clone()
+		reverse: true
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_between_projected(table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .between
+		value: clone_column_value(start_value)
+		second_value: clone_column_value(end_value)
+		has_second_value: true
+		limit: limit
+		columns: columns.clone()
+	})
 }
 
 pub fn (session TransactionSession) lookup_index_after(table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
-	spec := session.working_set.transaction().specs[table_name] or {
-		return error('typed table not registered: ${table_name}')
-	}
-	mut target_index := SchemaIndexDef{}
-	mut found := false
-	for index in spec.indexes {
-		if index.name == index_name {
-			target_index = index
-			found = true
-			break
+	view := session.working_set.transaction().indexed_view(table_name)!
+	for index in view.indexes {
+		if index.name == index_name && index.is_field_selector() {
+			return transaction_markdown_index_lookup_after(session.root_dir, view, index, value,
+				limit)
 		}
 	}
-	if !found {
-		return error('typed schema index not found: ${index_name}')
-	}
-	if target_index.is_field_selector() {
-		view := session.working_set.transaction().indexed_view(table_name)!
-		return transaction_markdown_index_lookup_after(session.root_dir, view, target_index, value,
-			limit)
-	}
-	column := target_index.value_column(spec.table)!
-	encoded := TypedValueEncoder.encode_index_value(value, column)!
-	mut cursor := session.index_cursor(table_name, index_name, value, []u8{}, limit)!
-	mut rows := []TypedSchemaRow{}
-	for {
-		if limit > 0 && rows.len >= limit {
-			break
-		}
-		entry := cursor.peek() or {
-			break
-		}
-		if compare_key_bytes(entry.index_key, encoded) <= 0 {
-			_ = cursor.next()!
-			continue
-		}
-		rows << (cursor.next()!).row
-	}
-	return rows
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .after
+		value: clone_column_value(value)
+		limit: limit
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_after_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .after
+		value: clone_column_value(value)
+		has_value: true
+		limit: limit
+		columns: columns.clone()
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_after_reverse(table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .after
+		value: clone_column_value(value)
+		has_value: true
+		limit: limit
+		reverse: true
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_after_reverse_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .after
+		value: clone_column_value(value)
+		has_value: true
+		limit: limit
+		columns: columns.clone()
+		reverse: true
+	})
 }
 
 pub fn (session TransactionSession) lookup_index_before(table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
-	mut target_index := SchemaIndexDef{}
-	mut found := false
 	for index in view.indexes {
-		if index.name == index_name {
-			target_index = index
-			found = true
-			break
+		if index.name == index_name && index.is_field_selector() {
+			return transaction_markdown_index_lookup_before(session.root_dir, view, index, value,
+				limit)
 		}
 	}
-	if !found {
-		return error('typed schema index not found: ${index_name}')
-	}
-	if target_index.is_field_selector() {
-		return transaction_markdown_index_lookup_before(session.root_dir, view, target_index, value,
-			limit)
-	}
-	column := target_index.value_column(view.schema.codec.table)!
-	encoded := TypedValueEncoder.encode_index_value(value, column)!
-	mut cursor := TypedIndexCursor{
-		view: view
-		index_name: index_name
-		cursor: IndexView.new(view.schema.table.tree, table_name, index_name).cursor([]u8{}, []u8{}, 0)!
-	}
-	mut rows := []TypedSchemaRow{}
-	for {
-		if limit > 0 && rows.len >= limit {
-			break
-		}
-		entry := cursor.peek() or {
-			break
-		}
-		if compare_key_bytes(entry.index_key, encoded) >= 0 {
-			break
-		}
-		rows << (cursor.next()!).row
-	}
-	return rows
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .before
+		value: clone_column_value(value)
+		limit: limit
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_before_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .before
+		value: clone_column_value(value)
+		limit: limit
+		columns: columns.clone()
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_before_reverse(table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .before
+		value: clone_column_value(value)
+		limit: limit
+		reverse: true
+	})
+}
+
+pub fn (session TransactionSession) lookup_index_before_reverse_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	view := session.working_set.transaction().indexed_view(table_name)!
+	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
+		mode: .before
+		value: clone_column_value(value)
+		limit: limit
+		columns: columns.clone()
+		reverse: true
+	})
 }
 
 pub fn (session TransactionSession) table_cursor(table_name string, start_primary_key []u8, limit int) !TypedTableCursor {
@@ -3746,11 +4337,264 @@ pub fn (mut cursor TypedIndexCursor) seek(index_key []u8, primary_key []u8) ! {
 }
 
 fn typed_index_row_from_entry(view TypedIndexedSchemaView, entry IndexEntry) !TypedIndexRow {
+	if entry.value.len > 0 {
+		return TypedIndexRow{
+			index_key: entry.index_key
+			primary_key: entry.primary_key
+			row: TypedSchemaRow{
+				primary_key: entry.primary_key
+				data: view.schema.codec.decode(entry.value)!
+			}
+		}
+	}
 	return TypedIndexRow{
 		index_key: entry.index_key
 		primary_key: entry.primary_key
 		row: view.get(entry.primary_key)!
 	}
+}
+
+fn typed_schema_row_from_index_entry(view TypedIndexedSchemaView, entry IndexEntry, columns []string) !TypedSchemaRow {
+	if columns.len == 0 {
+		return (typed_index_row_from_entry(view, entry)!).row
+	}
+	if entry.value.len > 0 {
+		return TypedSchemaRow{
+			primary_key: entry.primary_key
+			data: view.schema.codec.decode_projected(entry.value, columns)!
+		}
+	}
+	full_row := view.get(entry.primary_key)!
+	mut projected := TypedRowData.new()
+	for name in columns {
+		if full_row.data.has(name) {
+			projected.set(name, full_row.data.get(name)!)
+		}
+	}
+	return TypedSchemaRow{
+		primary_key: full_row.primary_key
+		data: projected
+	}
+}
+
+fn typed_scan_rows_by_index(view TypedIndexedSchemaView, index_name string, request TypedIndexScanRequest) ![]TypedSchemaRow {
+	mut target_index := SchemaIndexDef{}
+	mut found := false
+	for index in view.indexes {
+		if index.name == index_name {
+			target_index = index
+			found = true
+			break
+		}
+	}
+	if !found {
+		return error('typed schema index not found: ${index_name}')
+	}
+	column := target_index.value_column(view.schema.codec.table)!
+	index_view := view.index_view_by_name(index_name)!
+	mut rows := []TypedSchemaRow{}
+	match request.mode {
+		.all {
+			if request.reverse {
+				end_index_key := if request.has_value {
+					TypedValueEncoder.encode_index_value(request.value, column)!
+				} else {
+					[]u8{}
+				}
+				mut cursor := index_view.reverse_cursor([]u8{}, []u8{}, end_index_key, request.start_primary_key, request.limit)!
+				for {
+					if request.limit > 0 && rows.len >= request.limit {
+						break
+					}
+					entry := cursor.peek() or { break }
+					if request.has_value {
+						value_cmp := compare_key_bytes(entry.index_key, end_index_key)
+						if value_cmp > 0 {
+							_ = cursor.next()!
+							continue
+						}
+						if value_cmp == 0 && request.start_primary_key.len > 0
+							&& compare_key_bytes(entry.primary_key, request.start_primary_key) >= 0 {
+							_ = cursor.next()!
+							continue
+						}
+					}
+					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+				}
+			} else {
+				start_index_key := if request.has_value {
+					TypedValueEncoder.encode_index_value(request.value, column)!
+				} else {
+					[]u8{}
+				}
+				mut cursor := index_view.cursor(start_index_key, request.start_primary_key, request.limit)!
+				for {
+					if request.limit > 0 && rows.len >= request.limit {
+						break
+					}
+					entry := cursor.peek() or { break }
+					if request.has_value {
+						value_cmp := compare_key_bytes(entry.index_key, start_index_key)
+						if value_cmp < 0 {
+							_ = cursor.next()!
+							continue
+						}
+						if value_cmp == 0 && request.start_primary_key.len > 0
+							&& compare_key_bytes(entry.primary_key, request.start_primary_key) <= 0 {
+							_ = cursor.next()!
+							continue
+						}
+					}
+					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+				}
+			}
+		}
+		.exact {
+			encoded := TypedValueEncoder.encode_index_value(request.value, column)!
+			mut cursor := index_view.cursor(encoded, request.start_primary_key, request.limit)!
+			for {
+				if request.limit > 0 && rows.len >= request.limit {
+					break
+				}
+				entry := cursor.peek() or { break }
+				if compare_key_bytes(entry.index_key, encoded) != 0 {
+					break
+				}
+				rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+			}
+		}
+		.prefix {
+			encoded := TypedValueEncoder.encode_index_prefix(request.value, column)!
+			if request.reverse {
+				mut cursor := index_view.reverse_prefix_cursor(encoded, request.limit)!
+				for {
+					if request.limit > 0 && rows.len >= request.limit {
+						break
+					}
+					entry := cursor.peek() or { break }
+					if !has_prefix_bytes(entry.index_key, encoded) {
+						break
+					}
+					if request.start_primary_key.len > 0
+						&& compare_key_bytes(entry.primary_key, request.start_primary_key) > 0 {
+						_ = cursor.next()!
+						continue
+					}
+					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+				}
+			} else {
+				mut cursor := index_view.prefix_cursor(encoded, 0)!
+				for {
+					if request.limit > 0 && rows.len >= request.limit {
+						break
+					}
+					entry := cursor.peek() or { break }
+					if !has_prefix_bytes(entry.index_key, encoded) {
+						break
+					}
+					if request.start_primary_key.len > 0
+						&& compare_key_bytes(entry.primary_key, request.start_primary_key) < 0 {
+						_ = cursor.next()!
+						continue
+					}
+					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+				}
+			}
+		}
+		.after {
+			encoded := TypedValueEncoder.encode_index_value(request.value, column)!
+			if request.reverse {
+				mut cursor := index_view.reverse_cursor(encoded, request.start_primary_key, []u8{}, []u8{}, request.limit)!
+				for {
+					if request.limit > 0 && rows.len >= request.limit {
+						break
+					}
+					entry := cursor.peek() or { break }
+					if compare_key_bytes(entry.index_key, encoded) <= 0 {
+						_ = cursor.next()!
+						continue
+					}
+					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+				}
+			} else {
+				mut cursor := index_view.cursor(encoded, request.start_primary_key, request.limit)!
+				for {
+					if request.limit > 0 && rows.len >= request.limit {
+						break
+					}
+					entry := cursor.peek() or { break }
+					if compare_key_bytes(entry.index_key, encoded) <= 0 {
+						_ = cursor.next()!
+						continue
+					}
+					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+				}
+			}
+		}
+		.before {
+			encoded := TypedValueEncoder.encode_index_value(request.value, column)!
+			if request.reverse {
+				mut cursor := index_view.reverse_cursor([]u8{}, []u8{}, encoded, request.start_primary_key, request.limit)!
+				for {
+					if request.limit > 0 && rows.len >= request.limit {
+						break
+					}
+					entry := cursor.peek() or { break }
+					if compare_key_bytes(entry.index_key, encoded) >= 0 {
+						_ = cursor.next()!
+						continue
+					}
+					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+				}
+			} else {
+				mut cursor := index_view.cursor([]u8{}, []u8{}, 0)!
+				for {
+					if request.limit > 0 && rows.len >= request.limit {
+						break
+					}
+					entry := cursor.peek() or { break }
+					if compare_key_bytes(entry.index_key, encoded) >= 0 {
+						break
+					}
+					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+				}
+			}
+		}
+		.between {
+			encoded_start := TypedValueEncoder.encode_index_value(request.value, column)!
+			encoded_end := TypedValueEncoder.encode_index_value(request.second_value, column)!
+			if request.reverse {
+				mut cursor := index_view.reverse_cursor(encoded_start, request.start_primary_key, encoded_end, []u8{}, request.limit)!
+				for {
+					if request.limit > 0 && rows.len >= request.limit {
+						break
+					}
+					entry := cursor.peek() or { break }
+					if compare_key_bytes(entry.index_key, encoded_start) < 0 {
+						break
+					}
+					if compare_key_bytes(entry.index_key, encoded_end) > 0 {
+						_ = cursor.next()!
+						continue
+					}
+					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+				}
+			} else {
+				mut cursor := index_view.cursor(encoded_start, request.start_primary_key, request.limit)!
+				for {
+					if request.limit > 0 && rows.len >= request.limit {
+						break
+					}
+					entry := cursor.peek() or { break }
+					if compare_key_bytes(entry.index_key, encoded_end) > 0 {
+						break
+					}
+					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
+				}
+			}
+		}
+	}
+	return rows
 }
 
 pub fn (cursor TypedIndexCursor) current() !TypedIndexRow {
@@ -3840,6 +4684,14 @@ pub fn (mut reader BranchTableReader) get_row(primary_key []u8) !TypedSchemaRow 
 	}
 }
 
+pub fn (mut reader BranchTableReader) get_row_projected(primary_key []u8, columns []string) !TypedSchemaRow {
+	item := Tree.lookup_in_byte_store(reader.root_cid, database_row_key_with_prefix(reader.row_prefix, primary_key), mut reader.node_store)!
+	return TypedSchemaRow{
+		primary_key: primary_key.clone()
+		data: reader.codec.decode_projected(item.value, columns)!
+	}
+}
+
 pub fn (mut reader BranchTableReader) get_row_with_stats(primary_key []u8) !StoreLookupResult {
 	return Tree.lookup_in_byte_store_with_stats(reader.root_cid, database_row_key_with_prefix(reader.row_prefix,
 		primary_key), mut reader.node_store)
@@ -3919,6 +4771,45 @@ pub fn (mut reader BranchIndexReader) find_rows_covering(value ColumnValue, limi
 	return rows
 }
 
+pub fn (mut reader BranchIndexReader) find_rows_covering_projected(value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
+	encoded := TypedValueEncoder.encode_index_value(value, reader.index_column)!
+	mut prefix := reader.index_prefix.clone()
+	prefix << encoded
+	prefix << [u8(`|`)]
+	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	mut rows := []TypedSchemaRow{cap: items.len}
+	mut table_reader := BranchTableReader{
+		branch_name: reader.branch_name
+		spec: reader.spec
+		root_cid: reader.root_cid
+		codec: reader.codec
+		row_prefix: reader.row_prefix.clone()
+		node_store: reader.node_store
+	}
+	for item in items {
+		primary_key := item.key[prefix.len..].clone()
+		if item.value.len > 0 {
+			rows << TypedSchemaRow{
+				primary_key: primary_key
+				data: reader.codec.decode_projected(item.value, columns)!
+			}
+			continue
+		}
+		full_row := table_reader.get_row(primary_key)!
+		mut projected := TypedRowData.new()
+		for name in columns {
+			if full_row.data.has(name) {
+				projected.set(name, full_row.data.get(name)!)
+			}
+		}
+		rows << TypedSchemaRow{
+			primary_key: full_row.primary_key
+			data: projected
+		}
+	}
+	return rows
+}
+
 pub fn (mut reader BranchIndexReader) find_rows_covering_prefix(value ColumnValue, limit int) ![]TypedSchemaRow {
 	encoded := TypedValueEncoder.encode_index_prefix(value, reader.index_column)!
 	mut prefix := reader.index_prefix.clone()
@@ -3991,6 +4882,75 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_prefix_projected(value 
 		}
 	}
 	return rows
+}
+
+fn branch_index_scan_bounds(mut reader BranchIndexReader, start_value ColumnValue, has_start_value bool, start_primary_key []u8, reverse bool) !([]u8, []u8) {
+	range_start := reader.index_prefix.clone()
+	range_end := prefix_upper_bound(reader.index_prefix)!
+	if !has_start_value {
+		return range_start, range_end
+	}
+	encoded := TypedValueEncoder.encode_index_value(start_value, reader.index_column)!
+	mut entry_prefix := reader.index_prefix.clone()
+	entry_prefix << encoded
+	entry_prefix << [u8(`|`)]
+	if reverse {
+		if start_primary_key.len > 0 {
+			return range_start, build_index_entry_key(reader.index_prefix, encoded, start_primary_key)
+		}
+		return range_start, prefix_upper_bound(entry_prefix)!
+	}
+	if start_primary_key.len > 0 {
+		return prefix_upper_bound(build_index_entry_key(reader.index_prefix, encoded, start_primary_key))!, range_end
+	}
+	return entry_prefix, range_end
+}
+
+pub fn (mut reader BranchIndexReader) find_rows_covering_ordered_projected(start_value ColumnValue, has_start_value bool, start_primary_key []u8, limit int, columns []string, reverse bool) ![]TypedSchemaRow {
+	rows, _ := reader.find_rows_covering_ordered_projected_with_stats(start_value, has_start_value,
+		start_primary_key, limit, columns, reverse)!
+	return rows
+}
+
+pub fn (mut reader BranchIndexReader) find_rows_covering_ordered_projected_with_stats(start_value ColumnValue, has_start_value bool, start_primary_key []u8, limit int, columns []string, reverse bool) !([]TypedSchemaRow, OrderedScanStats) {
+	start_key, end_key := branch_index_scan_bounds(mut reader, start_value, has_start_value, start_primary_key,
+		reverse)!
+	items, stats := Tree.ordered_scan_in_byte_store_with_stats(reader.root_cid, start_key, end_key, limit, reverse, mut reader.node_store)!
+	mut rows := []TypedSchemaRow{cap: items.len}
+	mut table_reader := BranchTableReader{
+		branch_name: reader.branch_name
+		spec: reader.spec
+		root_cid: reader.root_cid
+		codec: reader.codec
+		row_prefix: reader.row_prefix.clone()
+		node_store: reader.node_store
+	}
+	for item in items {
+		suffix := item.key[reader.index_prefix.len..]
+		separator_idx := bytes_index_byte(suffix, `|`) or {
+			return error('invalid index key without primary-key separator')
+		}
+		primary_key := suffix[separator_idx + 1..].clone()
+		if item.value.len > 0 {
+			rows << TypedSchemaRow{
+				primary_key: primary_key
+				data: reader.codec.decode_projected(item.value, columns)!
+			}
+			continue
+		}
+		full_row := table_reader.get_row(primary_key)!
+		mut projected := TypedRowData.new()
+		for name in columns {
+			if full_row.data.has(name) {
+				projected.set(name, full_row.data.get(name)!)
+			}
+		}
+		rows << TypedSchemaRow{
+			primary_key: full_row.primary_key
+			data: projected
+		}
+	}
+	return rows, stats
 }
 
 pub fn (mut reader SnapshotTableReader) get_row(primary_key []u8) !TypedSchemaRow {
@@ -4439,19 +5399,41 @@ pub fn (session GroupCommitSession) staged_diff() TreeDiff {
 
 pub fn (mut session GroupCommitSession) apply_write_set(mut db PersistentDatabase, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !TypedTransactionResult {
 	normalized_write_set := normalize_temporal_write_set(session.working_set.transaction(), write_set)!
+	mut tx_sw := time.new_stopwatch()
 	result := session.working_set.apply_write_set(normalized_write_set, cfg)!
+	mut group_commit := GroupCommitStageTimings{
+		transaction_ms: tx_sw.elapsed().milliseconds()
+	}
 	session.pending_writes++
 	session.last_meta = meta
 	session.has_pending_meta = true
 	if session.pending_writes >= session.options.checkpoint_every {
-		session.flush(mut db)!
+		flush_timings := session.flush_with_timings(mut db)!
+		group_commit = GroupCommitStageTimings{
+			transaction_ms: group_commit.transaction_ms
+			commit_ms: flush_timings.commit_ms
+			checkpoint_ms: flush_timings.checkpoint_ms
+			flush_ms: flush_timings.flush_ms
+			flushed: flush_timings.flushed
+		}
 	}
-	return result
+	return TypedTransactionResult{
+		tx: result.tx
+		diff: result.diff
+		timings: result.timings
+		group_commit: group_commit
+	}
 }
 
 pub fn (mut session GroupCommitSession) put_row(mut db PersistentDatabase, table_name string, primary_key []u8, row TypedRowData, cfg ChunkConfig, meta CommitMeta) !TypedTransactionResult {
 	mut write_set := TypedWriteSet.new()
 	write_set.put(table_name, primary_key, row)
+	return session.apply_write_set(mut db, write_set, cfg, meta)
+}
+
+pub fn (mut session GroupCommitSession) put_rows(mut db PersistentDatabase, table_name string, rows map[string]TypedRowData, cfg ChunkConfig, meta CommitMeta) !TypedTransactionResult {
+	mut write_set := TypedWriteSet.new()
+	write_set.put_many(table_name, rows)
 	return session.apply_write_set(mut db, write_set, cfg, meta)
 }
 
@@ -4461,12 +5443,27 @@ pub fn (mut session GroupCommitSession) delete_row(mut db PersistentDatabase, ta
 	return session.apply_write_set(mut db, write_set, cfg, meta)
 }
 
+pub fn (mut session GroupCommitSession) delete_rows(mut db PersistentDatabase, table_name string, primary_keys [][]u8, cfg ChunkConfig, meta CommitMeta) !TypedTransactionResult {
+	mut write_set := TypedWriteSet.new()
+	write_set.delete_many(table_name, primary_keys)
+	return session.apply_write_set(mut db, write_set, cfg, meta)
+}
+
 pub fn (mut session GroupCommitSession) flush(mut database PersistentDatabase) ! {
+	_ = session.flush_with_timings(mut database)!
+}
+
+fn (mut session GroupCommitSession) flush_with_timings(mut database PersistentDatabase) !GroupCommitStageTimings {
 	if session.pending_writes == 0 {
-		return
+		return GroupCommitStageTimings{}
 	}
+	mut total_sw := time.new_stopwatch()
+	mut commit_sw := time.new_stopwatch()
 	database.commit_typed_working_set_buffered(mut session.working_set, session.last_meta)!
+	commit_ms := commit_sw.elapsed().milliseconds()
+	mut checkpoint_sw := time.new_stopwatch()
 	database.checkpoint_mode(session.options.checkpoint_mode)!
+	checkpoint_ms := checkpoint_sw.elapsed().milliseconds()
 	if session.options.checkpoint_mode == .data_only && session.options.auto_refresh_index_snapshots {
 		session.refresh_handles << PersistentDatabase.refresh_index_snapshots_async_for(database.root_dir, database.default_branch)
 	}
@@ -4483,6 +5480,13 @@ pub fn (mut session GroupCommitSession) flush(mut database PersistentDatabase) !
 	}
 	session.pending_writes = 0
 	session.has_pending_meta = false
+	return GroupCommitStageTimings{
+		transaction_ms: 0
+		commit_ms: commit_ms
+		checkpoint_ms: checkpoint_ms
+		flush_ms: total_sw.elapsed().milliseconds()
+		flushed: true
+	}
 }
 
 pub fn (mut session GroupCommitSession) wait_refreshes() ! {
@@ -4498,5 +5502,120 @@ pub fn (mut session GroupCommitSession) wait_refreshes() ! {
 
 pub fn (mut session GroupCommitSession) finish(mut database PersistentDatabase) ! {
 	session.flush(mut database)!
+	session.wait_refreshes()!
+}
+
+pub fn (session SplitGroupCommitSession) transaction() TypedSplitTransaction {
+	return session.working_set.transaction()
+}
+
+pub fn (session SplitGroupCommitSession) has_changes() bool {
+	return session.working_set.has_changes(session.last_cfg)
+}
+
+pub fn (mut session SplitGroupCommitSession) apply_write_set(mut db PersistentDatabase, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !TypedSplitTransactionResult {
+	normalized_write_set := normalize_temporal_split_write_set(session.working_set.transaction(), write_set)!
+	mut tx_sw := time.new_stopwatch()
+	result := session.working_set.apply_write_set(normalized_write_set, cfg)!
+	mut group_commit := GroupCommitStageTimings{
+		transaction_ms: tx_sw.elapsed().milliseconds()
+	}
+	session.pending_writes++
+	session.last_meta = meta
+	session.last_cfg = cfg
+	session.has_pending_meta = true
+	if session.pending_writes >= session.options.checkpoint_every {
+		flush_timings := session.flush_with_timings(mut db, false)!
+		group_commit = GroupCommitStageTimings{
+			transaction_ms: group_commit.transaction_ms
+			commit_ms: flush_timings.commit_ms
+			checkpoint_ms: flush_timings.checkpoint_ms
+			flush_ms: flush_timings.flush_ms
+			flushed: flush_timings.flushed
+		}
+	}
+	return TypedSplitTransactionResult{
+		tx: result.tx
+		group_commit: group_commit
+	}
+}
+
+pub fn (mut session SplitGroupCommitSession) put_row(mut db PersistentDatabase, table_name string, primary_key []u8, row TypedRowData, cfg ChunkConfig, meta CommitMeta) !TypedSplitTransactionResult {
+	mut write_set := TypedWriteSet.new()
+	write_set.put(table_name, primary_key, row)
+	return session.apply_write_set(mut db, write_set, cfg, meta)
+}
+
+pub fn (mut session SplitGroupCommitSession) put_rows(mut db PersistentDatabase, table_name string, rows map[string]TypedRowData, cfg ChunkConfig, meta CommitMeta) !TypedSplitTransactionResult {
+	mut write_set := TypedWriteSet.new()
+	write_set.put_many(table_name, rows)
+	return session.apply_write_set(mut db, write_set, cfg, meta)
+}
+
+pub fn (mut session SplitGroupCommitSession) delete_row(mut db PersistentDatabase, table_name string, primary_key []u8, cfg ChunkConfig, meta CommitMeta) !TypedSplitTransactionResult {
+	mut write_set := TypedWriteSet.new()
+	write_set.delete(table_name, primary_key)
+	return session.apply_write_set(mut db, write_set, cfg, meta)
+}
+
+pub fn (mut session SplitGroupCommitSession) delete_rows(mut db PersistentDatabase, table_name string, primary_keys [][]u8, cfg ChunkConfig, meta CommitMeta) !TypedSplitTransactionResult {
+	mut write_set := TypedWriteSet.new()
+	write_set.delete_many(table_name, primary_keys)
+	return session.apply_write_set(mut db, write_set, cfg, meta)
+}
+
+pub fn (mut session SplitGroupCommitSession) flush(mut database PersistentDatabase) ! {
+	_ = session.flush_with_timings(mut database, false)!
+}
+
+fn (mut session SplitGroupCommitSession) flush_with_timings(mut database PersistentDatabase, final_flush bool) !GroupCommitStageTimings {
+	if session.pending_writes == 0 {
+		return GroupCommitStageTimings{}
+	}
+	mut total_sw := time.new_stopwatch()
+	mut commit_sw := time.new_stopwatch()
+	database.commit_typed_split_working_set_mode(mut session.working_set, session.last_meta, session.last_cfg, !final_flush)!
+	commit_ms := commit_sw.elapsed().milliseconds()
+	mut checkpoint_sw := time.new_stopwatch()
+	database.checkpoint_mode(session.options.checkpoint_mode)!
+	checkpoint_ms := checkpoint_sw.elapsed().milliseconds()
+	if session.options.checkpoint_mode == .data_only && session.options.auto_refresh_index_snapshots {
+		session.refresh_handles << PersistentDatabase.refresh_index_snapshots_async_for(database.root_dir, database.default_branch)
+	}
+	if session.options.checkpoint_mode == .data_only {
+		limit := session.options.aggregate_projection_refresh_limit()
+		mut handle := database.refresh_aggregate_projections_async_with_policy(
+			session.branch_name,
+			session.options.aggregate_projection_refresh_policy,
+			if limit > 0 { limit } else { session.options.max_aggregate_projection_refreshes },
+		)!
+		if handle.active {
+			session.aggregate_refresh_handles << handle
+		}
+	}
+	session.pending_writes = 0
+	session.has_pending_meta = false
+	return GroupCommitStageTimings{
+		transaction_ms: 0
+		commit_ms: commit_ms
+		checkpoint_ms: checkpoint_ms
+		flush_ms: total_sw.elapsed().milliseconds()
+		flushed: true
+	}
+}
+
+pub fn (mut session SplitGroupCommitSession) wait_refreshes() ! {
+	for mut handle in session.refresh_handles {
+		handle.wait()!
+	}
+	session.refresh_handles = []IndexSnapshotRefreshHandle{}
+	for mut handle in session.aggregate_refresh_handles {
+		handle.wait()!
+	}
+	session.aggregate_refresh_handles = []AggregateProjectionRefreshHandle{}
+}
+
+pub fn (mut session SplitGroupCommitSession) finish(mut database PersistentDatabase) ! {
+	_ = session.flush_with_timings(mut database, true)!
 	session.wait_refreshes()!
 }

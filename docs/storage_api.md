@@ -11,6 +11,7 @@ For a possible lightweight inverted-index/search layer above Markdown and other 
 For the follow-up refactor that turns complex fields into capability-backed plugins, see [field_capability_plugins.md](/Users/guweigang/Source/pollytree/docs/field_capability_plugins.md).
 For the planner-facing metadata contract that future `vsql` should consume, see [query_planner_introspection.md](/Users/guweigang/Source/pollytree/docs/query_planner_introspection.md).
 For the SQL-to-`QueryRequest` lowering guidance that future `vsql` should follow, see [vsql_query_mapping.md](/Users/guweigang/Source/pollytree/docs/vsql_query_mapping.md).
+For the execution-layer and platform-level query roadmap that both `agentview` and future `vsql` depend on, see [query_layer_roadmap.md](/Users/guweigang/Source/pollytree/docs/query_layer_roadmap.md).
 For a direct V-language integration walkthrough, see [v_embedding_example.md](/Users/guweigang/Source/pollytree/docs/v_embedding_example.md).
 
 ## Goals

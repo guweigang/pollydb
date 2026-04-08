@@ -15,6 +15,10 @@ pub:
 	min_size int = default_min_chunk_size
 	max_size int = default_max_chunk_size
 	mask     u64 = default_chunk_mask
+	detailed_timings bool
+	enable_partitioned_rebuild bool = true
+	force_partitioned_rebuild bool
+	enable_split_backed_working_set bool
 }
 
 pub struct Chunk {
@@ -153,6 +157,54 @@ fn chunk_cid_from_ptr(base &u8, start int, length int) []u8 {
 
 pub fn ChunkConfig.default() ChunkConfig {
 	return ChunkConfig{}
+}
+
+pub fn (cfg ChunkConfig) with_detailed_timings(enabled bool) ChunkConfig {
+	return ChunkConfig{
+		min_size: cfg.min_size
+		max_size: cfg.max_size
+		mask: cfg.mask
+		detailed_timings: enabled
+		enable_partitioned_rebuild: cfg.enable_partitioned_rebuild
+		force_partitioned_rebuild: cfg.force_partitioned_rebuild
+		enable_split_backed_working_set: cfg.enable_split_backed_working_set
+	}
+}
+
+pub fn (cfg ChunkConfig) with_partitioned_rebuild(enabled bool) ChunkConfig {
+	return ChunkConfig{
+		min_size: cfg.min_size
+		max_size: cfg.max_size
+		mask: cfg.mask
+		detailed_timings: cfg.detailed_timings
+		enable_partitioned_rebuild: enabled
+		force_partitioned_rebuild: cfg.force_partitioned_rebuild
+		enable_split_backed_working_set: cfg.enable_split_backed_working_set
+	}
+}
+
+pub fn (cfg ChunkConfig) with_force_partitioned_rebuild(enabled bool) ChunkConfig {
+	return ChunkConfig{
+		min_size: cfg.min_size
+		max_size: cfg.max_size
+		mask: cfg.mask
+		detailed_timings: cfg.detailed_timings
+		enable_partitioned_rebuild: cfg.enable_partitioned_rebuild
+		force_partitioned_rebuild: enabled
+		enable_split_backed_working_set: cfg.enable_split_backed_working_set
+	}
+}
+
+pub fn (cfg ChunkConfig) with_split_backed_working_set(enabled bool) ChunkConfig {
+	return ChunkConfig{
+		min_size: cfg.min_size
+		max_size: cfg.max_size
+		mask: cfg.mask
+		detailed_timings: cfg.detailed_timings
+		enable_partitioned_rebuild: cfg.enable_partitioned_rebuild
+		force_partitioned_rebuild: cfg.force_partitioned_rebuild
+		enable_split_backed_working_set: enabled
+	}
 }
 
 pub fn BufferManager.new(path string, read_size int, overlap_size int) !BufferManager {

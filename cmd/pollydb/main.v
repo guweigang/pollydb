@@ -441,6 +441,7 @@ fn (cli PollyDbCli) usage() string {
   pollydb export-catalog [root_dir] [branch]
   pollydb register-table [root_dir] [branch] <table_name> <primary_key_csv> <columns_csv> [indexes_csv]
   pollydb create-table [root_dir] [branch] <table_name> <primary_key_csv> <columns_csv> [indexes_csv]
+  pollydb rebuild-indexes [root_dir] [branch] [tables_csv]
   pollydb projectors [root_dir] [branch]
   pollydb register-aggregate-projection [root_dir] [branch] <name> <table_name> <column_name> [json_path] [priority] [cost_hint]
   pollydb refresh-aggregate-projections [root_dir] [branch] [policy] [limit]
@@ -509,8 +510,9 @@ Catalog and Projectors:
   tables   List registered typed tables.
   describe-table  Print one registered table schema and indexes.
   export-catalog  Print all registered table schemas.
-  register-table  Register a typed table in the catalog.
+  register-table  Register or update a typed table in the catalog, including additive index updates.
   create-table  Alias for register-table.
+  rebuild-indexes  Rebuild secondary indexes for all tables or one tables_csv subset.
   projectors  List registered aggregate projectors and their branch state.
   register-aggregate-projection  Register one aggregate projector in the catalog.
   refresh-aggregate-projections  Recompute aggregate projector virtual roots and advance branch metadata.
@@ -723,6 +725,9 @@ fn (mut cli PollyDbCli) run() ! {
 	}
 	if command == 'create-table' {
 		return cli.run_register_table()
+	}
+	if command == 'rebuild-indexes' {
+		return cli.run_rebuild_indexes()
 	}
 	if command == 'projectors' {
 		return cli.run_projectors()
@@ -2832,12 +2837,36 @@ fn (mut cli PollyDbCli) run_register_table() ! {
 	defer {
 		db.close() or {}
 	}
-	if !db.has_table(spec.name()) {
-		db.register_table(spec)!
+	changed := db.register_or_update_table(spec)!
+	if changed && ctx.branch in db.branch_names() {
+		_ = db.rebuild_indexes_at_branch(ctx.branch, [spec.name()], storage.ChunkConfig.default())!
 	}
 	db.checkpoint()!
 	report := db.status_report()!
 	println(cli_render_status_report(report))
+}
+
+fn (mut cli PollyDbCli) run_rebuild_indexes() ! {
+	ctx := cli.resolve_db_context(1, true)!
+	tables_csv := if cli.args.len > ctx.next_idx { cli.args[ctx.next_idx] } else { '' }
+	table_names := if tables_csv.len == 0 || tables_csv == '-' {
+		[]string{}
+	} else {
+		parse_csv_values(tables_csv)
+	}
+	mut db := storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
+	defer {
+		db.close() or {}
+	}
+	update := db.rebuild_indexes_at_branch(ctx.branch, table_names, storage.ChunkConfig.default())!
+	db.checkpoint()!
+	mut fields := [
+		CliField{'branch', ctx.branch}
+		CliField{'tables', if table_names.len > 0 { table_names.join(',') } else { cli_dim('(all)') }}
+		CliField{'commit', update.branch.commit_cid}
+		CliField{'root', update.snapshot.commit.root_cid}
+	]
+	println(cli_render_field_card('Rebuild Indexes', fields))
 }
 
 fn (mut cli PollyDbCli) run_projectors() ! {

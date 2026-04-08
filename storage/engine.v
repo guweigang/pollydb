@@ -9,6 +9,24 @@ mut:
 	repository PersistentRepository
 }
 
+pub struct PersistentEngineOpenTimings {
+pub:
+	repository PersistentRepositoryOpenTimings
+	total_ms   i64
+}
+
+pub struct PersistentEngineOpenResult {
+pub:
+	engine   PersistentEngine
+	timings  PersistentEngineOpenTimings
+}
+
+pub struct PersistentEngineTypedTransactionOpenResult {
+pub:
+	tx TypedTransaction
+	timings TypedTransactionOpenTimings
+}
+
 pub struct PersistentEngineCheckpointInfo {
 pub:
 	root_dir    string
@@ -28,7 +46,7 @@ pub:
 }
 
 pub fn PersistentEngine.open(root_dir string, default_branch string) !PersistentEngine {
-	return PersistentEngine.open_with_provider(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+	return (PersistentEngine.open_profiled(root_dir, default_branch)!).engine
 }
 
 pub fn PersistentEngine.init(root_dir string, default_branch string) !PersistentEngine {
@@ -36,9 +54,25 @@ pub fn PersistentEngine.init(root_dir string, default_branch string) !Persistent
 }
 
 pub fn PersistentEngine.open_with_provider(provider LocalDatabaseBackendProvider) !PersistentEngine {
-	return PersistentEngine{
-		root_dir: provider.root_dir
-		repository: PersistentRepository.open_default(provider.root_dir, provider.default_branch())!
+	return (PersistentEngine.open_with_provider_profiled(provider)!).engine
+}
+
+pub fn PersistentEngine.open_profiled(root_dir string, default_branch string) !PersistentEngineOpenResult {
+	return PersistentEngine.open_with_provider_profiled(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+}
+
+pub fn PersistentEngine.open_with_provider_profiled(provider LocalDatabaseBackendProvider) !PersistentEngineOpenResult {
+	mut total_sw := time.new_stopwatch()
+	repository_result := PersistentRepository.open_default_profiled(provider.root_dir, provider.default_branch())!
+	return PersistentEngineOpenResult{
+		engine: PersistentEngine{
+			root_dir: provider.root_dir
+			repository: repository_result.repository
+		}
+		timings: PersistentEngineOpenTimings{
+			repository: repository_result.timings
+			total_ms: total_sw.elapsed().milliseconds()
+		}
 	}
 }
 
@@ -221,11 +255,23 @@ pub fn (mut engine PersistentEngine) branch_log(branch_name string, limit int) !
 }
 
 pub fn (mut engine PersistentEngine) typed_transaction_at_branch(branch_name string, specs []TypedTableSpec) !TypedTransaction {
-	return engine.repository.repo.typed_transaction_at_branch(branch_name, specs, mut engine.repository.node_store, mut engine.repository.commit_store)
+	return (engine.typed_transaction_at_branch_profiled(branch_name, specs)!).tx
+}
+
+pub fn (mut engine PersistentEngine) typed_transaction_at_branch_profiled(branch_name string, specs []TypedTableSpec) !PersistentEngineTypedTransactionOpenResult {
+	result := engine.repository.repo.typed_transaction_at_branch_profiled(branch_name, specs, mut engine.repository.node_store, mut engine.repository.commit_store)!
+	return PersistentEngineTypedTransactionOpenResult{
+		tx: result.tx
+		timings: result.timings
+	}
 }
 
 pub fn (mut engine PersistentEngine) typed_working_set_at_branch(branch_name string, specs []TypedTableSpec) !TypedWorkingSet {
 	return engine.repository.repo.typed_working_set_at_branch(branch_name, specs, mut engine.repository.node_store, mut engine.repository.commit_store)
+}
+
+pub fn (mut engine PersistentEngine) typed_split_working_set_at_branch(branch_name string, specs []TypedTableSpec, cfg ChunkConfig) !TypedSplitWorkingSet {
+	return engine.repository.repo.typed_split_working_set_at_branch(branch_name, specs, cfg, mut engine.repository.node_store, mut engine.repository.commit_store)
 }
 
 pub fn (mut engine PersistentEngine) apply_typed_write_set_to_branch(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
@@ -293,6 +339,10 @@ pub fn (mut engine PersistentEngine) apply_typed_write_set_to_branch_buffered_wi
 
 pub fn (mut engine PersistentEngine) commit_typed_working_set(mut set TypedWorkingSet, meta CommitMeta) !BranchTypedWorkingSetResult {
 	return engine.commit_typed_working_set_with_virtual_roots(mut set, meta, [])
+}
+
+pub fn (mut engine PersistentEngine) commit_typed_split_working_set(mut set TypedSplitWorkingSet, meta CommitMeta, cfg ChunkConfig) !BranchTypedWorkingSetResult {
+	return engine.repository.repo.commit_typed_split_working_set(mut set, meta, cfg, mut engine.repository.node_store, mut engine.repository.commit_store)
 }
 
 pub fn (mut engine PersistentEngine) commit_typed_working_set_with_virtual_roots(mut set TypedWorkingSet, meta CommitMeta, virtual_roots []VirtualRootRef) !BranchTypedWorkingSetResult {

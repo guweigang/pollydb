@@ -2,6 +2,8 @@
 
 This document defines a concrete design for adding native Markdown field support to `pollydb` using the AST and chunk-planning facilities from [`vmarkdown`](/Users/guweigang/Source/vmarkdown).
 
+For a future lexical-search complement to the current selector/index model, see [lightweight_fts_design.md](/Users/guweigang/Source/pollytree/docs/lightweight_fts_design.md).
+
 The goal is not to store Markdown as one large row payload. Instead, a Markdown column should behave like a typed reference to an external AST-backed document store with structural sharing, semantic diffs, and merge-aware identity.
 
 ## Goals
