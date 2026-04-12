@@ -95,11 +95,19 @@ fn main() {
 	match command {
 		'sync-codex' {
 			cfg := storage.ChunkConfig.default().with_split_backed_working_set(has_flag(args, '--split-backed'))
-			stats := store.sync_codex_with_progress_and_config(codex_root, sync_progress_compact_to_stderr, cfg) or {
+			options := agentview.SyncOptions{
+				batch_sessions: parse_flag_int(args, '--batch-sessions', 8)
+			}
+			stats := store.sync_codex_with_options_and_progress_and_config(codex_root, options,
+				sync_progress_compact_to_stderr, cfg) or {
 				eprintln(err.msg())
 				exit(1)
 			}
-			println('synced sessions=${stats.sessions} entries=${stats.entries} skipped=${stats.skipped} store=${store_root}')
+			if stats.paused_for_resume {
+				println('sync paused processed=${stats.processed_sessions}/${stats.total_sessions} imported=${stats.sessions} entries=${stats.entries} skipped=${stats.skipped} resume_after=${stats.resume_session_id} store=${store_root}')
+			} else {
+				println('synced sessions=${stats.sessions} entries=${stats.entries} skipped=${stats.skipped} processed=${stats.processed_sessions}/${stats.total_sessions} store=${store_root}')
+			}
 		}
 		'index-search' {
 			cfg := storage.ChunkConfig.default().with_split_backed_working_set(has_flag(args, '--split-backed'))
@@ -229,7 +237,7 @@ fn main() {
 }
 
 fn usage() string {
-	return 'agentview sync-codex [--codex-root <path>] [--store-root <path>] [--split-backed]\n'
+	return 'agentview sync-codex [--codex-root <path>] [--store-root <path>] [--split-backed] [--batch-sessions N]\n'
 		+ 'agentview index-search [--store-root <path>] [--split-backed]\n'
 		+ 'agentview bench-codex [--codex-root <path>] [--store-root <path>] [--split-backed]\n'
 		+ 'agentview bench-codex-delta [--codex-root <path>] [--store-root <path>] [--split-backed] [--sessions N] [--mutate N]\n'
@@ -248,7 +256,8 @@ fn usage() string {
 		+ 'default codex root: ~/.codex\n'
 		+ 'default store root: ~/.agentview/pollydb\n'
 		+ 'note: sessions/show/search/browse will auto-sync from ~/.codex when the store is empty\n'
-		+ 'note: sync-codex builds base indexes first; run index-search to add markdown FTS search indexes\n'
+		+ 'note: sync-codex now checkpoints in small batches by default; use --batch-sessions to tune resume-safe imports\n'
+		+ 'note: sync-codex builds base indexes first; run index-search to add general FTS search indexes\n'
 		+ 'note: bench-write-path measures synthetic typed fallback writes without reading ~/.codex\n'
 		+ 'note: bench-write-layout compares mixed apply against apply+split-materialize for the same synthetic workload\n'
 		+ 'note: bench-tree-build measures tree construction without typed schema/index maintenance\n'
@@ -1275,7 +1284,9 @@ fn ensure_store_ready(command string, store agentview.PollyDbStore, codex_root s
 	}) or {
 		if err.msg().contains('branch not found:') {
 			eprintln('store is empty, syncing from ${codex_root} ...')
-			store.sync_codex_with_progress(codex_root, sync_progress_compact_to_stderr)!
+			store.sync_codex_with_options_and_progress_and_config(codex_root, agentview.SyncOptions{
+				batch_sessions: 8
+			}, sync_progress_compact_to_stderr, storage.ChunkConfig.default())!
 			return
 		}
 		return err
@@ -1284,7 +1295,9 @@ fn ensure_store_ready(command string, store agentview.PollyDbStore, codex_root s
 		return
 	}
 	eprintln('store is empty, syncing from ${codex_root} ...')
-	store.sync_codex_with_progress(codex_root, sync_progress_compact_to_stderr)!
+	store.sync_codex_with_options_and_progress_and_config(codex_root, agentview.SyncOptions{
+		batch_sessions: 8
+	}, sync_progress_compact_to_stderr, storage.ChunkConfig.default())!
 }
 
 fn sync_progress_compact_to_stderr(progress agentview.SyncProgress) {
@@ -1295,11 +1308,25 @@ fn sync_progress_compact_to_stderr(progress agentview.SyncProgress) {
 		'skip' {
 			eprintln('sync skip ${progress.processed_sessions}/${progress.total_sessions} ${progress.session_id} ${progress.session_title}')
 		}
+		'resume_skip' {
+			if progress.session_id.len > 0 {
+				eprintln('sync resume anchor ${progress.processed_sessions}/${progress.total_sessions} ${progress.session_id}')
+			} else {
+				eprintln('sync resume skip ${progress.processed_sessions}/${progress.total_sessions}')
+			}
+		}
 		'import' {
 			eprintln('sync import ${progress.processed_sessions + 1}/${progress.total_sessions} ${progress.session_id} ${progress.session_title}')
 		}
+		'checkpoint' {
+			if progress.batch_sessions > 0 {
+				eprintln('sync batch ${progress.checkpoint_count} done processed=${progress.processed_sessions}/${progress.total_sessions} imported=${progress.imported_sessions} entries=${progress.imported_entries} skipped=${progress.skipped_sessions}; run the same command again to continue')
+			} else {
+				eprintln('sync checkpoint processed=${progress.processed_sessions} imported=${progress.imported_sessions} entries=${progress.imported_entries} skipped=${progress.skipped_sessions}')
+			}
+		}
 		'done' {
-			eprintln('sync done processed=${progress.processed_sessions} imported=${progress.imported_sessions} entries=${progress.imported_entries} skipped=${progress.skipped_sessions} read=${progress.read_ms}ms build=${progress.build_ms}ms apply=${progress.apply_ms}ms finish=${progress.finish_ms}ms total=${progress.total_ms}ms')
+			eprintln('sync done processed=${progress.processed_sessions} imported=${progress.imported_sessions} entries=${progress.imported_entries} skipped=${progress.skipped_sessions} checkpoints=${progress.checkpoint_count} read=${progress.read_ms}ms build=${progress.build_ms}ms apply=${progress.apply_ms}ms finish=${progress.finish_ms}ms total=${progress.total_ms}ms')
 		}
 		else {}
 	}
@@ -1311,14 +1338,14 @@ fn sync_progress_noop(progress agentview.SyncProgress) {
 
 fn sync_progress_detailed_to_stderr(progress agentview.SyncProgress) {
 	match progress.phase {
-		'start', 'skip', 'import' {
+		'start', 'skip', 'import', 'checkpoint' {
 			sync_progress_compact_to_stderr(progress)
 		}
 		'profile' {
 			eprintln('sync profile ${progress.processed_sessions + 1}/${progress.total_sessions} ${progress.session_id} read=${progress.read_ms}ms build=${progress.build_ms}ms apply=${progress.apply_ms}ms tx=${progress.tx_ms}ms aggregate=${progress.aggregate_ms}ms fast=${progress.fast_update_ms}ms fast_can=${progress.fast_update_can_ms}ms fast_path=${progress.fast_update_path_ms}ms fast_encode=${progress.fast_update_encode_ms}ms fast_replace=${progress.fast_update_replace_ms}ms fallback=${progress.fallback_ms}ms fallback_items=${progress.fallback_items_ms}ms fallback_items_key=${progress.fallback_items_key_ms}ms fallback_items_fill=${progress.fallback_items_fill_ms}ms fallback_ops=${progress.fallback_ops_ms}ms fallback_ops_key=${progress.fallback_ops_key_ms}ms fallback_ops_lookup=${progress.fallback_ops_lookup_ms}ms fallback_ops_encode=${progress.fallback_ops_encode_ms}ms fallback_ops_state=${progress.fallback_ops_state_ms}ms fallback_ops_state_new_key=${progress.fallback_ops_state_new_key_ms}ms fallback_ops_state_item=${progress.fallback_ops_state_item_ms}ms fallback_ops_state_cache=${progress.fallback_ops_state_cache_ms}ms fallback_ops_index=${progress.fallback_ops_index_ms}ms fallback_build=${progress.fallback_build_ms}ms fallback_build_prepare=${progress.fallback_build_prepare_ms}ms fallback_build_prepare_keys=${progress.fallback_build_prepare_keys_ms}ms fallback_build_prepare_keys_sort=${progress.fallback_build_prepare_keys_sort_ms}ms fallback_build_prepare_keys_merge=${progress.fallback_build_prepare_keys_merge_ms}ms fallback_build_prepare_rows=${progress.fallback_build_prepare_rows_ms}ms fallback_build_prepare_rows_key=${progress.fallback_build_prepare_rows_key_ms}ms fallback_build_prepare_rows_value=${progress.fallback_build_prepare_rows_value_ms}ms fallback_build_leaf=${progress.fallback_build_leaf_ms}ms fallback_build_leaf_chunk=${progress.fallback_build_leaf_chunk_ms}ms fallback_build_leaf_node=${progress.fallback_build_leaf_node_ms}ms fallback_build_leaf_node_serialize=${progress.fallback_build_leaf_node_serialize_ms}ms fallback_build_leaf_node_cid=${progress.fallback_build_leaf_node_cid_ms}ms fallback_build_leaf_node_add=${progress.fallback_build_leaf_node_add_ms}ms fallback_build_internal=${progress.fallback_build_internal_ms}ms commit=${progress.commit_ms}ms checkpoint=${progress.checkpoint_ms}ms flush=${progress.flush_ms}ms total=${progress.total_ms}ms')
 		}
 		'done' {
-			eprintln('sync done processed=${progress.processed_sessions} imported=${progress.imported_sessions} entries=${progress.imported_entries} skipped=${progress.skipped_sessions} read=${progress.read_ms}ms build=${progress.build_ms}ms apply=${progress.apply_ms}ms tx=${progress.tx_ms}ms aggregate=${progress.aggregate_ms}ms fast=${progress.fast_update_ms}ms fast_can=${progress.fast_update_can_ms}ms fast_path=${progress.fast_update_path_ms}ms fast_encode=${progress.fast_update_encode_ms}ms fast_replace=${progress.fast_update_replace_ms}ms fallback=${progress.fallback_ms}ms fallback_items=${progress.fallback_items_ms}ms fallback_items_key=${progress.fallback_items_key_ms}ms fallback_items_fill=${progress.fallback_items_fill_ms}ms fallback_ops=${progress.fallback_ops_ms}ms fallback_ops_key=${progress.fallback_ops_key_ms}ms fallback_ops_lookup=${progress.fallback_ops_lookup_ms}ms fallback_ops_encode=${progress.fallback_ops_encode_ms}ms fallback_ops_state=${progress.fallback_ops_state_ms}ms fallback_ops_state_new_key=${progress.fallback_ops_state_new_key_ms}ms fallback_ops_state_item=${progress.fallback_ops_state_item_ms}ms fallback_ops_state_cache=${progress.fallback_ops_state_cache_ms}ms fallback_ops_index=${progress.fallback_ops_index_ms}ms fallback_build=${progress.fallback_build_ms}ms fallback_build_prepare=${progress.fallback_build_prepare_ms}ms fallback_build_prepare_keys=${progress.fallback_build_prepare_keys_ms}ms fallback_build_prepare_keys_sort=${progress.fallback_build_prepare_keys_sort_ms}ms fallback_build_prepare_keys_merge=${progress.fallback_build_prepare_keys_merge_ms}ms fallback_build_prepare_rows=${progress.fallback_build_prepare_rows_ms}ms fallback_build_prepare_rows_key=${progress.fallback_build_prepare_rows_key_ms}ms fallback_build_prepare_rows_value=${progress.fallback_build_prepare_rows_value_ms}ms fallback_build_leaf=${progress.fallback_build_leaf_ms}ms fallback_build_leaf_chunk=${progress.fallback_build_leaf_chunk_ms}ms fallback_build_leaf_node=${progress.fallback_build_leaf_node_ms}ms fallback_build_leaf_node_serialize=${progress.fallback_build_leaf_node_serialize_ms}ms fallback_build_leaf_node_cid=${progress.fallback_build_leaf_node_cid_ms}ms fallback_build_leaf_node_add=${progress.fallback_build_leaf_node_add_ms}ms fallback_build_internal=${progress.fallback_build_internal_ms}ms commit=${progress.commit_ms}ms checkpoint=${progress.checkpoint_ms}ms flush=${progress.flush_ms}ms finish=${progress.finish_ms}ms total=${progress.total_ms}ms')
+			eprintln('sync done processed=${progress.processed_sessions} imported=${progress.imported_sessions} entries=${progress.imported_entries} skipped=${progress.skipped_sessions} checkpoints=${progress.checkpoint_count} read=${progress.read_ms}ms build=${progress.build_ms}ms apply=${progress.apply_ms}ms tx=${progress.tx_ms}ms aggregate=${progress.aggregate_ms}ms fast=${progress.fast_update_ms}ms fast_can=${progress.fast_update_can_ms}ms fast_path=${progress.fast_update_path_ms}ms fast_encode=${progress.fast_update_encode_ms}ms fast_replace=${progress.fast_update_replace_ms}ms fallback=${progress.fallback_ms}ms fallback_items=${progress.fallback_items_ms}ms fallback_items_key=${progress.fallback_items_key_ms}ms fallback_items_fill=${progress.fallback_items_fill_ms}ms fallback_ops=${progress.fallback_ops_ms}ms fallback_ops_key=${progress.fallback_ops_key_ms}ms fallback_ops_lookup=${progress.fallback_ops_lookup_ms}ms fallback_ops_encode=${progress.fallback_ops_encode_ms}ms fallback_ops_state=${progress.fallback_ops_state_ms}ms fallback_ops_state_new_key=${progress.fallback_ops_state_new_key_ms}ms fallback_ops_state_item=${progress.fallback_ops_state_item_ms}ms fallback_ops_state_cache=${progress.fallback_ops_state_cache_ms}ms fallback_ops_index=${progress.fallback_ops_index_ms}ms fallback_build=${progress.fallback_build_ms}ms fallback_build_prepare=${progress.fallback_build_prepare_ms}ms fallback_build_prepare_keys=${progress.fallback_build_prepare_keys_ms}ms fallback_build_prepare_keys_sort=${progress.fallback_build_prepare_keys_sort_ms}ms fallback_build_prepare_keys_merge=${progress.fallback_build_prepare_keys_merge_ms}ms fallback_build_prepare_rows=${progress.fallback_build_prepare_rows_ms}ms fallback_build_prepare_rows_key=${progress.fallback_build_prepare_rows_key_ms}ms fallback_build_prepare_rows_value=${progress.fallback_build_prepare_rows_value_ms}ms fallback_build_leaf=${progress.fallback_build_leaf_ms}ms fallback_build_leaf_chunk=${progress.fallback_build_leaf_chunk_ms}ms fallback_build_leaf_node=${progress.fallback_build_leaf_node_ms}ms fallback_build_leaf_node_serialize=${progress.fallback_build_leaf_node_serialize_ms}ms fallback_build_leaf_node_cid=${progress.fallback_build_leaf_node_cid_ms}ms fallback_build_leaf_node_add=${progress.fallback_build_leaf_node_add_ms}ms fallback_build_internal=${progress.fallback_build_internal_ms}ms commit=${progress.commit_ms}ms checkpoint=${progress.checkpoint_ms}ms flush=${progress.flush_ms}ms finish=${progress.finish_ms}ms total=${progress.total_ms}ms')
 		}
 		else {}
 	}

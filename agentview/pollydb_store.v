@@ -7,7 +7,8 @@ import time
 const store_branch = 'main'
 const session_list_min_updated_at = '0001-01-01T00:00:00.000000Z'
 const session_list_max_updated_at = '9999-12-31T23:59:59.999999Z'
-const search_index_version = 'search-v5-meta-fts-targeted-reingest'
+const search_index_version = 'search-v7-content-text-fts'
+const agentview_general_fts_indexes = ['entries_content_text_fts_idx']
 const session_summary_select_columns = ['id', 'title', 'updated_at', 'started_at', 'cwd', 'source',
 	'originator', 'cli_version', 'path', 'archived', 'entry_count', 'user_turns', 'tool_calls']
 const transcript_entry_select_columns = ['seq', 'timestamp', 'role', 'kind', 'tool_name', 'call_id',
@@ -80,6 +81,9 @@ fn (store PollyDbStore) init_schema() ! {
 	if db.register_or_update_table(search_meta_state_spec()!)! {
 		changed_tables << 'search_meta_state'
 	}
+	if db.register_or_update_table(sync_resume_state_spec()!)! {
+		changed_tables << 'sync_resume_state'
+	}
 	if db.register_or_update_table(entry_ingest_state_spec()!)! {
 		changed_tables << 'entry_ingest_state'
 	}
@@ -93,6 +97,27 @@ fn (store PollyDbStore) init_schema() ! {
 		_ = db.rebuild_indexes_at_branch(store_branch, changed_tables, storage.ChunkConfig.default())!
 	}
 	db.checkpoint()!
+}
+
+pub fn (store PollyDbStore) ensure_search_schema() !bool {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	changed := db.register_or_update_table(entries_spec(true)!)!
+	if changed {
+		db.checkpoint()!
+	}
+	return changed
+}
+
+pub fn desired_search_index_names() ![]string {
+	spec := entries_spec(true)!
+	return spec.indexes.map(it.name)
+}
+
+pub fn desired_entries_search_spec() !storage.TypedTableSpec {
+	return entries_spec(true)!
 }
 
 pub fn (store PollyDbStore) ensure_search_indexes() !bool {
@@ -111,6 +136,7 @@ pub fn (store PollyDbStore) ensure_search_indexes_with_progress_and_config(repor
 		db.close() or {}
 	}
 	search_spec := entries_spec(true)!
+	needs_markdown_backfill := spec_has_markdown_fts_index(search_spec)
 	use_split_backed := cfg.enable_split_backed_working_set
 		&& !search_spec.indexes.any(it.is_field_selector())
 	effective_cfg := if use_split_backed {
@@ -135,6 +161,11 @@ pub fn (store PollyDbStore) ensure_search_indexes_with_progress_and_config(repor
 		}
 	}
 	current_index_version := load_search_meta_value(mut db, 'index_version') or { '' }
+	mut rebuild_ms := i64(0)
+	changed := db.register_or_update_table(search_spec)!
+	if changed {
+		db.checkpoint()!
+	}
 	force_rebuild := current_index_version != search_index_version
 	for entry_id, ingest in entry_ingest_states {
 		search := entry_search_states[entry_id] or { EntrySearchState{} }
@@ -146,14 +177,21 @@ pub fn (store PollyDbStore) ensure_search_indexes_with_progress_and_config(repor
 	if force_rebuild {
 		target_entry_ids = load_meta_markup_entry_ids(mut db) or { []string{} }
 	}
+	if !needs_markdown_backfill {
+		target_entry_ids = []string{}
+	}
 	for entry_id in entry_search_states.keys() {
 		if entry_id !in entry_ingest_states {
 			stale_entry_search_ids << entry_id
 		}
 	}
 	mut backfill_sw := time.new_stopwatch()
-	backfill := backfill_search_markdown_for_entries_with_config(mut db, target_entry_ids, effective_cfg,
-		force_rebuild)!
+	backfill := if needs_markdown_backfill {
+		backfill_search_markdown_for_entries_with_config(mut db, target_entry_ids, effective_cfg,
+			force_rebuild)!
+	} else {
+		SearchBackfillResult{}
+	}
 	backfill_ms := backfill_sw.elapsed().milliseconds()
 	reporter(SearchIndexProgress{
 		phase: 'backfill'
@@ -161,11 +199,9 @@ pub fn (store PollyDbStore) ensure_search_indexes_with_progress_and_config(repor
 		rows_backfilled: backfill.rows_backfilled
 		backfill_ms: backfill_ms
 	})
-	mut rebuild_ms := i64(0)
-	changed := db.register_or_update_table(search_spec)!
 	if (changed || force_rebuild) && store_branch in db.branch_names() {
 		mut rebuild_sw := time.new_stopwatch()
-		_ = db.rebuild_indexes_at_branch(store_branch, ['entries'], storage.ChunkConfig.default())!
+		db.rebuild_fts_indexes_at_branch(store_branch, ['entries'])!
 		rebuild_ms = rebuild_sw.elapsed().milliseconds()
 		reporter(SearchIndexProgress{
 			phase: 'rebuild'
@@ -203,15 +239,40 @@ pub fn (store PollyDbStore) ensure_search_indexes_with_progress_and_config(repor
 	return stats
 }
 
+fn spec_has_markdown_fts_index(spec storage.TypedTableSpec) bool {
+	for index in spec.indexes {
+		if !index.is_fts() {
+			continue
+		}
+		column := spec.table.column(index.column) or { continue }
+		if column.typ == .markdown_ {
+			return true
+		}
+	}
+	return false
+}
+
 pub fn (store PollyDbStore) sync_codex(codex_root string) !SyncStats {
-	return store.sync_codex_with_progress_and_config(codex_root, no_sync_progress, storage.ChunkConfig.default())
+	return store.sync_codex_with_options_and_progress_and_config(codex_root, SyncOptions{},
+		no_sync_progress, storage.ChunkConfig.default())
 }
 
 pub fn (store PollyDbStore) sync_codex_with_progress(codex_root string, reporter SyncProgressReporter) !SyncStats {
-	return store.sync_codex_with_progress_and_config(codex_root, reporter, storage.ChunkConfig.default())
+	return store.sync_codex_with_options_and_progress_and_config(codex_root, SyncOptions{},
+		reporter, storage.ChunkConfig.default())
 }
 
 pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root string, reporter SyncProgressReporter, cfg storage.ChunkConfig) !SyncStats {
+	return store.sync_codex_with_options_and_progress_and_config(codex_root, SyncOptions{},
+		reporter, cfg)
+}
+
+pub fn (store PollyDbStore) sync_codex_with_options_and_progress_and_config(codex_root string, options SyncOptions, reporter SyncProgressReporter, cfg storage.ChunkConfig) !SyncStats {
+	return store.sync_codex_single_pass_with_options_and_progress_and_config(codex_root,
+		options, reporter, cfg)
+}
+
+fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_config(codex_root string, options SyncOptions, reporter SyncProgressReporter, cfg storage.ChunkConfig) !SyncStats {
 	mut total_sw := time.new_stopwatch()
 	mut paths := discover_codex_session_paths(codex_root)!
 	paths.sort()
@@ -226,17 +287,24 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 	}
 	mut existing := map[string]SessionSummary{}
 	mut existing_ingest := map[string]IngestState{}
+	existing_resume := load_sync_resume_state(mut db, 'codex_sync') or { SyncResumeState{} }
+	resume_anchor_present := existing_resume.last_completed_path.len > 0
+		&& existing_resume.last_completed_path in paths
 	if store_branch_exists(mut db) {
 		existing = load_existing_sessions_by_id(mut db) or { map[string]SessionSummary{} }
 		existing_ingest = load_existing_ingest_states_by_path(mut db) or { map[string]IngestState{} }
 	}
 	mut skipped := 0
+	batch_sessions := if options.batch_sessions > 0 { options.batch_sessions } else { 0 }
+	mut checkpoint_count := 0
 	empty_markdown := ingest_markdown_for_store(mut db, '')!
 	reporter(SyncProgress{
 		total_sessions: paths.len
 		imported_sessions: 0
 		imported_entries: 0
 		skipped_sessions: skipped
+		checkpoint_count: checkpoint_count
+		batch_sessions: batch_sessions
 		phase: 'start'
 	})
 	mut entry_count := 0
@@ -283,8 +351,14 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 	mut total_commit_ms := i64(0)
 	mut total_checkpoint_ms := i64(0)
 	mut total_flush_ms := i64(0)
+	mut batch_imported := 0
+	mut last_completed_path := existing_resume.last_completed_path
+	mut last_completed_session_id := existing_resume.last_completed_session_id
+	mut waiting_for_resume_anchor := resume_anchor_present
+	mut stopped_after_batch := false
 	use_split_group_commit := cfg.enable_split_backed_working_set && existing_ingest.len > 0
 	mut seeded := store_branch_exists(mut db)
+	mut active_group_commit := false
 	mut session := storage.GroupCommitSession{}
 	mut split_session := storage.SplitGroupCommitSession{}
 	mut ingest_rows := map[string]storage.TypedRowData{}
@@ -296,8 +370,29 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 			session = db.begin_group_commit_session(storage.SessionOptions.for_branch(store_branch),
 				storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
 		}
+		active_group_commit = true
 	}
 	for path in paths {
+		if waiting_for_resume_anchor {
+			skipped++
+			processed++
+			reached_anchor := path == existing_resume.last_completed_path
+			reporter(SyncProgress{
+				total_sessions: paths.len
+				processed_sessions: processed
+				imported_sessions: imported
+				imported_entries: entry_count
+				skipped_sessions: skipped
+				checkpoint_count: checkpoint_count
+				batch_sessions: batch_sessions
+				session_id: if reached_anchor { existing_resume.last_completed_session_id } else { '' }
+				phase: 'resume_skip'
+			})
+			if reached_anchor {
+				waiting_for_resume_anchor = false
+			}
+			continue
+		}
 		fingerprint := current_source_fingerprint(path)
 		mut summary := SessionSummary{}
 		mut needs_import := true
@@ -315,6 +410,8 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 					imported_sessions: imported
 					imported_entries: entry_count
 					skipped_sessions: skipped
+					checkpoint_count: checkpoint_count
+					batch_sessions: batch_sessions
 					session_id: candidate.id
 					session_title: candidate.title
 					phase: 'skip'
@@ -361,6 +458,8 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 				imported_sessions: imported
 				imported_entries: entry_count
 				skipped_sessions: skipped
+				checkpoint_count: checkpoint_count
+				batch_sessions: batch_sessions
 				session_id: summary.id
 				session_title: summary.title
 				phase: 'skip'
@@ -374,6 +473,9 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 		summary = transcript.summary
 		if !seeded {
 			seed_store_branch(mut db, summary)!
+			seeded = true
+		}
+		if !active_group_commit {
 			if use_split_group_commit {
 				split_session = db.begin_split_group_commit_session(storage.SessionOptions.for_branch(store_branch),
 					storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512), cfg)!
@@ -381,7 +483,7 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 				session = db.begin_group_commit_session(storage.SessionOptions.for_branch(store_branch),
 					storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
 			}
-			seeded = true
+			active_group_commit = true
 		}
 		reporter(SyncProgress{
 			total_sessions: paths.len
@@ -762,6 +864,8 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 			imported_sessions: imported
 			imported_entries: entry_count
 			skipped_sessions: skipped
+			checkpoint_count: checkpoint_count
+			batch_sessions: batch_sessions
 			session_id: summary.id
 			session_title: summary.title
 			phase: 'profile'
@@ -807,35 +911,70 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 			checkpoint_ms: checkpoint_ms
 			flush_ms: flush_ms
 			total_ms: read_ms + build_ms + apply_ms
-		})
-		imported++
-		processed++
+			})
+			imported++
+			processed++
+			batch_imported++
+			last_completed_path = path
+			last_completed_session_id = summary.id
+			if batch_sessions > 0 && batch_imported >= batch_sessions {
+				flush_sync_batch(mut db, mut session, mut split_session, use_split_group_commit, ingest_rows, cfg)!
+				ingest_rows = map[string]storage.TypedRowData{}
+				batch_imported = 0
+				active_group_commit = false
+				checkpoint_count++
+				write_sync_resume_state(mut db, SyncResumeState{
+					name: 'codex_sync'
+					last_completed_path: last_completed_path
+					last_completed_session_id: last_completed_session_id
+					completed_batches: existing_resume.completed_batches + checkpoint_count
+					completed_sessions: existing_resume.completed_sessions + imported
+				})!
+				reporter(SyncProgress{
+					total_sessions: paths.len
+					processed_sessions: processed
+					imported_sessions: imported
+					imported_entries: entry_count
+					skipped_sessions: skipped
+					checkpoint_count: checkpoint_count
+					batch_sessions: batch_sessions
+					phase: 'checkpoint'
+					checkpoint_ms: total_checkpoint_ms
+				})
+				stopped_after_batch = true
+				break
+			}
 	}
 	mut finish_sw := time.new_stopwatch()
-	if seeded {
-		if ingest_rows.len > 0 {
-			if use_split_group_commit {
-				_ = split_session.put_rows(mut db, 'ingest_state', ingest_rows, cfg,
-					sync_meta('sync ingest state'))!
-			} else {
-				_ = session.put_rows(mut db, 'ingest_state', ingest_rows, cfg,
-					sync_meta('sync ingest state'))!
+	if seeded && active_group_commit {
+		if ingest_rows.len > 0 || batch_imported > 0 || imported == 0 {
+			flush_sync_batch(mut db, mut session, mut split_session, use_split_group_commit, ingest_rows, cfg)!
+			checkpoint_count++
+			if imported > 0 {
+				write_sync_resume_state(mut db, SyncResumeState{
+					name: 'codex_sync'
+					last_completed_path: last_completed_path
+					last_completed_session_id: last_completed_session_id
+					completed_batches: existing_resume.completed_batches + checkpoint_count
+					completed_sessions: existing_resume.completed_sessions + imported
+				})!
 			}
 		}
-		if use_split_group_commit {
-			split_session.finish(mut db)!
-		} else {
-			session.finish(mut db)!
-		}
 	}
-	db.checkpoint()!
+	if !stopped_after_batch {
+		clear_sync_resume_state(mut db, 'codex_sync')!
+		last_completed_path = ''
+		last_completed_session_id = ''
+	}
 	finish_ms := finish_sw.elapsed().milliseconds()
 	reporter(SyncProgress{
 		total_sessions: paths.len
-		processed_sessions: paths.len
+		processed_sessions: processed
 		imported_sessions: imported
 		imported_entries: entry_count
 		skipped_sessions: skipped
+		checkpoint_count: checkpoint_count
+		batch_sessions: batch_sessions
 		phase: 'done'
 		read_ms: total_read_ms
 		build_ms: total_build_ms
@@ -885,6 +1024,11 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 		sessions: imported
 		entries: entry_count
 		skipped: skipped
+		processed_sessions: processed
+		total_sessions: paths.len
+		paused_for_resume: stopped_after_batch
+		resume_session_id: if stopped_after_batch { last_completed_session_id } else { '' }
+		resume_path: if stopped_after_batch { last_completed_path } else { '' }
 		read_ms: total_read_ms
 		build_ms: total_build_ms
 		apply_ms: total_apply_ms
@@ -929,6 +1073,23 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 		finish_ms: finish_ms
 		total_ms: total_sw.elapsed().milliseconds()
 	}
+}
+
+fn flush_sync_batch(mut db storage.PersistentDatabase, mut session storage.GroupCommitSession, mut split_session storage.SplitGroupCommitSession, use_split_group_commit bool, ingest_rows map[string]storage.TypedRowData, cfg storage.ChunkConfig) ! {
+	if use_split_group_commit {
+		if ingest_rows.len > 0 {
+			_ = split_session.put_rows(mut db, 'ingest_state', ingest_rows, cfg,
+				sync_meta('sync ingest state'))!
+		}
+		split_session.finish(mut db)!
+	} else {
+		if ingest_rows.len > 0 {
+			_ = session.put_rows(mut db, 'ingest_state', ingest_rows, cfg,
+				sync_meta('sync ingest state'))!
+		}
+		session.finish(mut db)!
+	}
+	db.checkpoint()!
 }
 
 fn no_sync_progress(_ SyncProgress) {}
@@ -1174,16 +1335,16 @@ fn explain_search_path(spec storage.TypedTableSpec, request SearchRequest) Query
 		}
 	}
 	mut indexes := []string{}
-	for index_name in ['entries_fts_heading_idx', 'entries_fts_any_idx'] {
+	for index_name in agentview_general_fts_indexes {
 		if table_has_index(spec, index_name) {
 			indexes << index_name
 		}
 	}
 	if indexes.len > 0 {
 		return QueryPathExplain{
-			strategy: 'fts_index_prefix'
+			strategy: 'general_fts_prefix'
 			index_name: indexes.join(',')
-			notes: ['search uses FTS indexes only; if no indexed hits are found it returns no results']
+			notes: ['search uses general PollyDB FTS indexes backed by SQLite FTS5; if no indexed hits are found it returns no results']
 		}
 	}
 	return QueryPathExplain{
@@ -1374,40 +1535,54 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 	mut used_fts := false
 	mut fts_lookup_ms := i64(0)
 	mut filter_rank_ms := i64(0)
-	for term in terms {
-		for index_name in ['entries_fts_heading_idx', 'entries_fts_any_idx'] {
-			if !table_has_index(entries_spec, index_name) {
+	mut fts_pages := []storage.QueryCursorPage{}
+	for index_name in agentview_general_fts_indexes {
+		if !table_has_index(entries_spec, index_name) {
+			continue
+		}
+		used_fts = true
+		mut lookup_sw := time.new_stopwatch()
+		page := session.query_page(mut db, storage.QueryRequest{
+			table_name: 'entries'
+			general_fts: storage.QueryGeneralFtsClause{
+				index_name: index_name
+				kind:       if terms.len > 1 { storage.FtsQueryKind.all } else { storage.FtsQueryKind.prefix }
+				terms:      if terms.len > 1 { terms.clone() } else { [terms[0]] }
+			}
+			select_columns: [
+				'id',
+				'session_id',
+				'session_title',
+				'seq',
+				'role',
+				'kind',
+				'tool_name',
+				'title',
+				'timestamp',
+				'content_text',
+			]
+			limit: search_candidate_fetch_limit(request)
+		})!
+		fts_lookup_ms += lookup_sw.elapsed().milliseconds()
+		fts_pages << page
+		if terms.len > 1 {
+			break
+		}
+	}
+	for page in fts_pages {
+		for idx, row in page.rows {
+			entry_id := must_string(row, 'id')!
+			if seen[entry_id] {
 				continue
 			}
-			used_fts = true
-			mut lookup_sw := time.new_stopwatch()
-			rows := session.lookup_index_prefix_projected(mut db, 'entries', index_name, term,
-				if request.limit > 0 { max_int((request.offset + request.limit) * 6, 120) } else { 120 }, [
-					'id',
-					'session_id',
-					'session_title',
-					'seq',
-					'role',
-					'kind',
-					'tool_name',
-					'title',
-					'timestamp',
-					'content_text',
-				])!
-			fts_lookup_ms += lookup_sw.elapsed().milliseconds()
-			for row in rows {
-				entry_id := must_string(row, 'id')!
-				if seen[entry_id] {
-					continue
-				}
-				seen[entry_id] = true
-				candidate_rows << row
-				session_id := entry_session_id(row)!
-				if !seen_session_ids[session_id] {
-					seen_session_ids[session_id] = true
-					candidate_session_ids << session_id
-				}
+			seen[entry_id] = true
+			candidate_rows << row
+			session_id := entry_session_id(row)!
+			if !seen_session_ids[session_id] {
+				seen_session_ids[session_id] = true
+				candidate_session_ids << session_id
 			}
+			_ = idx
 		}
 	}
 	mut session_summaries := map[string]SessionSummary{}
@@ -1422,16 +1597,29 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 		}
 	}
 	if candidate_rows.len > 0 {
+		mut general_fts_by_entry_id := map[string]storage.GeneralFtsHit{}
+		for page in fts_pages {
+			for idx, row in page.rows {
+				if idx >= page.general_fts_hits.len {
+					continue
+				}
+				entry_id := must_string(row, 'id') or { continue }
+				if entry_id !in general_fts_by_entry_id {
+					general_fts_by_entry_id[entry_id] = page.general_fts_hits[idx]
+				}
+			}
+		}
 		mut rank_sw := time.new_stopwatch()
 		for row in candidate_rows {
 			summary := session_summaries[entry_session_id(row)!] or { SessionSummary{} }
-			entry := decode_session_entry(row)!
-			if !search_request_matches_entry(request, entry, summary, terms) {
+			if !search_request_matches_row_metadata(request, row, summary) {
 				continue
 			}
+			entry_id := must_string(row, 'id')!
+			fts_hit := general_fts_by_entry_id[entry_id] or { storage.GeneralFtsHit{} }
 			ranked << RankedSearchHit{
-				hit: build_search_hit(row, entry, summary, query)
-				score: score_search_entry(query, terms, entry, summary)
+				hit: build_search_hit_row_with_snippet(row, summary, query, fts_hit.snippet)
+				score: score_search_row_fts(query, terms, row, summary, fts_hit.score)
 			}
 		}
 		filter_rank_ms += rank_sw.elapsed().milliseconds()
@@ -1443,9 +1631,9 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 		return SearchExecution{
 			result: result
 			explain: QueryPathExplain{
-				strategy: 'fts_index_prefix'
-				index_name: if used_fts { 'entries_fts_heading_idx,entries_fts_any_idx' } else { '' }
-				notes: ['search returned indexed hits without table-scan fallback']
+				strategy: 'general_fts_prefix'
+				index_name: if used_fts { agentview_general_fts_indexes.join(',') } else { '' }
+				notes: ['search returned indexed hits from the general PollyDB FTS path without table-scan fallback']
 			}
 			open_ms: open_timings.total_ms
 			open_backends_ms: open_timings.backends_ms
@@ -1624,8 +1812,8 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 		explain: if used_fts {
 			QueryPathExplain{
 				strategy: 'fts_no_hits'
-				index_name: 'entries_fts_heading_idx,entries_fts_any_idx'
-				notes: ['FTS indexes were queried but returned no usable hits']
+				index_name: agentview_general_fts_indexes.join(',')
+				notes: ['general FTS indexes were queried but returned no usable hits']
 			}
 		} else {
 			QueryPathExplain{
@@ -1648,6 +1836,15 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 		filter_rank_ms: filter_rank_ms
 		total_ms: total_sw.elapsed().milliseconds()
 	}
+}
+
+fn search_candidate_fetch_limit(request SearchRequest) int {
+	base := if request.limit > 0 {
+		max_int((request.offset + request.limit) * 3, 24)
+	} else {
+		24
+	}
+	return min_int(base, 48)
 }
 
 fn collect_session_local_search_hits(mut db storage.PersistentDatabase, session storage.DatabaseSession, request SearchRequest, query string, terms []string) ![]RankedSearchHit {
@@ -1787,6 +1984,14 @@ struct SearchState {
 	source_size_bytes i64
 }
 
+struct SyncResumeState {
+	name                      string
+	last_completed_path       string
+	last_completed_session_id string
+	completed_batches         int
+	completed_sessions        int
+}
+
 struct EntryIngestState {
 	id         string
 	session_id string
@@ -1856,6 +2061,17 @@ fn search_meta_state_spec() !storage.TypedTableSpec {
 	return storage.TypedTableSpec.new(table, []storage.SchemaIndexDef{})!
 }
 
+fn sync_resume_state_spec() !storage.TypedTableSpec {
+	table := storage.TableDef.new('sync_resume_state', [
+		storage.ColumnDef.new('name', .string_, false)!,
+		storage.ColumnDef.new('last_completed_path', .string_, false)!,
+		storage.ColumnDef.new('last_completed_session_id', .string_, false)!,
+		storage.ColumnDef.new('completed_batches', .i64_, false)!,
+		storage.ColumnDef.new('completed_sessions', .i64_, false)!,
+	], ['name'])!
+	return storage.TypedTableSpec.new(table, []storage.SchemaIndexDef{})!
+}
+
 fn entry_ingest_state_spec() !storage.TypedTableSpec {
 	table := storage.TableDef.new('entry_ingest_state', [
 		storage.ColumnDef.new('id', .string_, false)!,
@@ -1901,9 +2117,11 @@ fn entries_spec(include_search_indexes bool) !storage.TypedTableSpec {
 		storage.SchemaIndexDef.new('entries_timestamp_idx', 'timestamp')!,
 	]
 	if include_search_indexes {
-		indexes << storage.SchemaIndexDef.markdown_value('entries_fts_any_idx', 'content_md', 'fts')!
-		indexes << storage.SchemaIndexDef.markdown_value('entries_fts_heading_idx', 'content_md',
-			'fts:heading')!
+		indexes << storage.SchemaIndexDef.fts_with_options('entries_content_text_fts_idx', 'content_text',
+			storage.FtsIndexOptions{
+			tokenizer:      'unicode61 remove_diacritics 2'
+			prefix_lengths: [2, 3, 4]
+		})!
 	}
 	return storage.TypedTableSpec.new(table, indexes)!
 }
@@ -2225,6 +2443,54 @@ fn write_search_meta_value(mut db storage.PersistentDatabase, name string, value
 		storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
 	_ = session.put_row(mut db, 'search_meta_state', name.bytes(), build_search_meta_state_row(name, value),
 		storage.ChunkConfig.default(), sync_meta('sync search meta ${name}'))!
+	session.finish(mut db)!
+}
+
+fn build_sync_resume_state_row(state SyncResumeState) storage.TypedRowData {
+	mut row := storage.TypedRowData.new()
+	row.set('name', state.name)
+	row.set('last_completed_path', state.last_completed_path)
+	row.set('last_completed_session_id', state.last_completed_session_id)
+	row.set('completed_batches', i64(state.completed_batches))
+	row.set('completed_sessions', i64(state.completed_sessions))
+	return row
+}
+
+fn decode_sync_resume_state(row storage.TypedSchemaRow) !SyncResumeState {
+	return SyncResumeState{
+		name: must_string(row, 'name')!
+		last_completed_path: must_string(row, 'last_completed_path')!
+		last_completed_session_id: must_string(row, 'last_completed_session_id')!
+		completed_batches: int(must_i64(row, 'completed_batches')!)
+		completed_sessions: int(must_i64(row, 'completed_sessions')!)
+	}
+}
+
+fn load_sync_resume_state(mut db storage.PersistentDatabase, name string) !SyncResumeState {
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	row := session.get_row(mut db, 'sync_resume_state', name.bytes()) or { return SyncResumeState{} }
+	return decode_sync_resume_state(row)!
+}
+
+fn write_sync_resume_state(mut db storage.PersistentDatabase, state SyncResumeState) ! {
+	if state.name.len == 0 {
+		return
+	}
+	mut session := db.begin_group_commit_session(storage.SessionOptions.for_branch(store_branch),
+		storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
+	_ = session.put_row(mut db, 'sync_resume_state', state.name.bytes(), build_sync_resume_state_row(state),
+		storage.ChunkConfig.default(), sync_meta('sync resume state ${state.name}'))!
+	session.finish(mut db)!
+}
+
+fn clear_sync_resume_state(mut db storage.PersistentDatabase, name string) ! {
+	if name.len == 0 {
+		return
+	}
+	mut session := db.begin_group_commit_session(storage.SessionOptions.for_branch(store_branch),
+		storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
+	_ = session.delete_row(mut db, 'sync_resume_state', name.bytes(), storage.ChunkConfig.default(),
+		sync_meta('clear resume state ${name}'))!
 	session.finish(mut db)!
 }
 
@@ -2574,6 +2840,32 @@ fn normalized_search_terms(query string) []string {
 }
 
 fn search_request_matches_entry(request SearchRequest, entry SessionEntry, summary SessionSummary, terms []string) bool {
+	if !search_request_matches_entry_metadata(request, entry, summary) {
+		return false
+	}
+	haystack := search_haystack(entry, summary)
+	for term in terms {
+		if !haystack.contains(term) {
+			return false
+		}
+	}
+	return true
+}
+
+fn search_request_matches_row_metadata(request SearchRequest, row storage.TypedSchemaRow, summary SessionSummary) bool {
+	if request.session_id.len > 0 && summary.id != request.session_id {
+		return false
+	}
+	if request.cwd_prefix.len > 0 && !summary.cwd.starts_with(request.cwd_prefix) {
+		return false
+	}
+	if request.source.len > 0 && summary.source.to_lower() != request.source.to_lower() {
+		return false
+	}
+	return entry_kind_matches_filter(search_hit_entry_kind(row), request.kind)
+}
+
+fn search_request_matches_entry_metadata(request SearchRequest, entry SessionEntry, summary SessionSummary) bool {
 	if request.session_id.len > 0 && summary.id != request.session_id {
 		return false
 	}
@@ -2585,12 +2877,6 @@ fn search_request_matches_entry(request SearchRequest, entry SessionEntry, summa
 	}
 	if !entry_kind_matches_filter(entry.kind, request.kind) {
 		return false
-	}
-	haystack := search_haystack(entry, summary)
-	for term in terms {
-		if !haystack.contains(term) {
-			return false
-		}
 	}
 	return true
 }
@@ -2615,6 +2901,25 @@ fn entry_kind_matches_filter(kind EntryKind, filter string) bool {
 }
 
 fn build_search_hit(row storage.TypedSchemaRow, entry SessionEntry, summary SessionSummary, query string) SearchHit {
+	return build_search_hit_with_snippet(row, entry, summary, query, '')
+}
+
+fn build_search_hit_row_with_snippet(row storage.TypedSchemaRow, summary SessionSummary, query string, snippet string) SearchHit {
+	return SearchHit{
+		session_id: entry_session_id(row) or { summary.id }
+		session_title: entry_session_title(row) or { summary.title }
+		session_cwd: summary.cwd
+		session_source: summary.source
+		path: summary.path
+		entry_seq: search_hit_entry_seq(row)
+		kind: search_hit_entry_kind(row)
+		role: opt_string(row, 'role')
+		timestamp: opt_string(row, 'timestamp')
+		snippet: if snippet.len > 0 { snippet } else { compact_snippet(search_hit_text(row, summary), query, 160) }
+	}
+}
+
+fn build_search_hit_with_snippet(row storage.TypedSchemaRow, entry SessionEntry, summary SessionSummary, query string, snippet string) SearchHit {
 	haystack := if entry.text.len > 0 {
 		entry.text
 	} else {
@@ -2630,7 +2935,7 @@ fn build_search_hit(row storage.TypedSchemaRow, entry SessionEntry, summary Sess
 		kind: entry.kind
 		role: entry.role
 		timestamp: entry.timestamp
-		snippet: compact_snippet(haystack, query, 160)
+		snippet: if snippet.len > 0 { snippet } else { compact_snippet(haystack, query, 160) }
 	}
 }
 
@@ -2648,6 +2953,22 @@ fn build_session_metadata_search_hit(summary SessionSummary, query string) Searc
 		timestamp: summary.updated_at
 		snippet: compact_snippet(haystack, query, 160)
 	}
+}
+
+fn search_hit_entry_seq(row storage.TypedSchemaRow) int {
+	return int(must_i64(row, 'seq') or { 0 })
+}
+
+fn search_hit_entry_kind(row storage.TypedSchemaRow) EntryKind {
+	return parse_entry_kind(opt_string(row, 'kind'))
+}
+
+fn search_hit_text(row storage.TypedSchemaRow, summary SessionSummary) string {
+	content_text := opt_string(row, 'content_text')
+	if content_text.len > 0 {
+		return content_text
+	}
+	return '${opt_string(row, 'title')}\n${opt_string(row, 'tool_name')}\n${summary.title}'
 }
 
 fn score_search_entry(query string, terms []string, entry SessionEntry, summary SessionSummary) int {
@@ -2689,6 +3010,60 @@ fn score_search_entry(query string, terms []string, entry SessionEntry, summary 
 		.tool_call { 4 }
 		.tool_result { 4 }
 		.meta { 2 }
+	}
+	return score
+}
+
+fn score_search_row_fts(query string, terms []string, row storage.TypedSchemaRow, summary SessionSummary, fts_score f64) int {
+	mut score := 0
+	title := opt_string(row, 'title').to_lower()
+	tool_name := opt_string(row, 'tool_name').to_lower()
+	text := opt_string(row, 'content_text').to_lower()
+	session_title := summary.title.to_lower()
+	query_lower := query.to_lower()
+	if title.contains(query_lower) {
+		score += 90
+	}
+	if tool_name.contains(query_lower) {
+		score += 80
+	}
+	if session_title.contains(query_lower) {
+		score += 70
+	}
+	if text.contains(query_lower) {
+		score += 50
+	}
+	for term in terms {
+		if title.contains(term) {
+			score += 24
+		}
+		if tool_name.contains(term) {
+			score += 22
+		}
+		if session_title.contains(term) {
+			score += 18
+		}
+		if text.contains(term) {
+			score += 10
+		}
+	}
+	score += match search_hit_entry_kind(row) {
+		.message { 8 }
+		.reasoning { 6 }
+		.tool_call { 4 }
+		.tool_result { 4 }
+		.meta { 2 }
+	}
+	if fts_score < 0 {
+		score += int((-fts_score) * 1000.0)
+	}
+	return score
+}
+
+fn score_search_entry_fts(query string, terms []string, entry SessionEntry, summary SessionSummary, fts_score f64) int {
+	mut score := score_search_entry(query, terms, entry, summary)
+	if fts_score < 0 {
+		score += int((-fts_score) * 1000.0)
 	}
 	return score
 }

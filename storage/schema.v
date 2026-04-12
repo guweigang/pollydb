@@ -36,6 +36,19 @@ pub:
 	stores_row  bool
 }
 
+pub enum FtsTextMode {
+	plain_text
+	visible_text
+	visible_text_with_code
+	raw_markdown
+}
+
+pub struct FtsIndexOptions {
+pub:
+	tokenizer      string = 'unicode61'
+	prefix_lengths []int
+}
+
 pub struct SchemaView {
 pub:
 	table TableView
@@ -44,12 +57,16 @@ pub:
 
 pub struct SchemaIndexDef {
 pub:
-	name       string
-	column     string
-	json_field string
-	markdown_selector string
-	json_field_type ColumnType
-	stores_row bool
+	name               string
+	column             string
+	json_field         string
+	markdown_selector  string
+	fts_source_plugin  string
+	fts_text_mode      string
+	fts_tokenizer      string
+	fts_prefix_lengths []int
+	json_field_type    ColumnType
+	stores_row         bool
 }
 
 pub struct IndexedSchemaView {
@@ -82,16 +99,12 @@ pub fn (mut row RowData) set(name string, value []u8) {
 }
 
 pub fn (row RowData) get(name string) ![]u8 {
-	value := row.values[name] or {
-		return error('row field not found: ${name}')
-	}
+	value := row.values[name] or { return error('row field not found: ${name}') }
 	return value.clone()
 }
 
 pub fn (row RowData) has(name string) bool {
-	_ := row.values[name] or {
-		return false
-	}
+	_ := row.values[name] or { return false }
 	return true
 }
 
@@ -209,17 +222,17 @@ pub fn SchemaView.new(table TableView, codec RowCodec) SchemaView {
 
 pub fn SchemaMutation.put(primary_key []u8, row RowData) SchemaMutation {
 	return SchemaMutation{
-		op: .put
+		op:          .put
 		primary_key: primary_key.clone()
-		row: row.clone()
+		row:         row.clone()
 	}
 }
 
 pub fn SchemaMutation.delete(primary_key []u8) SchemaMutation {
 	return SchemaMutation{
-		op: .delete
+		op:          .delete
 		primary_key: primary_key.clone()
-		row: RowData.new()
+		row:         RowData.new()
 	}
 }
 
@@ -236,7 +249,7 @@ pub fn (view SchemaView) get(primary_key []u8) !SchemaRow {
 	row := view.table.get(primary_key)!
 	return SchemaRow{
 		primary_key: row.primary_key
-		data: view.codec.decode(row.value)!
+		data:        view.codec.decode(row.value)!
 	}
 }
 
@@ -244,13 +257,13 @@ pub fn (view SchemaView) lower_bound(primary_key []u8) !SchemaRow {
 	row := view.table.lower_bound(primary_key)!
 	return SchemaRow{
 		primary_key: row.primary_key
-		data: view.codec.decode(row.value)!
+		data:        view.codec.decode(row.value)!
 	}
 }
 
 pub fn (view SchemaView) cursor(start_primary_key []u8, limit int) !SchemaCursor {
 	return SchemaCursor{
-		view: view
+		view:   view
 		cursor: view.table.cursor(start_primary_key, limit)!
 	}
 }
@@ -268,7 +281,7 @@ pub fn (cursor SchemaCursor) current() !SchemaRow {
 	row := cursor.cursor.current()!
 	return SchemaRow{
 		primary_key: row.primary_key
-		data: cursor.view.codec.decode(row.value)!
+		data:        cursor.view.codec.decode(row.value)!
 	}
 }
 
@@ -276,7 +289,7 @@ pub fn (mut cursor SchemaCursor) peek() !SchemaRow {
 	row := cursor.cursor.peek()!
 	return SchemaRow{
 		primary_key: row.primary_key
-		data: cursor.view.codec.decode(row.value)!
+		data:        cursor.view.codec.decode(row.value)!
 	}
 }
 
@@ -284,7 +297,7 @@ pub fn (mut cursor SchemaCursor) next() !SchemaRow {
 	row := cursor.cursor.next()!
 	return SchemaRow{
 		primary_key: row.primary_key
-		data: cursor.view.codec.decode(row.value)!
+		data:        cursor.view.codec.decode(row.value)!
 	}
 }
 
@@ -298,7 +311,7 @@ pub fn (mut cursor SchemaCursor) collect(count int) ![]SchemaRow {
 	for row in rows {
 		decoded << SchemaRow{
 			primary_key: row.primary_key
-			data: cursor.view.codec.decode(row.value)!
+			data:        cursor.view.codec.decode(row.value)!
 		}
 	}
 	return decoded
@@ -312,12 +325,16 @@ pub fn SchemaIndexDef.new(name string, column string) !SchemaIndexDef {
 		return error('schema index column cannot be empty')
 	}
 	return SchemaIndexDef{
-		name: name
-		column: column
-		json_field: ''
-		markdown_selector: ''
-		json_field_type: .string_
-		stores_row: false
+		name:               name
+		column:             column
+		json_field:         ''
+		markdown_selector:  ''
+		fts_source_plugin:  ''
+		fts_text_mode:      ''
+		fts_tokenizer:      ''
+		fts_prefix_lengths: []int{}
+		json_field_type:    .string_
+		stores_row:         false
 	}
 }
 
@@ -329,12 +346,16 @@ pub fn SchemaIndexDef.covering(name string, column string) !SchemaIndexDef {
 		return error('schema index column cannot be empty')
 	}
 	return SchemaIndexDef{
-		name: name
-		column: column
-		json_field: ''
-		markdown_selector: ''
-		json_field_type: .string_
-		stores_row: true
+		name:               name
+		column:             column
+		json_field:         ''
+		markdown_selector:  ''
+		fts_source_plugin:  ''
+		fts_text_mode:      ''
+		fts_tokenizer:      ''
+		fts_prefix_lengths: []int{}
+		json_field_type:    .string_
+		stores_row:         true
 	}
 }
 
@@ -353,12 +374,16 @@ pub fn SchemaIndexDef.json_path(name string, column string, json_field string, j
 		else { return error('schema index json field type must be bool, i64, or string') }
 	}
 	return SchemaIndexDef{
-		name: name
-		column: column
-		json_field: json_field
-		markdown_selector: ''
-		json_field_type: json_field_type
-		stores_row: false
+		name:               name
+		column:             column
+		json_field:         json_field
+		markdown_selector:  ''
+		fts_source_plugin:  ''
+		fts_text_mode:      ''
+		fts_tokenizer:      ''
+		fts_prefix_lengths: []int{}
+		json_field_type:    json_field_type
+		stores_row:         false
 	}
 }
 
@@ -377,12 +402,16 @@ pub fn SchemaIndexDef.json_path_covering(name string, column string, json_field 
 		else { return error('schema index json field type must be bool, i64, or string') }
 	}
 	return SchemaIndexDef{
-		name: name
-		column: column
-		json_field: json_field
-		markdown_selector: ''
-		json_field_type: json_field_type
-		stores_row: true
+		name:               name
+		column:             column
+		json_field:         json_field
+		markdown_selector:  ''
+		fts_source_plugin:  ''
+		fts_text_mode:      ''
+		fts_tokenizer:      ''
+		fts_prefix_lengths: []int{}
+		json_field_type:    json_field_type
+		stores_row:         true
 	}
 }
 
@@ -395,12 +424,16 @@ pub fn SchemaIndexDef.markdown_metric(name string, column string, selector strin
 	}
 	validate_markdown_index_selector(selector, .i64_)!
 	return SchemaIndexDef{
-		name: name
-		column: column
-		json_field: ''
-		markdown_selector: selector
-		json_field_type: .i64_
-		stores_row: false
+		name:               name
+		column:             column
+		json_field:         ''
+		markdown_selector:  selector
+		fts_source_plugin:  ''
+		fts_text_mode:      ''
+		fts_tokenizer:      ''
+		fts_prefix_lengths: []int{}
+		json_field_type:    .i64_
+		stores_row:         false
 	}
 }
 
@@ -413,12 +446,16 @@ pub fn SchemaIndexDef.markdown_metric_covering(name string, column string, selec
 	}
 	validate_markdown_index_selector(selector, .i64_)!
 	return SchemaIndexDef{
-		name: name
-		column: column
-		json_field: ''
-		markdown_selector: selector
-		json_field_type: .i64_
-		stores_row: true
+		name:               name
+		column:             column
+		json_field:         ''
+		markdown_selector:  selector
+		fts_source_plugin:  ''
+		fts_text_mode:      ''
+		fts_tokenizer:      ''
+		fts_prefix_lengths: []int{}
+		json_field_type:    .i64_
+		stores_row:         true
 	}
 }
 
@@ -431,12 +468,16 @@ pub fn SchemaIndexDef.markdown_value(name string, column string, selector string
 	}
 	validate_markdown_index_selector(selector, .string_)!
 	return SchemaIndexDef{
-		name: name
-		column: column
-		json_field: ''
-		markdown_selector: selector
-		json_field_type: .string_
-		stores_row: false
+		name:               name
+		column:             column
+		json_field:         ''
+		markdown_selector:  selector
+		fts_source_plugin:  ''
+		fts_text_mode:      ''
+		fts_tokenizer:      ''
+		fts_prefix_lengths: []int{}
+		json_field_type:    .string_
+		stores_row:         false
 	}
 }
 
@@ -449,12 +490,82 @@ pub fn SchemaIndexDef.markdown_value_covering(name string, column string, select
 	}
 	validate_markdown_index_selector(selector, .string_)!
 	return SchemaIndexDef{
-		name: name
-		column: column
-		json_field: ''
-		markdown_selector: selector
-		json_field_type: .string_
-		stores_row: true
+		name:               name
+		column:             column
+		json_field:         ''
+		markdown_selector:  selector
+		fts_source_plugin:  ''
+		fts_text_mode:      ''
+		fts_tokenizer:      ''
+		fts_prefix_lengths: []int{}
+		json_field_type:    .string_
+		stores_row:         true
+	}
+}
+
+pub fn SchemaIndexDef.fts(name string, column string) !SchemaIndexDef {
+	return SchemaIndexDef.fts_text(name, column)
+}
+
+pub fn SchemaIndexDef.fts_with_options(name string, column string, options FtsIndexOptions) !SchemaIndexDef {
+	return SchemaIndexDef.fts_text_with_options(name, column, options)
+}
+
+pub fn SchemaIndexDef.fts_text(name string, column string) !SchemaIndexDef {
+	return SchemaIndexDef.fts_text_with_options(name, column, FtsIndexOptions{})
+}
+
+pub fn SchemaIndexDef.fts_text_with_options(name string, column string, options FtsIndexOptions) !SchemaIndexDef {
+	validate_fts_index_options(options)!
+	if name.len == 0 {
+		return error('schema index name cannot be empty')
+	}
+	if column.len == 0 {
+		return error('schema index column cannot be empty')
+	}
+	return SchemaIndexDef{
+		name:               name
+		column:             column
+		json_field:         ''
+		markdown_selector:  ''
+		fts_source_plugin:  ''
+		fts_text_mode:      FtsTextMode.plain_text.str()
+		fts_tokenizer:      normalized_fts_tokenizer(options)
+		fts_prefix_lengths: normalized_fts_prefix_lengths(options.prefix_lengths)
+		json_field_type:    .string_
+		stores_row:         false
+	}
+}
+
+pub fn SchemaIndexDef.fts_markdown(name string, column string, mode FtsTextMode) !SchemaIndexDef {
+	return SchemaIndexDef.fts_markdown_with_options(name, column, mode, FtsIndexOptions{})
+}
+
+pub fn SchemaIndexDef.fts_markdown_with_options(name string, column string, mode FtsTextMode, options FtsIndexOptions) !SchemaIndexDef {
+	validate_fts_index_options(options)!
+	if name.len == 0 {
+		return error('schema index name cannot be empty')
+	}
+	if column.len == 0 {
+		return error('schema index column cannot be empty')
+	}
+	match mode {
+		.visible_text, .visible_text_with_code, .raw_markdown {}
+		.plain_text {
+			return error('markdown fts index requires markdown text mode')
+		}
+	}
+	return SchemaIndexDef{
+		name:               name
+		column:             column
+		json_field:         ''
+		markdown_selector:  ''
+		fts_source_plugin:  'markdown'
+		fts_text_mode:      mode.str()
+		fts_tokenizer:      normalized_fts_tokenizer(options)
+		fts_prefix_lengths: normalized_fts_prefix_lengths(options.prefix_lengths)
+		json_field_type:    .string_
+		stores_row:         false
 	}
 }
 
@@ -500,6 +611,10 @@ pub fn (index SchemaIndexDef) is_markdown_selector() bool {
 	return index.markdown_selector.len > 0
 }
 
+pub fn (index SchemaIndexDef) is_fts() bool {
+	return index.fts_text_mode.len > 0
+}
+
 pub fn (index SchemaIndexDef) is_field_selector() bool {
 	return index.is_markdown_selector()
 }
@@ -526,9 +641,9 @@ pub fn (index SchemaIndexDef) field_selector_ref() ?FieldSelectorRef {
 	}
 	return FieldSelectorRef{
 		plugin_name: plugin_name
-		selector: selector
-		value_type: index.json_field_type
-		stores_row: index.stores_row
+		selector:    selector
+		value_type:  index.json_field_type
+		stores_row:  index.stores_row
 	}
 }
 
@@ -540,13 +655,16 @@ pub fn (index SchemaIndexDef) field_selector_meta() ?FieldSelectorMeta {
 	}
 	return FieldSelectorMeta{
 		plugin_name: plugin_name
-		selector: selector
-		value_type: index.json_field_type
-		stores_row: index.stores_row
+		selector:    selector
+		value_type:  index.json_field_type
+		stores_row:  index.stores_row
 	}
 }
 
 pub fn (index SchemaIndexDef) target_label() string {
+	if index.is_fts() {
+		return '${index.column}#fts'
+	}
 	if index.json_field.len == 0 {
 		selector := index.field_selector()
 		if selector.len == 0 {
@@ -558,6 +676,9 @@ pub fn (index SchemaIndexDef) target_label() string {
 }
 
 pub fn (index SchemaIndexDef) value_column(table TableDef) !ColumnDef {
+	if index.is_fts() {
+		return ColumnDef.new('fts_text', .string_, false)
+	}
 	if index.is_field_selector() {
 		return ColumnDef.new('field_index', index.json_field_type, false)
 	}
@@ -576,20 +697,20 @@ pub fn IndexedSchemaView.new(schema SchemaView, indexes []SchemaIndexDef) !Index
 		if !schema.codec.has_column(index.column) {
 			return error('schema index column not in codec: ${index.column}')
 		}
-		if index.is_json_path() || index.is_field_selector() {
+		if index.is_json_path() || index.is_field_selector() || index.is_fts() {
 			return error('schema json-path indexes are only supported by typed tables')
 		}
 		names[index.name] = true
 	}
 	return IndexedSchemaView{
-		schema: schema
+		schema:  schema
 		indexes: indexes.clone()
 	}
 }
 
 pub fn (view IndexedSchemaView) with_schema(schema SchemaView) IndexedSchemaView {
 	return IndexedSchemaView{
-		schema: schema
+		schema:  schema
 		indexes: view.indexes.clone()
 	}
 }
@@ -636,7 +757,8 @@ pub fn (view IndexedSchemaView) apply_mutations(mutations []SchemaMutation, cfg 
 		had_old := row_exists[key_id]
 		match mutation.op {
 			.put {
-				upsert_item(mut items, view.schema.table.key_for(mutation.primary_key), codec.encode(mutation.row)!)
+				upsert_item(mut items, view.schema.table.key_for(mutation.primary_key),
+					codec.encode(mutation.row)!)
 				for index in view.indexes {
 					mut old_value := []u8{}
 					mut old_has := false
@@ -655,7 +777,8 @@ pub fn (view IndexedSchemaView) apply_mutations(mutations []SchemaMutation, cfg 
 						delete_item(mut items, index_view.key_for(old_value, mutation.primary_key))
 					}
 					if new_has && (!old_has || compare_key_bytes(old_value, new_value) != 0) {
-						upsert_item(mut items, index_view.key_for(new_value, mutation.primary_key), []u8{})
+						upsert_item(mut items, index_view.key_for(new_value, mutation.primary_key),
+							[]u8{})
 					}
 				}
 				row_state[key_id] = mutation.row.clone()
@@ -689,7 +812,8 @@ pub fn (view IndexedSchemaView) apply_mutations(mutations []SchemaMutation, cfg 
 			diff: view.schema.table.tree.diff(view.schema.table.tree)
 		}
 	}
-	next_view := view.with_schema(SchemaView.new(TableView.new(next_tree, table_name), codec))
+	next_view := view.with_schema(SchemaView.new(TableView.new(next_tree, table_name),
+		codec))
 	return IndexedSchemaUpdate{
 		view: next_view
 		diff: view.schema.table.tree.diff(next_tree)
@@ -711,15 +835,11 @@ pub fn (view IndexedSchemaView) find_by_index(name string, index_key []u8, limit
 		if limit > 0 && rows.len >= limit {
 			break
 		}
-		entry := cursor.peek() or {
-			break
-		}
+		entry := cursor.peek() or { break }
 		if compare_key_bytes(entry.index_key, index_key) != 0 {
 			break
 		}
-		matched := cursor.next() or {
-			break
-		}
+		matched := cursor.next() or { break }
 		rows << view.schema.get(matched.primary_key)!
 	}
 	return rows
@@ -730,21 +850,21 @@ fn upsert_item(mut items []KVPair, key []u8, value []u8) {
 		cmp := compare_key_bytes(item.key, key)
 		if cmp == 0 {
 			items[idx] = KVPair{
-				key: key.clone()
+				key:   key.clone()
 				value: value.clone()
 			}
 			return
 		}
 		if cmp > 0 {
 			items.insert(idx, KVPair{
-				key: key.clone()
+				key:   key.clone()
 				value: value.clone()
 			})
 			return
 		}
 	}
 	items << KVPair{
-		key: key.clone()
+		key:   key.clone()
 		value: value.clone()
 	}
 }
@@ -756,4 +876,79 @@ fn delete_item(mut items []KVPair, key []u8) {
 			return
 		}
 	}
+}
+
+pub fn validate_fts_index(column ColumnDef, index SchemaIndexDef) ! {
+	if !index.is_fts() {
+		return
+	}
+	if index.stores_row {
+		return error('fts indexes cannot be covering indexes: ${index.name}')
+	}
+	if index.json_field.len > 0 || index.markdown_selector.len > 0 {
+		return error('fts indexes cannot also be json-path or field-selector indexes: ${index.name}')
+	}
+	if index.fts_tokenizer.trim_space().len == 0 {
+		return error('fts index tokenizer cannot be empty: ${index.name}')
+	}
+	for prefix_len in index.fts_prefix_lengths {
+		if prefix_len <= 0 {
+			return error('fts index prefix lengths must be positive: ${index.name}')
+		}
+	}
+	match column.typ {
+		.string_ {
+			if index.fts_source_plugin.len > 0 {
+				return error('string fts index cannot use field text source plugin: ${index.name}')
+			}
+			if index.fts_text_mode != FtsTextMode.plain_text.str() {
+				return error('string fts index requires plain_text mode: ${index.name}')
+			}
+		}
+		.markdown_ {
+			if index.fts_source_plugin != 'markdown' {
+				return error('markdown fts index requires markdown text source plugin: ${index.name}')
+			}
+			if index.fts_text_mode !in [FtsTextMode.visible_text.str(),
+				FtsTextMode.visible_text_with_code.str(), FtsTextMode.raw_markdown.str()] {
+				return error('markdown fts index requires a markdown text mode: ${index.name}')
+			}
+		}
+		else {
+			return error('fts index requires string or markdown column: ${index.column}')
+		}
+	}
+}
+
+fn validate_fts_index_options(options FtsIndexOptions) ! {
+	if normalized_fts_tokenizer(options).len == 0 {
+		return error('fts index tokenizer cannot be empty')
+	}
+	for prefix_len in options.prefix_lengths {
+		if prefix_len <= 0 {
+			return error('fts index prefix lengths must be positive')
+		}
+	}
+}
+
+fn normalized_fts_tokenizer(options FtsIndexOptions) string {
+	tokenizer := options.tokenizer.trim_space()
+	return if tokenizer.len > 0 { tokenizer } else { 'unicode61' }
+}
+
+fn normalized_fts_prefix_lengths(prefix_lengths []int) []int {
+	if prefix_lengths.len == 0 {
+		return []int{}
+	}
+	mut seen := map[int]bool{}
+	mut out := []int{}
+	for prefix_len in prefix_lengths {
+		if prefix_len <= 0 || seen[prefix_len] {
+			continue
+		}
+		seen[prefix_len] = true
+		out << prefix_len
+	}
+	out.sort()
+	return out
 }

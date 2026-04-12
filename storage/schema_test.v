@@ -30,7 +30,7 @@ fn test_schema_view_put_get_and_collect_decode_rows() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	codec := RowCodec.new(['name', 'email']) or { panic(err) }
 	mut seed := RowData.new()
@@ -39,7 +39,7 @@ fn test_schema_view_put_get_and_collect_decode_rows() {
 
 	base := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -65,14 +65,14 @@ fn test_schema_cursor_seek_peek_and_skip_work() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	codec := RowCodec.new(['name']) or { panic(err) }
 	mut first := RowData.new()
 	first.set('name', 'ada'.bytes())
 	base := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(first) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -99,7 +99,7 @@ fn test_indexed_schema_view_put_builds_secondary_index() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	codec := RowCodec.new(['name', 'email']) or { panic(err) }
 	mut seed := RowData.new()
@@ -107,7 +107,7 @@ fn test_indexed_schema_view_put_builds_secondary_index() {
 	seed.set('email', 'ada@example.com'.bytes())
 	base := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -132,7 +132,7 @@ fn test_indexed_schema_view_updates_stale_index_entries() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	codec := RowCodec.new(['name', 'email']) or { panic(err) }
 	mut seed := RowData.new()
@@ -140,7 +140,7 @@ fn test_indexed_schema_view_updates_stale_index_entries() {
 	seed.set('email', 'ada@example.com'.bytes())
 	base := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -168,7 +168,7 @@ fn test_indexed_schema_view_apply_mutations_batches_table_and_index_updates() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	codec := RowCodec.new(['name', 'email']) or { panic(err) }
 	mut seed := RowData.new()
@@ -176,7 +176,7 @@ fn test_indexed_schema_view_apply_mutations_batches_table_and_index_updates() {
 	seed.set('email', 'ada@example.com'.bytes())
 	base := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -207,7 +207,7 @@ fn test_indexed_schema_view_apply_mutations_coalesces_repeated_primary_key_chang
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	codec := RowCodec.new(['name', 'email']) or { panic(err) }
 	mut seed := RowData.new()
@@ -215,7 +215,7 @@ fn test_indexed_schema_view_apply_mutations_coalesces_repeated_primary_key_chang
 	seed.set('email', 'ada@example.com'.bytes())
 	base := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -238,7 +238,9 @@ fn test_indexed_schema_view_apply_mutations_coalesces_repeated_primary_key_chang
 
 	old_rows := update.view.find_by_index('email', 'ada@example.com'.bytes(), 0) or { panic(err) }
 	mid_rows := update.view.find_by_index('email', 'ada+1@example.com'.bytes(), 0) or { panic(err) }
-	final_rows := update.view.find_by_index('email', 'ada+2@example.com'.bytes(), 0) or { panic(err) }
+	final_rows := update.view.find_by_index('email', 'ada+2@example.com'.bytes(), 0) or {
+		panic(err)
+	}
 
 	assert old_rows.len == 0
 	assert mid_rows.len == 0
@@ -264,9 +266,8 @@ fn test_schema_index_def_exposes_field_selector_metadata() {
 }
 
 fn test_schema_index_def_field_selector_constructor_supports_markdown_plugin() {
-	index := SchemaIndexDef.field_selector('body_links_idx', 'body', 'markdown', 'links', .i64_, false) or {
-		panic(err)
-	}
+	index := SchemaIndexDef.field_selector('body_links_idx', 'body', 'markdown', 'links',
+		.i64_, false) or { panic(err) }
 
 	assert index.is_field_selector()
 	assert index.field_selector_plugin() == 'markdown'
@@ -282,4 +283,58 @@ fn test_schema_index_def_field_selector_constructor_supports_markdown_plugin() {
 	assert !selector_meta.stores_row
 	assert index.json_field_type == .i64_
 	assert !index.stores_row
+}
+
+fn test_schema_index_def_exposes_fts_metadata_for_text_columns() {
+	index := SchemaIndexDef.fts_with_options('content_fts_idx', 'content', FtsIndexOptions{
+		tokenizer:      'unicode61 remove_diacritics 2'
+		prefix_lengths: [3, 2, 3, 4]
+	}) or { panic(err) }
+	table := TableDef.new('docs', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('content', .string_, false)!,
+	], ['id']) or { panic(err) }
+
+	assert index.is_fts()
+	assert !index.is_field_selector()
+	assert index.fts_source_plugin == ''
+	assert index.fts_text_mode == FtsTextMode.plain_text.str()
+	assert index.fts_tokenizer == 'unicode61 remove_diacritics 2'
+	assert index.fts_prefix_lengths == [2, 3, 4]
+	assert index.target_label() == 'content#fts'
+	assert (index.value_column(table) or { panic(err) }).typ == .string_
+	validate_fts_index(table.column('content') or { panic(err) }, index) or { panic(err) }
+}
+
+fn test_schema_index_def_exposes_fts_metadata_for_markdown_columns() {
+	index := SchemaIndexDef.fts_markdown_with_options('body_fts_idx', 'body', .visible_text,
+		FtsIndexOptions{
+		prefix_lengths: [2, 4]
+	}) or { panic(err) }
+	table := TableDef.new('docs', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('body', .markdown_, false)!,
+	], ['id']) or { panic(err) }
+
+	assert index.is_fts()
+	assert index.fts_source_plugin == 'markdown'
+	assert index.fts_text_mode == FtsTextMode.visible_text.str()
+	assert index.fts_tokenizer == 'unicode61'
+	assert index.fts_prefix_lengths == [2, 4]
+	validate_fts_index(table.column('body') or { panic(err) }, index) or { panic(err) }
+}
+
+fn test_validate_fts_index_rejects_markdown_mode_on_plain_text_column() {
+	index := SchemaIndexDef{
+		...SchemaIndexDef.fts_text('content_fts_idx', 'content') or { panic(err) }
+		fts_source_plugin: 'markdown'
+		fts_text_mode:     FtsTextMode.visible_text.str()
+	}
+	column := ColumnDef.new('content', .string_, false) or { panic(err) }
+
+	if _ := validate_fts_index(column, index) {
+		assert false
+	} else {
+		assert err.msg().contains('string fts index')
+	}
 }

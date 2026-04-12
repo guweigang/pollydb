@@ -18,7 +18,27 @@ PollyTree is currently centered on three themes:
 
 - versioned typed storage for application data
 - efficient query execution over large local archives
-- markdown-aware storage without forcing markdown AST to be the primary full-text search path
+- markdown-aware storage with a general FTS index path for large text and markdown fields
+
+## Recommended entry points
+
+If you are orienting to the current PollyDB surface, start here:
+
+- schema and storage API: [docs/storage_api.md](/Users/guweigang/Source/pollytree/docs/storage_api.md)
+- general FTS usage: [docs/general_fts_usage.md](/Users/guweigang/Source/pollytree/docs/general_fts_usage.md)
+- planner/query capability introspection: [docs/query_planner_introspection.md](/Users/guweigang/Source/pollytree/docs/query_planner_introspection.md)
+- CLI-first walkthrough: [docs/tutorial.md](/Users/guweigang/Source/pollytree/docs/tutorial.md)
+
+The current recommended query model is:
+
+- ordinary filters and pagination go through `query_page(...)` / `query-rows`
+- lexical retrieval goes through schema-declared general FTS indexes and `QueryRequest.general_fts`
+- Markdown selectors remain the preferred model for structural questions such as headings, links, and code-language extraction
+
+In short:
+
+- selectors answer structural queries
+- general FTS answers lexical retrieval queries
 
 ## AgentView
 
@@ -35,6 +55,11 @@ agentview sync-codex
 agentview index-search
 agentview browse
 ```
+
+`agentview` is also the first real consumer of PollyDB's general FTS path. Its
+current search stack uses a schema-declared FTS index on `entries.content_text`
+and executes search through the unified PollyDB query path rather than an
+application-specific search projection.
 
 ## Status
 

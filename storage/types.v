@@ -47,12 +47,12 @@ pub:
 
 pub struct ColumnDef {
 pub:
-	name     string
-	typ      ColumnType
-	nullable bool
-	aggregate ColumnAggregate
-	enum_values []string
-	default_current_timestamp bool
+	name                          string
+	typ                           ColumnType
+	nullable                      bool
+	aggregate                     ColumnAggregate
+	enum_values                   []string
+	default_current_timestamp     bool
 	auto_update_current_timestamp bool
 }
 
@@ -96,8 +96,8 @@ pub:
 
 pub struct TypedIndexedSchemaUpdate {
 pub:
-	view TypedIndexedSchemaView
-	diff TreeDiff
+	view    TypedIndexedSchemaView
+	diff    TreeDiff
 	timings TypedIndexedWriteTimings
 }
 
@@ -128,10 +128,10 @@ mut:
 
 pub struct TypedTransactionResult {
 pub:
-	tx              TypedTransaction
-	diff            TreeDiff
-	timings         TypedTransactionStageTimings
-	group_commit    GroupCommitStageTimings
+	tx           TypedTransaction
+	diff         TreeDiff
+	timings      TypedTransactionStageTimings
+	group_commit GroupCommitStageTimings
 }
 
 pub struct TypedSplitTransaction {
@@ -173,9 +173,9 @@ mut:
 }
 
 struct FastWriteOpResult {
-	view         TypedIndexedSchemaView
+	view          TypedIndexedSchemaView
 	remaining_ops []TypedWriteOp
-	timings      FastWriteOpTimings
+	timings       FastWriteOpTimings
 }
 
 struct FastWriteOpTimings {
@@ -193,56 +193,56 @@ mut:
 
 pub struct ReindexStageTimings {
 pub:
-	items_ms        i64
-	remove_ms       i64
-	insert_ms       i64
-	rebuild_ms      i64
-	strategy        string
-	item_count      int
-	changed_tables  int
-	changed_rows    int
-	removed_indexes int
+	items_ms         i64
+	remove_ms        i64
+	insert_ms        i64
+	rebuild_ms       i64
+	strategy         string
+	item_count       int
+	changed_tables   int
+	changed_rows     int
+	removed_indexes  int
 	inserted_indexes int
 }
 
 pub struct TypedTransactionStageTimings {
 pub:
-	aggregate_ms     i64
-	fast_update_ms   i64
-	fast_update_can_ms i64
-	fast_update_path_ms i64
-	fast_update_encode_ms i64
-	fast_update_replace_ms i64
-	fallback_ms      i64
-	fallback_items_ms i64
-	fallback_items_key_ms i64
-	fallback_items_fill_ms i64
-	fallback_ops_ms  i64
-	fallback_ops_key_ms i64
-	fallback_ops_lookup_ms i64
-	fallback_ops_encode_ms i64
-	fallback_ops_state_ms i64
-	fallback_ops_state_new_key_ms i64
-	fallback_ops_state_item_ms i64
-	fallback_ops_state_cache_ms i64
-	fallback_ops_index_ms i64
-	fallback_build_ms i64
-	fallback_build_prepare_ms i64
-	fallback_build_prepare_keys_ms i64
-	fallback_build_prepare_keys_sort_ms i64
-	fallback_build_prepare_keys_merge_ms i64
-	fallback_build_prepare_rows_ms i64
-	fallback_build_prepare_rows_key_ms i64
-	fallback_build_prepare_rows_value_ms i64
-	fallback_build_leaf_ms i64
-	fallback_build_leaf_chunk_ms i64
-	fallback_build_leaf_node_ms i64
+	aggregate_ms                          i64
+	fast_update_ms                        i64
+	fast_update_can_ms                    i64
+	fast_update_path_ms                   i64
+	fast_update_encode_ms                 i64
+	fast_update_replace_ms                i64
+	fallback_ms                           i64
+	fallback_items_ms                     i64
+	fallback_items_key_ms                 i64
+	fallback_items_fill_ms                i64
+	fallback_ops_ms                       i64
+	fallback_ops_key_ms                   i64
+	fallback_ops_lookup_ms                i64
+	fallback_ops_encode_ms                i64
+	fallback_ops_state_ms                 i64
+	fallback_ops_state_new_key_ms         i64
+	fallback_ops_state_item_ms            i64
+	fallback_ops_state_cache_ms           i64
+	fallback_ops_index_ms                 i64
+	fallback_build_ms                     i64
+	fallback_build_prepare_ms             i64
+	fallback_build_prepare_keys_ms        i64
+	fallback_build_prepare_keys_sort_ms   i64
+	fallback_build_prepare_keys_merge_ms  i64
+	fallback_build_prepare_rows_ms        i64
+	fallback_build_prepare_rows_key_ms    i64
+	fallback_build_prepare_rows_value_ms  i64
+	fallback_build_leaf_ms                i64
+	fallback_build_leaf_chunk_ms          i64
+	fallback_build_leaf_node_ms           i64
 	fallback_build_leaf_node_serialize_ms i64
-	fallback_build_leaf_node_cid_ms i64
-	fallback_build_leaf_node_add_ms i64
-	fallback_build_internal_ms i64
-	table_count      int
-	fallback_ops     int
+	fallback_build_leaf_node_cid_ms       i64
+	fallback_build_leaf_node_add_ms       i64
+	fallback_build_internal_ms            i64
+	table_count                           int
+	fallback_ops                          int
 }
 
 pub struct GroupCommitStageTimings {
@@ -256,48 +256,48 @@ pub:
 
 pub struct TypedIndexedWriteTimings {
 pub:
-	items_ms i64
-	items_key_ms i64
-	items_fill_ms i64
-	ops_ms   i64
-	ops_key_ms i64
-	ops_lookup_ms i64
-	ops_encode_ms i64
-	ops_state_ms i64
-	ops_state_new_key_ms i64
-	ops_state_item_ms i64
-	ops_state_cache_ms i64
-	ops_index_ms i64
-	build_ms i64
-	build_prepare_ms i64
-	build_prepare_keys_ms i64
-	build_prepare_keys_sort_ms i64
-	build_prepare_keys_merge_ms i64
-	build_prepare_rows_ms i64
-	build_prepare_rows_key_ms i64
-	build_prepare_rows_value_ms i64
-	build_leaf_ms i64
-	build_leaf_chunk_ms i64
-	build_leaf_node_ms i64
+	items_ms                     i64
+	items_key_ms                 i64
+	items_fill_ms                i64
+	ops_ms                       i64
+	ops_key_ms                   i64
+	ops_lookup_ms                i64
+	ops_encode_ms                i64
+	ops_state_ms                 i64
+	ops_state_new_key_ms         i64
+	ops_state_item_ms            i64
+	ops_state_cache_ms           i64
+	ops_index_ms                 i64
+	build_ms                     i64
+	build_prepare_ms             i64
+	build_prepare_keys_ms        i64
+	build_prepare_keys_sort_ms   i64
+	build_prepare_keys_merge_ms  i64
+	build_prepare_rows_ms        i64
+	build_prepare_rows_key_ms    i64
+	build_prepare_rows_value_ms  i64
+	build_leaf_ms                i64
+	build_leaf_chunk_ms          i64
+	build_leaf_node_ms           i64
 	build_leaf_node_serialize_ms i64
-	build_leaf_node_cid_ms i64
-	build_leaf_node_add_ms i64
-	build_internal_ms i64
+	build_leaf_node_cid_ms       i64
+	build_leaf_node_add_ms       i64
+	build_internal_ms            i64
 }
 
 pub struct MutationSpanPlanStats {
 pub:
-	existing_keys          int
-	changed_keys           int
-	new_keys               int
-	deleted_existing_keys  int
-	touched_existing_keys  int
-	covered_existing_keys  int
-	covered_existing_pct   int
-	spans                  int
-	max_span_keys          int
-	avg_span_keys          int
-	partition_candidate    bool
+	existing_keys         int
+	changed_keys          int
+	new_keys              int
+	deleted_existing_keys int
+	touched_existing_keys int
+	covered_existing_keys int
+	covered_existing_pct  int
+	spans                 int
+	max_span_keys         int
+	avg_span_keys         int
+	partition_candidate   bool
 }
 
 struct TypedRowCacheEntry {
@@ -316,8 +316,8 @@ struct SplitIndexMutationRowState {
 
 struct SplitIndexMutationBatch {
 mut:
-	put_items    map[string][]u8
-	delete_keys  map[string]bool
+	put_items     map[string][]u8
+	delete_keys   map[string]bool
 	key_bytes_map map[string][]u8
 }
 
@@ -357,12 +357,12 @@ pub fn ColumnDef.new_with_options(name string, typ ColumnType, nullable bool, ag
 		return error('current timestamp behaviors require datetime column: ${name}')
 	}
 	return ColumnDef{
-		name: name
-		typ: typ
-		nullable: nullable
-		aggregate: aggregate
-		enum_values: []string{}
-		default_current_timestamp: default_current_timestamp
+		name:                          name
+		typ:                           typ
+		nullable:                      nullable
+		aggregate:                     aggregate
+		enum_values:                   []string{}
+		default_current_timestamp:     default_current_timestamp
 		auto_update_current_timestamp: auto_update_current_timestamp
 	}
 }
@@ -400,10 +400,10 @@ pub fn ColumnDef.enum_string(name string, values []string, nullable bool) !Colum
 		normalized << value
 	}
 	return ColumnDef{
-		name: name
-		typ: .enum_
-		nullable: nullable
-		aggregate: .none
+		name:        name
+		typ:         .enum_
+		nullable:    nullable
+		aggregate:   .none
 		enum_values: normalized
 	}
 }
@@ -431,8 +431,8 @@ pub fn TableDef.new(name string, columns []ColumnDef, primary_key []string) !Tab
 		}
 	}
 	return TableDef{
-		name: name
-		columns: columns.clone()
+		name:        name
+		columns:     columns.clone()
 		primary_key: primary_key.clone()
 	}
 }
@@ -456,9 +456,7 @@ pub fn (def TableDef) column(name string) !ColumnDef {
 }
 
 pub fn (def TableDef) supports_sum_aggregate(name string) bool {
-	column := def.column(name) or {
-		return false
-	}
+	column := def.column(name) or { return false }
 	return column.aggregate == .sum
 }
 
@@ -503,9 +501,7 @@ pub fn (mut row TypedRowData) set_null(name string) {
 }
 
 pub fn (row TypedRowData) get(name string) !ColumnValue {
-	value := row.values[name] or {
-		return error('typed row field not found: ${name}')
-	}
+	value := row.values[name] or { return error('typed row field not found: ${name}') }
 	return clone_column_value(value)
 }
 
@@ -568,13 +564,13 @@ pub fn (view TypedSchemaView) get(primary_key []u8) !TypedSchemaRow {
 	row := view.table.get(primary_key)!
 	return TypedSchemaRow{
 		primary_key: row.primary_key
-		data: view.codec.decode(row.value)!
+		data:        view.codec.decode(row.value)!
 	}
 }
 
 pub fn TypedIndexedSchemaView.new(schema TypedSchemaView, indexes []SchemaIndexDef) !TypedIndexedSchemaView {
-	return TypedIndexedSchemaView.new_with_split_storage(schema, indexes,
-		typed_indexed_split_storage_for_schema(schema, indexes))
+	return TypedIndexedSchemaView.new_with_split_storage(schema, indexes, typed_indexed_split_storage_for_schema(schema,
+		indexes))
 }
 
 pub fn TypedIndexedSchemaView.new_with_split_storage(schema TypedSchemaView, indexes []SchemaIndexDef, split_storage SplitTableView) !TypedIndexedSchemaView {
@@ -590,6 +586,9 @@ pub fn TypedIndexedSchemaView.new_with_split_storage(schema TypedSchemaView, ind
 			if column.typ != .json_ {
 				return error('typed schema json-path index requires json column: ${index.column}')
 			}
+		} else if index.is_fts() {
+			column := schema.codec.table.column(index.column)!
+			validate_fts_index(column, index)!
 		} else if index.is_field_selector() {
 			column := schema.codec.table.column(index.column)!
 			validate_field_selector_index(column, index)!
@@ -599,8 +598,8 @@ pub fn TypedIndexedSchemaView.new_with_split_storage(schema TypedSchemaView, ind
 		}
 	}
 	return TypedIndexedSchemaView{
-		schema: schema
-		indexes: indexes.clone()
+		schema:        schema
+		indexes:       indexes.clone()
 		split_storage: split_storage
 	}
 }
@@ -668,10 +667,10 @@ pub fn (view TypedIndexedSchemaView) mixed_backed(cfg ChunkConfig) !TypedIndexed
 
 pub fn (view TypedIndexedSchemaView) apply_write_ops_split_rebuild(ops []TypedWriteOp, cfg ChunkConfig) !SplitTableView {
 	base_split := view.materialize_split_storage(cfg)!
-	row_schema := TypedSchemaView.new_with_split_storage(SplitTableView.new(base_split.name, base_split.rows_tree,
-		map[string]Tree{}), view.schema.codec)
-	row_view := TypedIndexedSchemaView.new_with_split_storage(row_schema, []SchemaIndexDef{}, SplitTableView.new(base_split.name,
-		base_split.rows_tree, map[string]Tree{}))!
+	row_schema := TypedSchemaView.new_with_split_storage(SplitTableView.new(base_split.name,
+		base_split.rows_tree, map[string]Tree{}), view.schema.codec)
+	row_view := TypedIndexedSchemaView.new_with_split_storage(row_schema, []SchemaIndexDef{},
+		SplitTableView.new(base_split.name, base_split.rows_tree, map[string]Tree{}))!
 	row_update := row_view.apply_write_ops(ops, cfg)!
 	next_rows_tree := row_update.view.schema.table.tree
 	mut index_trees := map[string]Tree{}
@@ -684,50 +683,52 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops_split_rebuild(ops []TypedWr
 
 pub fn (view TypedIndexedSchemaView) apply_write_ops_split_delta(ops []TypedWriteOp, cfg ChunkConfig) !SplitTableView {
 	base_split := view.materialize_split_storage(cfg)!
-	row_schema := TypedSchemaView.new_with_split_storage(SplitTableView.new(base_split.name, base_split.rows_tree,
-		map[string]Tree{}), view.schema.codec)
-	row_view := TypedIndexedSchemaView.new_with_split_storage(row_schema, []SchemaIndexDef{}, SplitTableView.new(base_split.name,
-		base_split.rows_tree, map[string]Tree{}))!
+	row_schema := TypedSchemaView.new_with_split_storage(SplitTableView.new(base_split.name,
+		base_split.rows_tree, map[string]Tree{}), view.schema.codec)
+	row_view := TypedIndexedSchemaView.new_with_split_storage(row_schema, []SchemaIndexDef{},
+		SplitTableView.new(base_split.name, base_split.rows_tree, map[string]Tree{}))!
 	row_update := row_view.apply_write_ops(ops, cfg)!
 	next_rows_tree := row_update.view.schema.table.tree
-	row_states := build_split_index_mutation_row_states(base_split.rows_view(), view.schema.codec, ops)!
+	row_states := build_split_index_mutation_row_states(base_split.rows_view(), view.schema.codec,
+		ops)!
 	mut index_trees := map[string]Tree{}
 	for index in view.indexes {
-		if index.is_field_selector() {
-			index_trees[index.name] = rebuild_typed_single_index_tree(next_rows_tree, view.schema.codec,
-				view.schema.table.name, index, cfg)!
+		if index.is_field_selector() || index.is_fts() {
+			index_trees[index.name] = rebuild_typed_single_index_tree(next_rows_tree,
+				view.schema.codec, view.schema.table.name, index, cfg)!
 			continue
 		}
 		index_tree := base_split.index_trees[index.name] or { Tree{} }
-		index_trees[index.name] = apply_split_index_mutations(index_tree, view.schema.table.name, view.schema.codec,
-			index, row_states, cfg)!
+		index_trees[index.name] = apply_split_index_mutations(index_tree, view.schema.table.name,
+			view.schema.codec, index, row_states, cfg)!
 	}
 	return SplitTableView.new(view.schema.table.name, next_rows_tree, index_trees)
 }
 
 pub fn (view TypedIndexedSchemaView) apply_write_ops_split_batched(ops []TypedWriteOp, cfg ChunkConfig) !SplitTableView {
 	for index in view.indexes {
-		if index.is_field_selector() {
+		if index.is_field_selector() || index.is_fts() {
 			mixed_view := view.mixed_backed(cfg)!
 			next_mixed := mixed_view.apply_write_ops(ops, cfg)!
 			return next_mixed.view.materialize_split_storage(cfg)!
 		}
 	}
 	base_split := view.materialize_split_storage(cfg)!
-	row_schema := TypedSchemaView.new_with_split_storage(SplitTableView.new(base_split.name, base_split.rows_tree,
-		map[string]Tree{}), view.schema.codec)
-	row_view := TypedIndexedSchemaView.new_with_split_storage(row_schema, []SchemaIndexDef{}, SplitTableView.new(base_split.name,
-		base_split.rows_tree, map[string]Tree{}))!
+	row_schema := TypedSchemaView.new_with_split_storage(SplitTableView.new(base_split.name,
+		base_split.rows_tree, map[string]Tree{}), view.schema.codec)
+	row_view := TypedIndexedSchemaView.new_with_split_storage(row_schema, []SchemaIndexDef{},
+		SplitTableView.new(base_split.name, base_split.rows_tree, map[string]Tree{}))!
 	row_update := row_view.apply_write_ops(ops, cfg)!
 	next_rows_tree := row_update.view.schema.table.tree
-	row_states := build_split_index_mutation_row_states(base_split.rows_view(), view.schema.codec, ops)!
+	row_states := build_split_index_mutation_row_states(base_split.rows_view(), view.schema.codec,
+		ops)!
 	mutation_batches := build_split_index_mutation_batches(view.schema.table.name, view.schema.codec,
 		view.indexes, row_states)!
 	mut index_trees := map[string]Tree{}
 	for index in view.indexes {
-		if index.is_field_selector() {
-			index_trees[index.name] = rebuild_typed_single_index_tree(next_rows_tree, view.schema.codec,
-				view.schema.table.name, index, cfg)!
+		if index.is_field_selector() || index.is_fts() {
+			index_trees[index.name] = rebuild_typed_single_index_tree(next_rows_tree,
+				view.schema.codec, view.schema.table.name, index, cfg)!
 			continue
 		}
 		index_tree := base_split.index_trees[index.name] or { Tree{} }
@@ -744,8 +745,8 @@ fn (view TypedIndexedSchemaView) index_view_by_name(name string) !IndexView {
 
 pub fn (view TypedIndexedSchemaView) with_schema(schema TypedSchemaView) TypedIndexedSchemaView {
 	return TypedIndexedSchemaView{
-		schema: schema
-		indexes: view.indexes.clone()
+		schema:        schema
+		indexes:       view.indexes.clone()
 		split_storage: typed_indexed_split_storage_for_schema(schema, view.indexes)
 	}
 }
@@ -764,13 +765,16 @@ pub fn TypedTableSpec.new(table TableDef, indexes []SchemaIndexDef) !TypedTableS
 			if column.typ != .json_ {
 				return error('typed table spec json-path index requires json column: ${index.column}')
 			}
+		} else if index.is_fts() {
+			column := table.column(index.column)!
+			validate_fts_index(column, index)!
 		} else if index.is_field_selector() {
 			column := table.column(index.column)!
 			validate_field_selector_index(column, index)!
 		}
 	}
 	return TypedTableSpec{
-		table: table
+		table:   table
 		indexes: indexes.clone()
 	}
 }
@@ -807,10 +811,10 @@ pub fn TypedWriteSet.new() TypedWriteSet {
 
 pub fn (mut set TypedWriteSet) put(table_name string, primary_key []u8, row TypedRowData) {
 	set.ops << TypedWriteOp{
-		table_name: table_name
+		table_name:  table_name
 		primary_key: primary_key.clone()
-		row: row.clone()
-		delete: false
+		row:         row.clone()
+		delete:      false
 	}
 }
 
@@ -824,10 +828,10 @@ pub fn (mut set TypedWriteSet) put_many(table_name string, rows map[string]Typed
 
 pub fn (mut set TypedWriteSet) delete(table_name string, primary_key []u8) {
 	set.ops << TypedWriteOp{
-		table_name: table_name
+		table_name:  table_name
 		primary_key: primary_key.clone()
-		row: TypedRowData.new()
-		delete: true
+		row:         TypedRowData.new()
+		delete:      true
 	}
 }
 
@@ -849,7 +853,7 @@ pub fn (set TypedWriteSet) operations() []TypedWriteOp {
 
 pub fn TypedTransaction.new(tree Tree) TypedTransaction {
 	return TypedTransaction{
-		tree: tree
+		tree:  tree
 		specs: map[string]TypedTableSpec{}
 	}
 }
@@ -865,7 +869,7 @@ fn new_typed_transaction_with_specs(tree Tree, specs []TypedTableSpec) !TypedTra
 fn new_typed_split_transaction_with_specs(tree Tree, specs []TypedTableSpec, cfg ChunkConfig) !TypedSplitTransaction {
 	mut tx := TypedSplitTransaction{
 		tables: map[string]SplitTableView{}
-		specs: map[string]TypedTableSpec{}
+		specs:  map[string]TypedTableSpec{}
 	}
 	for spec in specs {
 		tx.register_table(spec, tree, cfg)!
@@ -885,7 +889,8 @@ pub fn (mut tx TypedSplitTransaction) register_table(spec TypedTableSpec, tree T
 		return error('typed split table already registered: ${spec.name()}')
 	}
 	tx.specs[spec.name()] = spec
-	tx.tables[spec.name()] = SplitTableView.materialize_from_mixed_tree(tree, spec.table.name, spec.index_names(), cfg)!
+	tx.tables[spec.name()] = SplitTableView.materialize_from_mixed_tree(tree, spec.table.name,
+		spec.index_names(), cfg)!
 }
 
 pub fn (tx TypedTransaction) current_tree() Tree {
@@ -901,9 +906,7 @@ pub fn (tx TypedTransaction) split_backed(cfg ChunkConfig) !TypedSplitTransactio
 }
 
 pub fn (tx TypedTransaction) indexed_view(name string) !TypedIndexedSchemaView {
-	spec := tx.specs[name] or {
-		return error('typed table not registered: ${name}')
-	}
+	spec := tx.specs[name] or { return error('typed table not registered: ${name}') }
 	split_storage := SplitTableView.from_mixed_tree(tx.tree, spec.table.name, spec.index_names())
 	schema := TypedSchemaView.new_with_split_storage(split_storage, TypedRowCodec.new(spec.table))
 	return TypedIndexedSchemaView.new_with_split_storage(schema, spec.indexes, split_storage)
@@ -914,9 +917,7 @@ pub fn (tx TypedTransaction) indexed_view_split_backed(name string, cfg ChunkCon
 }
 
 pub fn (tx TypedSplitTransaction) indexed_view(name string) !TypedIndexedSchemaView {
-	spec := tx.specs[name] or {
-		return error('typed split table not registered: ${name}')
-	}
+	spec := tx.specs[name] or { return error('typed split table not registered: ${name}') }
 	split_storage := tx.tables[name] or {
 		return error('typed split table storage not found: ${name}')
 	}
@@ -931,7 +932,7 @@ pub fn (tx TypedSplitTransaction) clone() TypedSplitTransaction {
 	}
 	return TypedSplitTransaction{
 		tables: tables
-		specs: tx.specs.clone()
+		specs:  tx.specs.clone()
 	}
 }
 
@@ -958,7 +959,7 @@ pub fn (tx TypedSplitTransaction) apply_write_set(write_set TypedWriteSet, cfg C
 	}
 	mut next_tx := TypedSplitTransaction{
 		tables: tx.tables.clone()
-		specs: tx.specs.clone()
+		specs:  tx.specs.clone()
 	}
 	mut grouped := map[string][]TypedWriteOp{}
 	mut order := []string{}
@@ -973,12 +974,15 @@ pub fn (tx TypedSplitTransaction) apply_write_set(write_set TypedWriteSet, cfg C
 		grouped[op.table_name] << op
 	}
 	for table_name in order {
-		spec := next_tx.specs[table_name] or { return error('typed split table not registered: ${table_name}') }
+		spec := next_tx.specs[table_name] or {
+			return error('typed split table not registered: ${table_name}')
+		}
 		if spec.table.sum_aggregate_columns().len > 0 {
 			return error('typed split transaction does not yet support aggregate columns: ${table_name}')
 		}
 		view := tx.indexed_view(table_name)!
-		next_tx.tables[table_name] = view.apply_write_ops_split_batched(grouped[table_name], cfg)!
+		next_tx.tables[table_name] = view.apply_write_ops_split_batched(grouped[table_name],
+			cfg)!
 	}
 	return TypedSplitTransactionResult{
 		tx: next_tx
@@ -988,12 +992,12 @@ pub fn (tx TypedSplitTransaction) apply_write_set(write_set TypedWriteSet, cfg C
 pub fn (tx TypedTransaction) apply_write_set(write_set TypedWriteSet, cfg ChunkConfig) !TypedTransactionResult {
 	if write_set.len() == 0 {
 		return TypedTransactionResult{
-			tx: tx
+			tx:   tx
 			diff: tx.tree.diff(tx.tree)
 		}
 	}
 	mut next_tx := TypedTransaction{
-		tree: tx.tree
+		tree:  tx.tree
 		specs: tx.specs.clone()
 	}
 	mut grouped := map[string][]TypedWriteOp{}
@@ -1045,7 +1049,9 @@ pub fn (tx TypedTransaction) apply_write_set(write_set TypedWriteSet, cfg ChunkC
 	for table_name in order {
 		tree_before := next_tx.tree
 		mut view := next_tx.indexed_view(table_name)!
-		spec := next_tx.specs[table_name] or { return error('typed table not registered: ${table_name}') }
+		spec := next_tx.specs[table_name] or {
+			return error('typed table not registered: ${table_name}')
+		}
 		mut aggregate_sw := time.new_stopwatch()
 		aggregate_deltas := typed_aggregate_deltas_for_ops(view, spec, grouped[table_name])!
 		total_aggregate_ms += aggregate_sw.elapsed().milliseconds()
@@ -1091,69 +1097,70 @@ pub fn (tx TypedTransaction) apply_write_set(write_set TypedWriteSet, cfg ChunkC
 			total_fallback_build_internal_ms += update.timings.build_internal_ms
 			view = update.view
 		}
-		next_tx.tree = apply_typed_aggregate_deltas(tree_before, view.schema.table.tree, spec, aggregate_deltas, cfg)!
+		next_tx.tree = apply_typed_aggregate_deltas(tree_before, view.schema.table.tree,
+			spec, aggregate_deltas, cfg)!
 	}
 	return TypedTransactionResult{
-		tx: next_tx
-		diff: tx.tree.diff(next_tx.tree)
+		tx:      next_tx
+		diff:    tx.tree.diff(next_tx.tree)
 		timings: TypedTransactionStageTimings{
-			aggregate_ms: total_aggregate_ms
-			fast_update_ms: total_fast_update_ms
-			fast_update_can_ms: total_fast_update_can_ms
-			fast_update_path_ms: total_fast_update_path_ms
-			fast_update_encode_ms: total_fast_update_encode_ms
-			fast_update_replace_ms: total_fast_update_replace_ms
-			fallback_ms: total_fallback_ms
-			fallback_items_ms: total_fallback_items_ms
-			fallback_items_key_ms: total_fallback_items_key_ms
-			fallback_items_fill_ms: total_fallback_items_fill_ms
-			fallback_ops_ms: total_fallback_ms - total_fallback_items_ms - total_fallback_build_ms
-			fallback_ops_key_ms: total_fallback_ops_key_ms
-			fallback_ops_lookup_ms: total_fallback_ops_lookup_ms
-			fallback_ops_encode_ms: total_fallback_ops_encode_ms
-			fallback_ops_state_ms: total_fallback_ops_state_ms
-			fallback_ops_state_new_key_ms: total_fallback_ops_state_new_key_ms
-			fallback_ops_state_item_ms: total_fallback_ops_state_item_ms
-			fallback_ops_state_cache_ms: total_fallback_ops_state_cache_ms
-			fallback_ops_index_ms: total_fallback_ops_index_ms
-			fallback_build_ms: total_fallback_build_ms
-			fallback_build_prepare_ms: total_fallback_build_prepare_ms
-			fallback_build_prepare_keys_ms: total_fallback_build_prepare_keys_ms
-			fallback_build_prepare_keys_sort_ms: total_fallback_build_prepare_keys_sort_ms
-			fallback_build_prepare_keys_merge_ms: total_fallback_build_prepare_keys_merge_ms
-			fallback_build_prepare_rows_ms: total_fallback_build_prepare_rows_ms
-			fallback_build_prepare_rows_key_ms: total_fallback_build_prepare_rows_key_ms
-			fallback_build_prepare_rows_value_ms: total_fallback_build_prepare_rows_value_ms
-			fallback_build_leaf_ms: total_fallback_build_leaf_ms
-			fallback_build_leaf_chunk_ms: total_fallback_build_leaf_chunk_ms
-			fallback_build_leaf_node_ms: total_fallback_build_leaf_node_ms
+			aggregate_ms:                          total_aggregate_ms
+			fast_update_ms:                        total_fast_update_ms
+			fast_update_can_ms:                    total_fast_update_can_ms
+			fast_update_path_ms:                   total_fast_update_path_ms
+			fast_update_encode_ms:                 total_fast_update_encode_ms
+			fast_update_replace_ms:                total_fast_update_replace_ms
+			fallback_ms:                           total_fallback_ms
+			fallback_items_ms:                     total_fallback_items_ms
+			fallback_items_key_ms:                 total_fallback_items_key_ms
+			fallback_items_fill_ms:                total_fallback_items_fill_ms
+			fallback_ops_ms:                       total_fallback_ms - total_fallback_items_ms - total_fallback_build_ms
+			fallback_ops_key_ms:                   total_fallback_ops_key_ms
+			fallback_ops_lookup_ms:                total_fallback_ops_lookup_ms
+			fallback_ops_encode_ms:                total_fallback_ops_encode_ms
+			fallback_ops_state_ms:                 total_fallback_ops_state_ms
+			fallback_ops_state_new_key_ms:         total_fallback_ops_state_new_key_ms
+			fallback_ops_state_item_ms:            total_fallback_ops_state_item_ms
+			fallback_ops_state_cache_ms:           total_fallback_ops_state_cache_ms
+			fallback_ops_index_ms:                 total_fallback_ops_index_ms
+			fallback_build_ms:                     total_fallback_build_ms
+			fallback_build_prepare_ms:             total_fallback_build_prepare_ms
+			fallback_build_prepare_keys_ms:        total_fallback_build_prepare_keys_ms
+			fallback_build_prepare_keys_sort_ms:   total_fallback_build_prepare_keys_sort_ms
+			fallback_build_prepare_keys_merge_ms:  total_fallback_build_prepare_keys_merge_ms
+			fallback_build_prepare_rows_ms:        total_fallback_build_prepare_rows_ms
+			fallback_build_prepare_rows_key_ms:    total_fallback_build_prepare_rows_key_ms
+			fallback_build_prepare_rows_value_ms:  total_fallback_build_prepare_rows_value_ms
+			fallback_build_leaf_ms:                total_fallback_build_leaf_ms
+			fallback_build_leaf_chunk_ms:          total_fallback_build_leaf_chunk_ms
+			fallback_build_leaf_node_ms:           total_fallback_build_leaf_node_ms
 			fallback_build_leaf_node_serialize_ms: total_fallback_build_leaf_node_serialize_ms
-			fallback_build_leaf_node_cid_ms: total_fallback_build_leaf_node_cid_ms
-			fallback_build_leaf_node_add_ms: total_fallback_build_leaf_node_add_ms
-			fallback_build_internal_ms: total_fallback_build_internal_ms
-			table_count: order.len
-			fallback_ops: fallback_op_count
+			fallback_build_leaf_node_cid_ms:       total_fallback_build_leaf_node_cid_ms
+			fallback_build_leaf_node_add_ms:       total_fallback_build_leaf_node_add_ms
+			fallback_build_internal_ms:            total_fallback_build_internal_ms
+			table_count:                           order.len
+			fallback_ops:                          fallback_op_count
 		}
 	}
 }
 
 pub fn TypedWorkingSet.new(branch_name string, base_commit_cid string, tree Tree, specs []TypedTableSpec) !TypedWorkingSet {
 	return TypedWorkingSet{
-		branch_name: branch_name
+		branch_name:     branch_name
 		base_commit_cid: base_commit_cid
-		base_tree: tree
-		tx: new_typed_transaction_with_specs(tree, specs)!
-		specs: specs.clone()
+		base_tree:       tree
+		tx:              new_typed_transaction_with_specs(tree, specs)!
+		specs:           specs.clone()
 	}
 }
 
 pub fn TypedSplitWorkingSet.new(branch_name string, base_commit_cid string, tree Tree, specs []TypedTableSpec, cfg ChunkConfig) !TypedSplitWorkingSet {
 	return TypedSplitWorkingSet{
-		branch_name: branch_name
+		branch_name:     branch_name
 		base_commit_cid: base_commit_cid
-		base_tree: tree
-		tx: new_typed_split_transaction_with_specs(tree, specs, cfg)!
-		specs: specs.clone()
+		base_tree:       tree
+		tx:              new_typed_split_transaction_with_specs(tree, specs, cfg)!
+		specs:           specs.clone()
 	}
 }
 
@@ -1171,11 +1178,11 @@ pub fn (set TypedWorkingSet) transaction() TypedTransaction {
 
 pub fn (set TypedWorkingSet) split_backed(cfg ChunkConfig) !TypedSplitWorkingSet {
 	return TypedSplitWorkingSet{
-		branch_name: set.branch_name
+		branch_name:     set.branch_name
 		base_commit_cid: set.base_commit_cid
-		base_tree: set.base_tree
-		tx: set.tx.split_backed(cfg)!
-		specs: set.specs.clone()
+		base_tree:       set.base_tree
+		tx:              set.tx.split_backed(cfg)!
+		specs:           set.specs.clone()
 	}
 }
 
@@ -1193,11 +1200,11 @@ pub fn (set TypedSplitWorkingSet) transaction() TypedSplitTransaction {
 
 pub fn (set TypedSplitWorkingSet) clone() TypedSplitWorkingSet {
 	return TypedSplitWorkingSet{
-		branch_name: set.branch_name
+		branch_name:     set.branch_name
 		base_commit_cid: set.base_commit_cid
-		base_tree: set.base_tree
-		tx: set.tx.clone()
-		specs: set.specs.clone()
+		base_tree:       set.base_tree
+		tx:              set.tx.clone()
+		specs:           set.specs.clone()
 	}
 }
 
@@ -1260,15 +1267,16 @@ pub fn (mut set TypedWorkingSet) sync_to_tree(tree Tree, commit_cid string) ! {
 
 pub fn (view TypedIndexedSchemaView) put(primary_key []u8, row TypedRowData, cfg ChunkConfig) !TypedIndexedSchemaView {
 	if view.can_fast_update(primary_key, row)! {
-		next_table := view.schema.table.put(primary_key, view.schema.codec.encode(row)!, cfg)!
+		next_table := view.schema.table.put(primary_key, view.schema.codec.encode(row)!,
+			cfg)!
 		return view.with_schema(TypedSchemaView.new(next_table, view.schema.codec))
 	}
 	update := view.apply_write_ops([
 		TypedWriteOp{
-			table_name: view.schema.table.name
+			table_name:  view.schema.table.name
 			primary_key: primary_key.clone()
-			row: row.clone()
-			delete: false
+			row:         row.clone()
+			delete:      false
 		},
 	], cfg)!
 	return update.view
@@ -1277,10 +1285,10 @@ pub fn (view TypedIndexedSchemaView) put(primary_key []u8, row TypedRowData, cfg
 pub fn (view TypedIndexedSchemaView) delete(primary_key []u8, cfg ChunkConfig) !TypedIndexedSchemaView {
 	update := view.apply_write_ops([
 		TypedWriteOp{
-			table_name: view.schema.table.name
+			table_name:  view.schema.table.name
 			primary_key: primary_key.clone()
-			row: TypedRowData.new()
-			delete: true
+			row:         TypedRowData.new()
+			delete:      true
 		},
 	], cfg)!
 	return update.view
@@ -1308,15 +1316,11 @@ pub fn (view TypedIndexedSchemaView) find_by_index(name string, value ColumnValu
 		if limit > 0 && rows.len >= limit {
 			break
 		}
-		entry := cursor.peek() or {
-			break
-		}
+		entry := cursor.peek() or { break }
 		if compare_key_bytes(entry.index_key, encoded) != 0 {
 			break
 		}
-		matched := cursor.next() or {
-			break
-		}
+		matched := cursor.next() or { break }
 		rows << view.schema.get(matched.primary_key)!
 	}
 	return rows
@@ -1406,7 +1410,7 @@ fn (view TypedIndexedSchemaView) apply_fast_write_ops(ops []TypedWriteOp, cfg Ch
 		if group_id !in groups {
 			groups[group_id] = FastLeafUpdateGroup{
 				anchor_key: table_key.clone()
-				row_keys: []string{}
+				row_keys:   []string{}
 			}
 			group_order << group_id
 		}
@@ -1416,12 +1420,12 @@ fn (view TypedIndexedSchemaView) apply_fast_write_ops(ops []TypedWriteOp, cfg Ch
 	}
 	if group_order.len == 0 {
 		return FastWriteOpResult{
-			view: view
+			view:          view
 			remaining_ops: fallback_ops
-			timings: FastWriteOpTimings{
-				can_ms: can_ms
-				path_ms: path_ms
-				encode_ms: encode_ms
+			timings:       FastWriteOpTimings{
+				can_ms:     can_ms
+				path_ms:    path_ms
+				encode_ms:  encode_ms
 				replace_ms: replace_ms
 			}
 		}
@@ -1441,24 +1445,25 @@ fn (view TypedIndexedSchemaView) apply_fast_write_ops(ops []TypedWriteOp, cfg Ch
 				continue
 			}
 			leaf_items[idx] = KVPair{
-				key: item.key.clone()
+				key:   item.key.clone()
 				value: current_view.schema.codec.encode(op_by_key[key_id].row)!
 			}
 		}
 		encode_ms += encode_sw.elapsed().milliseconds()
 		mut replace_sw := time.new_stopwatch()
-		next_tree := current_view.schema.table.tree.replace_leaf_items(group.anchor_key, leaf_items, cfg)!
+		next_tree := current_view.schema.table.tree.replace_leaf_items(group.anchor_key,
+			leaf_items, cfg)!
 		replace_ms += replace_sw.elapsed().milliseconds()
-		current_view = current_view.with_schema(TypedSchemaView.new(TableView.new(next_tree, current_view.schema.table.name),
-			current_view.schema.codec))
+		current_view = current_view.with_schema(TypedSchemaView.new(TableView.new(next_tree,
+			current_view.schema.table.name), current_view.schema.codec))
 	}
 	return FastWriteOpResult{
-		view: current_view
+		view:          current_view
 		remaining_ops: fallback_ops
-		timings: FastWriteOpTimings{
-			can_ms: can_ms
-			path_ms: path_ms
-			encode_ms: encode_ms
+		timings:       FastWriteOpTimings{
+			can_ms:     can_ms
+			path_ms:    path_ms
+			encode_ms:  encode_ms
 			replace_ms: replace_ms
 		}
 	}
@@ -1483,12 +1488,13 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 	mut regular_index_simple_lookup := []bool{}
 	mut regular_index_prefixes := [][]u8{}
 	for index in view.indexes {
-		if index.is_field_selector() {
+		if index.is_field_selector() || index.is_fts() {
 			continue
 		}
 		regular_indexes << index
 		regular_index_columns << index.value_column(codec.table)!
-		regular_index_simple_lookup << (!index.is_json_path() && !index.is_field_selector())
+		regular_index_simple_lookup << (!index.is_json_path() && !index.is_field_selector()
+			&& !index.is_fts())
 		index_view := split.index_view(index.name)!
 		prefix := index_view.entry_prefix()
 		regular_index_prefixes << prefix
@@ -1533,32 +1539,34 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 					if detailed {
 						mut index_sw := time.new_stopwatch()
 						for idx, index in regular_indexes {
-							new_value, new_has := typed_index_value_lookup_with_hint(op.row, index, codec.table,
-								regular_index_simple_lookup[idx])!
+							new_value, new_has := typed_index_value_lookup_with_hint(op.row,
+								index, codec.table, regular_index_simple_lookup[idx])!
 							if !new_has {
 								continue
 							}
 							column := regular_index_columns[idx]
 							index_prefix := regular_index_prefixes[idx]
 							index_value := if index.stores_row { encoded_row } else { []u8{} }
-							encoded_index := encode_index_value_without_validation(new_value, column)!
-							upsert_item(mut items, build_index_entry_key(index_prefix, encoded_index, op.primary_key),
-								index_value)
+							encoded_index := encode_index_value_without_validation(new_value,
+								column)!
+							upsert_item(mut items, build_index_entry_key(index_prefix,
+								encoded_index, op.primary_key), index_value)
 						}
 						ops_index_ms += index_sw.elapsed().milliseconds()
 					} else {
 						for idx, index in regular_indexes {
-							new_value, new_has := typed_index_value_lookup_with_hint(op.row, index, codec.table,
-								regular_index_simple_lookup[idx])!
+							new_value, new_has := typed_index_value_lookup_with_hint(op.row,
+								index, codec.table, regular_index_simple_lookup[idx])!
 							if !new_has {
 								continue
 							}
 							column := regular_index_columns[idx]
 							index_prefix := regular_index_prefixes[idx]
 							index_value := if index.stores_row { encoded_row } else { []u8{} }
-							encoded_index := encode_index_value_without_validation(new_value, column)!
-							upsert_item(mut items, build_index_entry_key(index_prefix, encoded_index, op.primary_key),
-								index_value)
+							encoded_index := encode_index_value_without_validation(new_value,
+								column)!
+							upsert_item(mut items, build_index_entry_key(index_prefix,
+								encoded_index, op.primary_key), index_value)
 						}
 					}
 					row_state[key_id] = op.row
@@ -1570,19 +1578,22 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 					for idx, index in regular_indexes {
 						column := regular_index_columns[idx]
 						index_prefix := regular_index_prefixes[idx]
-						old_value, old_has := typed_index_value_lookup_with_hint(old_row, index, codec.table,
-							regular_index_simple_lookup[idx])!
-						new_value, new_has := typed_index_value_lookup_with_hint(op.row, index, codec.table,
-							regular_index_simple_lookup[idx])!
+						old_value, old_has := typed_index_value_lookup_with_hint(old_row,
+							index, codec.table, regular_index_simple_lookup[idx])!
+						new_value, new_has := typed_index_value_lookup_with_hint(op.row,
+							index, codec.table, regular_index_simple_lookup[idx])!
 						if old_has && (!new_has || !column_values_equal(old_value, new_value)) {
-							old_encoded := encode_index_value_without_validation(old_value, column)!
-							delete_item(mut items, build_index_entry_key(index_prefix, old_encoded, op.primary_key))
+							old_encoded := encode_index_value_without_validation(old_value,
+								column)!
+							delete_item(mut items, build_index_entry_key(index_prefix,
+								old_encoded, op.primary_key))
 						}
 						if new_has && (!old_has || !column_values_equal(old_value, new_value)) {
 							index_value := if index.stores_row { encoded_row } else { []u8{} }
-							new_encoded := encode_index_value_without_validation(new_value, column)!
-							upsert_item(mut items, build_index_entry_key(index_prefix, new_encoded, op.primary_key),
-								index_value)
+							new_encoded := encode_index_value_without_validation(new_value,
+								column)!
+							upsert_item(mut items, build_index_entry_key(index_prefix,
+								new_encoded, op.primary_key), index_value)
 						}
 					}
 					ops_index_ms += index_sw.elapsed().milliseconds()
@@ -1590,19 +1601,22 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 					for idx, index in regular_indexes {
 						column := regular_index_columns[idx]
 						index_prefix := regular_index_prefixes[idx]
-						old_value, old_has := typed_index_value_lookup_with_hint(old_row, index, codec.table,
-							regular_index_simple_lookup[idx])!
-						new_value, new_has := typed_index_value_lookup_with_hint(op.row, index, codec.table,
-							regular_index_simple_lookup[idx])!
+						old_value, old_has := typed_index_value_lookup_with_hint(old_row,
+							index, codec.table, regular_index_simple_lookup[idx])!
+						new_value, new_has := typed_index_value_lookup_with_hint(op.row,
+							index, codec.table, regular_index_simple_lookup[idx])!
 						if old_has && (!new_has || !column_values_equal(old_value, new_value)) {
-							old_encoded := encode_index_value_without_validation(old_value, column)!
-							delete_item(mut items, build_index_entry_key(index_prefix, old_encoded, op.primary_key))
+							old_encoded := encode_index_value_without_validation(old_value,
+								column)!
+							delete_item(mut items, build_index_entry_key(index_prefix,
+								old_encoded, op.primary_key))
 						}
 						if new_has && (!old_has || !column_values_equal(old_value, new_value)) {
 							index_value := if index.stores_row { encoded_row } else { []u8{} }
-							new_encoded := encode_index_value_without_validation(new_value, column)!
-							upsert_item(mut items, build_index_entry_key(index_prefix, new_encoded, op.primary_key),
-								index_value)
+							new_encoded := encode_index_value_without_validation(new_value,
+								column)!
+							upsert_item(mut items, build_index_entry_key(index_prefix,
+								new_encoded, op.primary_key), index_value)
 						}
 					}
 				}
@@ -1617,28 +1631,32 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 				if detailed {
 					mut index_sw := time.new_stopwatch()
 					for idx, index in regular_indexes {
-						index_value, has_value := typed_index_value_lookup_with_hint(old_row, index,
-							codec.table, regular_index_simple_lookup[idx])!
+						index_value, has_value := typed_index_value_lookup_with_hint(old_row,
+							index, codec.table, regular_index_simple_lookup[idx])!
 						if !has_value {
 							continue
 						}
 						column := regular_index_columns[idx]
 						index_prefix := regular_index_prefixes[idx]
-						encoded_index := encode_index_value_without_validation(index_value, column)!
-						delete_item(mut items, build_index_entry_key(index_prefix, encoded_index, op.primary_key))
+						encoded_index := encode_index_value_without_validation(index_value,
+							column)!
+						delete_item(mut items, build_index_entry_key(index_prefix, encoded_index,
+							op.primary_key))
 					}
 					ops_index_ms += index_sw.elapsed().milliseconds()
 				} else {
 					for idx, index in regular_indexes {
-						index_value, has_value := typed_index_value_lookup_with_hint(old_row, index,
-							codec.table, regular_index_simple_lookup[idx])!
+						index_value, has_value := typed_index_value_lookup_with_hint(old_row,
+							index, codec.table, regular_index_simple_lookup[idx])!
 						if !has_value {
 							continue
 						}
 						column := regular_index_columns[idx]
 						index_prefix := regular_index_prefixes[idx]
-						encoded_index := encode_index_value_without_validation(index_value, column)!
-						delete_item(mut items, build_index_entry_key(index_prefix, encoded_index, op.primary_key))
+						encoded_index := encode_index_value_without_validation(index_value,
+							column)!
+						delete_item(mut items, build_index_entry_key(index_prefix, encoded_index,
+							op.primary_key))
 					}
 				}
 				row_state[key_id] = TypedRowData.new()
@@ -1655,29 +1673,30 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 	build_ms := if detailed { build_sw.elapsed().milliseconds() } else { i64(0) }
 	if next_tree.root.cid == view.schema.table.tree.root.cid {
 		return TypedIndexedSchemaUpdate{
-			view: view
-			diff: view.schema.table.tree.diff(view.schema.table.tree)
+			view:    view
+			diff:    view.schema.table.tree.diff(view.schema.table.tree)
 			timings: TypedIndexedWriteTimings{
-				items_ms: items_ms
-				ops_ms: ops_ms
+				items_ms:      items_ms
+				ops_ms:        ops_ms
 				ops_lookup_ms: ops_lookup_ms
 				ops_encode_ms: ops_encode_ms
-				ops_index_ms: ops_index_ms
-				build_ms: build_ms
+				ops_index_ms:  ops_index_ms
+				build_ms:      build_ms
 			}
 		}
 	}
-	next_view := view.with_schema(TypedSchemaView.new(TableView.new(next_tree, table_name), codec))
+	next_view := view.with_schema(TypedSchemaView.new(TableView.new(next_tree, table_name),
+		codec))
 	return TypedIndexedSchemaUpdate{
-		view: next_view
-		diff: view.schema.table.tree.diff(next_tree)
+		view:    next_view
+		diff:    view.schema.table.tree.diff(next_tree)
 		timings: TypedIndexedWriteTimings{
-			items_ms: items_ms
-			ops_ms: ops_ms
+			items_ms:      items_ms
+			ops_ms:        ops_ms
 			ops_lookup_ms: ops_lookup_ms
 			ops_encode_ms: ops_encode_ms
-			ops_index_ms: ops_index_ms
-			build_ms: build_ms
+			ops_index_ms:  ops_index_ms
+			build_ms:      build_ms
 		}
 	}
 }
@@ -1700,12 +1719,13 @@ pub fn (view TypedIndexedSchemaView) plan_write_spans(ops []TypedWriteOp) !Mutat
 	mut regular_index_prefixes := [][]u8{}
 	split := view.split_storage()
 	for index in view.indexes {
-		if index.is_field_selector() {
+		if index.is_field_selector() || index.is_fts() {
 			continue
 		}
 		regular_indexes << index
 		regular_index_columns << index.value_column(codec.table)!
-		regular_index_simple_lookup << (!index.is_json_path() && !index.is_field_selector())
+		regular_index_simple_lookup << (!index.is_json_path() && !index.is_field_selector()
+			&& !index.is_fts())
 		index_view := split.index_view(index.name)!
 		regular_index_prefixes << index_view.entry_prefix()
 	}
@@ -1731,8 +1751,8 @@ pub fn (view TypedIndexedSchemaView) plan_write_spans(ops []TypedWriteOp) !Mutat
 				continue
 			}
 			for idx, index in regular_indexes {
-				index_value, has_value := typed_index_value_lookup_with_hint(old_row, index, codec.table,
-					regular_index_simple_lookup[idx])!
+				index_value, has_value := typed_index_value_lookup_with_hint(old_row,
+					index, codec.table, regular_index_simple_lookup[idx])!
 				if !has_value {
 					continue
 				}
@@ -1804,19 +1824,24 @@ pub fn (view TypedIndexedSchemaView) plan_write_spans(ops []TypedWriteOp) !Mutat
 		}
 	}
 	covered_existing := count_existing_keys_covered_by_spans(ordered_keys, spans)
-	coverage_pct := if ordered_keys.len > 0 { (covered_existing * 100) / ordered_keys.len } else { 0 }
+	coverage_pct := if ordered_keys.len > 0 {
+		(covered_existing * 100) / ordered_keys.len
+	} else {
+		0
+	}
 	return MutationSpanPlanStats{
-		existing_keys: ordered_keys.len
-		changed_keys: new_keys.len + deleted_existing_keys.len + touched_existing_keys.len
-		new_keys: new_keys.len
+		existing_keys:         ordered_keys.len
+		changed_keys:          new_keys.len + deleted_existing_keys.len + touched_existing_keys.len
+		new_keys:              new_keys.len
 		deleted_existing_keys: deleted_existing_keys.len
 		touched_existing_keys: touched_existing_keys.len
 		covered_existing_keys: covered_existing
-		covered_existing_pct: coverage_pct
-		spans: spans.len
-		max_span_keys: span_max
-		avg_span_keys: if spans.len > 0 { span_total / spans.len } else { 0 }
-		partition_candidate: should_use_partitioned_rebuild(ordered_keys, new_keys, spans, false, deleted_existing_keys.len > 0)
+		covered_existing_pct:  coverage_pct
+		spans:                 spans.len
+		max_span_keys:         span_max
+		avg_span_keys:         if spans.len > 0 { span_total / spans.len } else { 0 }
+		partition_candidate:   should_use_partitioned_rebuild(ordered_keys, new_keys,
+			spans, false, deleted_existing_keys.len > 0)
 	}
 }
 
@@ -1894,12 +1919,13 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 	mut projected_old_columns := []string{}
 	mut projected_old_column_seen := map[string]bool{}
 	for index in view.indexes {
-		if index.is_field_selector() {
+		if index.is_field_selector() || index.is_fts() {
 			continue
 		}
 		regular_indexes << index
 		regular_index_columns << index.value_column(codec.table)!
-		regular_index_simple_lookup << (!index.is_json_path() && !index.is_field_selector())
+		regular_index_simple_lookup << (!index.is_json_path() && !index.is_field_selector()
+			&& !index.is_fts())
 		index_view := split.index_view(index.name)!
 		prefix := index_view.entry_prefix()
 		regular_index_prefixes << prefix
@@ -1945,7 +1971,7 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 				if existing_row.primary_key.len > 0 {
 					cached = TypedRowCacheEntry{
 						status: 2
-						data: existing_row.data
+						data:   existing_row.data
 					}
 				} else {
 					cached = TypedRowCacheEntry{
@@ -1986,19 +2012,21 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 					if detailed {
 						mut index_sw := time.new_stopwatch()
 						for idx, index in regular_indexes {
-							new_value, new_has := typed_index_value_lookup_with_hint(op.row, index, codec.table,
-								regular_index_simple_lookup[idx])!
+							new_value, new_has := typed_index_value_lookup_with_hint(op.row,
+								index, codec.table, regular_index_simple_lookup[idx])!
 							if !new_has {
 								continue
 							}
 							column := regular_index_columns[idx]
 							index_prefix_str := regular_index_prefix_strings[idx]
 							index_value := if index.stores_row { encoded_row } else { []u8{} }
-							index_key := build_index_entry_key_string_for_value(index_prefix_str, new_value, column, key_id)!
+							index_key := build_index_entry_key_string_for_value(index_prefix_str,
+								new_value, column, key_id)!
 							if index_key !in item_map && index_key !in is_new_key {
 								is_new_key[index_key] = true
 								key_bytes_map[index_key] = index_key.bytes()
-								if last_new_index_key[idx].len > 0 && index_key < last_new_index_key[idx] {
+								if last_new_index_key[idx].len > 0
+									&& index_key < last_new_index_key[idx] {
 									new_index_keys_sorted[idx] = false
 								}
 								new_index_keys[idx] << index_key
@@ -2013,19 +2041,21 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 						ops_index_us += index_sw.elapsed().microseconds()
 					} else {
 						for idx, index in regular_indexes {
-							new_value, new_has := typed_index_value_lookup_with_hint(op.row, index, codec.table,
-								regular_index_simple_lookup[idx])!
+							new_value, new_has := typed_index_value_lookup_with_hint(op.row,
+								index, codec.table, regular_index_simple_lookup[idx])!
 							if !new_has {
 								continue
 							}
 							column := regular_index_columns[idx]
 							index_prefix_str := regular_index_prefix_strings[idx]
 							index_value := if index.stores_row { encoded_row } else { []u8{} }
-							index_key := build_index_entry_key_string_for_value(index_prefix_str, new_value, column, key_id)!
+							index_key := build_index_entry_key_string_for_value(index_prefix_str,
+								new_value, column, key_id)!
 							if index_key !in item_map && index_key !in is_new_key {
 								is_new_key[index_key] = true
 								key_bytes_map[index_key] = index_key.bytes()
-								if last_new_index_key[idx].len > 0 && index_key < last_new_index_key[idx] {
+								if last_new_index_key[idx].len > 0
+									&& index_key < last_new_index_key[idx] {
 									new_index_keys_sorted[idx] = false
 								}
 								new_index_keys[idx] << index_key
@@ -2040,7 +2070,7 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 					}
 					row_cache[key_id] = TypedRowCacheEntry{
 						status: 2
-						data: op.row
+						data:   op.row
 					}
 					if detailed {
 						ops_state_us += 0
@@ -2057,12 +2087,13 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 					for idx, index in regular_indexes {
 						column := regular_index_columns[idx]
 						index_prefix_str := regular_index_prefix_strings[idx]
-						old_value, old_has := typed_index_value_lookup_with_hint(old_row, index, codec.table,
-							regular_index_simple_lookup[idx])!
-						new_value, new_has := typed_index_value_lookup_with_hint(op.row, index, codec.table,
-							regular_index_simple_lookup[idx])!
+						old_value, old_has := typed_index_value_lookup_with_hint(old_row,
+							index, codec.table, regular_index_simple_lookup[idx])!
+						new_value, new_has := typed_index_value_lookup_with_hint(op.row,
+							index, codec.table, regular_index_simple_lookup[idx])!
 						if old_has && (!new_has || !column_values_equal(old_value, new_value)) {
-							delete_key := build_index_entry_key_string_for_value(index_prefix_str, old_value, column, key_id)!
+							delete_key := build_index_entry_key_string_for_value(index_prefix_str,
+								old_value, column, key_id)!
 							item_map.delete(delete_key)
 							if delete_key in is_new_key {
 								deleted_new_keys[delete_key] = true
@@ -2072,11 +2103,13 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 						}
 						if new_has && (!old_has || !column_values_equal(old_value, new_value)) {
 							index_value := if index.stores_row { encoded_row } else { []u8{} }
-							index_key := build_index_entry_key_string_for_value(index_prefix_str, new_value, column, key_id)!
+							index_key := build_index_entry_key_string_for_value(index_prefix_str,
+								new_value, column, key_id)!
 							if index_key !in item_map && index_key !in is_new_key {
 								is_new_key[index_key] = true
 								key_bytes_map[index_key] = index_key.bytes()
-								if last_new_index_key[idx].len > 0 && index_key < last_new_index_key[idx] {
+								if last_new_index_key[idx].len > 0
+									&& index_key < last_new_index_key[idx] {
 									new_index_keys_sorted[idx] = false
 								}
 								new_index_keys[idx] << index_key
@@ -2094,19 +2127,20 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 					ops_index_us += index_sw.elapsed().microseconds()
 					row_cache[key_id] = TypedRowCacheEntry{
 						status: 2
-						data: op.row
+						data:   op.row
 					}
 					ops_state_us += state_sw.elapsed().microseconds()
 				} else {
 					for idx, index in regular_indexes {
 						column := regular_index_columns[idx]
 						index_prefix_str := regular_index_prefix_strings[idx]
-						old_value, old_has := typed_index_value_lookup_with_hint(old_row, index, codec.table,
-							regular_index_simple_lookup[idx])!
-						new_value, new_has := typed_index_value_lookup_with_hint(op.row, index, codec.table,
-							regular_index_simple_lookup[idx])!
+						old_value, old_has := typed_index_value_lookup_with_hint(old_row,
+							index, codec.table, regular_index_simple_lookup[idx])!
+						new_value, new_has := typed_index_value_lookup_with_hint(op.row,
+							index, codec.table, regular_index_simple_lookup[idx])!
 						if old_has && (!new_has || !column_values_equal(old_value, new_value)) {
-							delete_key := build_index_entry_key_string_for_value(index_prefix_str, old_value, column, key_id)!
+							delete_key := build_index_entry_key_string_for_value(index_prefix_str,
+								old_value, column, key_id)!
 							item_map.delete(delete_key)
 							if delete_key in is_new_key {
 								deleted_new_keys[delete_key] = true
@@ -2116,11 +2150,13 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 						}
 						if new_has && (!old_has || !column_values_equal(old_value, new_value)) {
 							index_value := if index.stores_row { encoded_row } else { []u8{} }
-							index_key := build_index_entry_key_string_for_value(index_prefix_str, new_value, column, key_id)!
+							index_key := build_index_entry_key_string_for_value(index_prefix_str,
+								new_value, column, key_id)!
 							if index_key !in item_map && index_key !in is_new_key {
 								is_new_key[index_key] = true
 								key_bytes_map[index_key] = index_key.bytes()
-								if last_new_index_key[idx].len > 0 && index_key < last_new_index_key[idx] {
+								if last_new_index_key[idx].len > 0
+									&& index_key < last_new_index_key[idx] {
 									new_index_keys_sorted[idx] = false
 								}
 								new_index_keys[idx] << index_key
@@ -2137,7 +2173,7 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 					}
 					row_cache[key_id] = TypedRowCacheEntry{
 						status: 2
-						data: op.row
+						data:   op.row
 					}
 				}
 			}
@@ -2156,14 +2192,15 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 					}
 					mut index_sw := time.new_stopwatch()
 					for idx, index in regular_indexes {
-						index_value, has_value := typed_index_value_lookup_with_hint(old_row, index,
-							codec.table, regular_index_simple_lookup[idx])!
+						index_value, has_value := typed_index_value_lookup_with_hint(old_row,
+							index, codec.table, regular_index_simple_lookup[idx])!
 						if !has_value {
 							continue
 						}
 						column := regular_index_columns[idx]
 						index_prefix_str := regular_index_prefix_strings[idx]
-						delete_key := build_index_entry_key_string_for_value(index_prefix_str, index_value, column, key_id)!
+						delete_key := build_index_entry_key_string_for_value(index_prefix_str,
+							index_value, column, key_id)!
 						item_map.delete(delete_key)
 						if delete_key in is_new_key {
 							deleted_new_keys[delete_key] = true
@@ -2184,14 +2221,15 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 						deleted_existing_keys[row_key] = true
 					}
 					for idx, index in regular_indexes {
-						index_value, has_value := typed_index_value_lookup_with_hint(old_row, index,
-							codec.table, regular_index_simple_lookup[idx])!
+						index_value, has_value := typed_index_value_lookup_with_hint(old_row,
+							index, codec.table, regular_index_simple_lookup[idx])!
 						if !has_value {
 							continue
 						}
 						column := regular_index_columns[idx]
 						index_prefix_str := regular_index_prefix_strings[idx]
-						delete_key := build_index_entry_key_string_for_value(index_prefix_str, index_value, column, key_id)!
+						delete_key := build_index_entry_key_string_for_value(index_prefix_str,
+							index_value, column, key_id)!
 						item_map.delete(delete_key)
 						if delete_key in is_new_key {
 							deleted_new_keys[delete_key] = true
@@ -2244,7 +2282,8 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 	mut rows_key_us := i64(0)
 	mut rows_value_us := i64(0)
 	mut rebuilt := if insert_only_rebuild && !has_delete_ops {
-		result := merge_existing_items_with_new_keys(items, new_keys, item_map, key_bytes_map, detailed)
+		result := merge_existing_items_with_new_keys(items, new_keys, item_map, key_bytes_map,
+			detailed)
 		rows_key_us += result.rows_key_us
 		rows_value_us += result.rows_value_us
 		result.items
@@ -2274,7 +2313,7 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 				item_map[key]
 			}
 			merged[idx] = KVPair{
-				key: key_bytes
+				key:   key_bytes
 				value: value
 			}
 		}
@@ -2287,71 +2326,72 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 	build_ms := if detailed { build_sw.elapsed().milliseconds() } else { i64(0) }
 	if next_tree.root.cid == view.schema.table.tree.root.cid {
 		return TypedIndexedSchemaUpdate{
-			view: view
-			diff: view.schema.table.tree.diff(view.schema.table.tree)
+			view:    view
+			diff:    view.schema.table.tree.diff(view.schema.table.tree)
 			timings: TypedIndexedWriteTimings{
-				items_ms: items_ms
-				items_key_ms: micros_to_millis(items_key_us)
-				items_fill_ms: micros_to_millis(items_fill_us)
-				ops_ms: ops_ms
-				ops_key_ms: micros_to_millis(ops_key_us)
-				ops_lookup_ms: micros_to_millis(ops_lookup_us)
-				ops_encode_ms: micros_to_millis(ops_encode_us)
-				ops_state_ms: micros_to_millis(ops_state_us)
-				ops_state_new_key_ms: 0
-				ops_state_item_ms: 0
-				ops_state_cache_ms: 0
-				ops_index_ms: micros_to_millis(ops_index_us)
-				build_ms: build_ms
-				build_prepare_ms: build_prepare_ms
-				build_prepare_keys_ms: build_prepare_keys_ms
-				build_prepare_keys_sort_ms: build_prepare_keys_sort_ms
-				build_prepare_keys_merge_ms: build_prepare_keys_merge_ms
-				build_prepare_rows_ms: build_prepare_rows_ms
-				build_prepare_rows_key_ms: micros_to_millis(rows_key_us)
-				build_prepare_rows_value_ms: micros_to_millis(rows_value_us)
-				build_leaf_ms: build_result.timings.leaf_ms
-				build_leaf_chunk_ms: build_result.timings.leaf_chunk_ms
-				build_leaf_node_ms: build_result.timings.leaf_node_ms
+				items_ms:                     items_ms
+				items_key_ms:                 micros_to_millis(items_key_us)
+				items_fill_ms:                micros_to_millis(items_fill_us)
+				ops_ms:                       ops_ms
+				ops_key_ms:                   micros_to_millis(ops_key_us)
+				ops_lookup_ms:                micros_to_millis(ops_lookup_us)
+				ops_encode_ms:                micros_to_millis(ops_encode_us)
+				ops_state_ms:                 micros_to_millis(ops_state_us)
+				ops_state_new_key_ms:         0
+				ops_state_item_ms:            0
+				ops_state_cache_ms:           0
+				ops_index_ms:                 micros_to_millis(ops_index_us)
+				build_ms:                     build_ms
+				build_prepare_ms:             build_prepare_ms
+				build_prepare_keys_ms:        build_prepare_keys_ms
+				build_prepare_keys_sort_ms:   build_prepare_keys_sort_ms
+				build_prepare_keys_merge_ms:  build_prepare_keys_merge_ms
+				build_prepare_rows_ms:        build_prepare_rows_ms
+				build_prepare_rows_key_ms:    micros_to_millis(rows_key_us)
+				build_prepare_rows_value_ms:  micros_to_millis(rows_value_us)
+				build_leaf_ms:                build_result.timings.leaf_ms
+				build_leaf_chunk_ms:          build_result.timings.leaf_chunk_ms
+				build_leaf_node_ms:           build_result.timings.leaf_node_ms
 				build_leaf_node_serialize_ms: build_result.timings.leaf_node_serialize_ms
-				build_leaf_node_cid_ms: build_result.timings.leaf_node_cid_ms
-				build_leaf_node_add_ms: build_result.timings.leaf_node_add_ms
-				build_internal_ms: build_result.timings.internal_ms
+				build_leaf_node_cid_ms:       build_result.timings.leaf_node_cid_ms
+				build_leaf_node_add_ms:       build_result.timings.leaf_node_add_ms
+				build_internal_ms:            build_result.timings.internal_ms
 			}
 		}
 	}
-	next_view := view.with_schema(TypedSchemaView.new(TableView.new(next_tree, table_name), codec))
+	next_view := view.with_schema(TypedSchemaView.new(TableView.new(next_tree, table_name),
+		codec))
 	return TypedIndexedSchemaUpdate{
-		view: next_view
-		diff: view.schema.table.tree.diff(next_tree)
+		view:    next_view
+		diff:    view.schema.table.tree.diff(next_tree)
 		timings: TypedIndexedWriteTimings{
-			items_ms: items_ms
-			items_key_ms: micros_to_millis(items_key_us)
-			items_fill_ms: micros_to_millis(items_fill_us)
-			ops_ms: ops_ms
-			ops_key_ms: micros_to_millis(ops_key_us)
-			ops_lookup_ms: micros_to_millis(ops_lookup_us)
-			ops_encode_ms: micros_to_millis(ops_encode_us)
-			ops_state_ms: micros_to_millis(ops_state_us)
-			ops_state_new_key_ms: 0
-			ops_state_item_ms: 0
-			ops_state_cache_ms: 0
-			ops_index_ms: micros_to_millis(ops_index_us)
-			build_ms: build_ms
-			build_prepare_ms: build_prepare_ms
-			build_prepare_keys_ms: build_prepare_keys_ms
-			build_prepare_keys_sort_ms: build_prepare_keys_sort_ms
-			build_prepare_keys_merge_ms: build_prepare_keys_merge_ms
-			build_prepare_rows_ms: build_prepare_rows_ms
-			build_prepare_rows_key_ms: micros_to_millis(rows_key_us)
-			build_prepare_rows_value_ms: micros_to_millis(rows_value_us)
-			build_leaf_ms: build_result.timings.leaf_ms
-			build_leaf_chunk_ms: build_result.timings.leaf_chunk_ms
-			build_leaf_node_ms: build_result.timings.leaf_node_ms
+			items_ms:                     items_ms
+			items_key_ms:                 micros_to_millis(items_key_us)
+			items_fill_ms:                micros_to_millis(items_fill_us)
+			ops_ms:                       ops_ms
+			ops_key_ms:                   micros_to_millis(ops_key_us)
+			ops_lookup_ms:                micros_to_millis(ops_lookup_us)
+			ops_encode_ms:                micros_to_millis(ops_encode_us)
+			ops_state_ms:                 micros_to_millis(ops_state_us)
+			ops_state_new_key_ms:         0
+			ops_state_item_ms:            0
+			ops_state_cache_ms:           0
+			ops_index_ms:                 micros_to_millis(ops_index_us)
+			build_ms:                     build_ms
+			build_prepare_ms:             build_prepare_ms
+			build_prepare_keys_ms:        build_prepare_keys_ms
+			build_prepare_keys_sort_ms:   build_prepare_keys_sort_ms
+			build_prepare_keys_merge_ms:  build_prepare_keys_merge_ms
+			build_prepare_rows_ms:        build_prepare_rows_ms
+			build_prepare_rows_key_ms:    micros_to_millis(rows_key_us)
+			build_prepare_rows_value_ms:  micros_to_millis(rows_value_us)
+			build_leaf_ms:                build_result.timings.leaf_ms
+			build_leaf_chunk_ms:          build_result.timings.leaf_chunk_ms
+			build_leaf_node_ms:           build_result.timings.leaf_node_ms
 			build_leaf_node_serialize_ms: build_result.timings.leaf_node_serialize_ms
-			build_leaf_node_cid_ms: build_result.timings.leaf_node_cid_ms
-			build_leaf_node_add_ms: build_result.timings.leaf_node_add_ms
-			build_internal_ms: build_result.timings.internal_ms
+			build_leaf_node_cid_ms:       build_result.timings.leaf_node_cid_ms
+			build_leaf_node_add_ms:       build_result.timings.leaf_node_add_ms
+			build_internal_ms:            build_result.timings.internal_ms
 		}
 	}
 }
@@ -2381,7 +2421,7 @@ fn merge_existing_items_with_new_keys(items []KVPair, new_keys []string, item_ma
 			item_map[new_key]
 		}
 		merged << KVPair{
-			key: new_key_bytes
+			key:   new_key_bytes
 			value: value
 		}
 		new_idx++
@@ -2402,14 +2442,14 @@ fn merge_existing_items_with_new_keys(items []KVPair, new_keys []string, item_ma
 			item_map[new_key]
 		}
 		merged << KVPair{
-			key: new_key_bytes
+			key:   new_key_bytes
 			value: value
 		}
 		new_idx++
 	}
 	return MergeExistingItemsResult{
-		items: merged
-		rows_key_us: rows_key_us
+		items:         merged
+		rows_key_us:   rows_key_us
 		rows_value_us: rows_value_us
 	}
 }
@@ -2478,7 +2518,7 @@ fn build_partitioned_items(items []KVPair, ordered_keys []string, new_keys []str
 					item_map[new_key]
 				}
 				merged << KVPair{
-					key: new_key_bytes
+					key:   new_key_bytes
 					value: new_value
 				}
 			}
@@ -2507,7 +2547,7 @@ fn build_partitioned_items(items []KVPair, ordered_keys []string, new_keys []str
 						item_map[existing_key]
 					}
 					merged << KVPair{
-						key: existing.key
+						key:   existing.key
 						value: new_value
 					}
 				} else {
@@ -2548,7 +2588,7 @@ fn build_partitioned_items(items []KVPair, ordered_keys []string, new_keys []str
 					item_map[new_key]
 				}
 				merged << KVPair{
-					key: new_key_bytes
+					key:   new_key_bytes
 					value: new_value
 				}
 			}
@@ -2579,36 +2619,40 @@ fn build_partitioned_items(items []KVPair, ordered_keys []string, new_keys []str
 				item_map[new_key]
 			}
 			merged << KVPair{
-				key: new_key_bytes
+				key:   new_key_bytes
 				value: new_value
 			}
 		}
 		new_idx++
 	}
 	return MergeExistingItemsResult{
-		items: merged
-		rows_key_us: rows_key_us
+		items:         merged
+		rows_key_us:   rows_key_us
 		rows_value_us: rows_value_us
 	}
 }
 
 fn rebuild_typed_single_index_tree(rows_tree Tree, codec TypedRowCodec, table_name string, index SchemaIndexDef, cfg ChunkConfig) !Tree {
+	if index.is_fts() {
+		return Tree{}
+	}
 	table_view := TableView.new(rows_tree, table_name)
 	items := rows_tree.items()!
 	column := index.value_column(codec.table)!
-	simple_lookup := !index.is_json_path() && !index.is_field_selector()
+	simple_lookup := !index.is_json_path() && !index.is_field_selector() && !index.is_fts()
 	index_prefix := IndexView.new(Tree{}, table_name, index.name).entry_prefix()
 	mut index_items := []KVPair{}
 	for item in items {
 		row := decode_table_row(table_view, item)!
 		row_data := codec.decode(row.value)!
-		index_value, has_value := typed_index_value_lookup_with_hint(row_data, index, codec.table, simple_lookup)!
+		index_value, has_value := typed_index_value_lookup_with_hint(row_data, index,
+			codec.table, simple_lookup)!
 		if !has_value {
 			continue
 		}
 		encoded := encode_index_value_without_validation(index_value, column)!
 		index_items << KVPair{
-			key: build_index_entry_key(index_prefix, encoded, row.primary_key)
+			key:   build_index_entry_key(index_prefix, encoded, row.primary_key)
 			value: if index.stores_row { row.value } else { []u8{} }
 		}
 	}
@@ -2626,11 +2670,11 @@ fn build_split_index_mutation_row_states(rows_view TableView, codec TypedRowCode
 		old_row := if had_old { codec.decode(existing.value)! } else { TypedRowData.new() }
 		encoded_new_row := if op.delete { []u8{} } else { codec.encode_without_validation(op.row)! }
 		states << SplitIndexMutationRowState{
-			primary_key: op.primary_key.clone()
-			had_old: had_old
-			old_row: old_row
-			new_row: op.row
-			delete: op.delete
+			primary_key:     op.primary_key.clone()
+			had_old:         had_old
+			old_row:         old_row
+			new_row:         op.row
+			delete:          op.delete
 			encoded_new_row: encoded_new_row
 		}
 	}
@@ -2638,8 +2682,11 @@ fn build_split_index_mutation_row_states(rows_view TableView, codec TypedRowCode
 }
 
 fn apply_split_index_mutations(base_tree Tree, table_name string, codec TypedRowCodec, index SchemaIndexDef, states []SplitIndexMutationRowState, cfg ChunkConfig) !Tree {
+	if index.is_fts() {
+		return Tree{}
+	}
 	column := index.value_column(codec.table)!
-	simple_lookup := !index.is_json_path() && !index.is_field_selector()
+	simple_lookup := !index.is_json_path() && !index.is_field_selector() && !index.is_fts()
 	mut index_view := IndexView.new(base_tree, table_name, index.name)
 	for state in states {
 		old_value, old_has := if state.had_old {
@@ -2668,35 +2715,39 @@ fn apply_split_index_mutations(base_tree Tree, table_name string, codec TypedRow
 fn build_split_index_mutation_batches(table_name string, codec TypedRowCodec, indexes []SchemaIndexDef, states []SplitIndexMutationRowState) !map[string]SplitIndexMutationBatch {
 	mut batches := map[string]SplitIndexMutationBatch{}
 	for index in indexes {
-		if index.is_field_selector() {
+		if index.is_field_selector() || index.is_fts() {
 			continue
 		}
 		column := index.value_column(codec.table)!
-		simple_lookup := !index.is_json_path() && !index.is_field_selector()
+		simple_lookup := !index.is_json_path() && !index.is_field_selector() && !index.is_fts()
 		index_prefix := IndexView.new(Tree{}, table_name, index.name).entry_prefix().bytestr()
 		mut batch := SplitIndexMutationBatch{
-			put_items: map[string][]u8{}
-			delete_keys: map[string]bool{}
+			put_items:     map[string][]u8{}
+			delete_keys:   map[string]bool{}
 			key_bytes_map: map[string][]u8{}
 		}
 		for state in states {
 			old_value, old_has := if state.had_old {
-				typed_index_value_lookup_with_hint(state.old_row, index, codec.table, simple_lookup)!
+				typed_index_value_lookup_with_hint(state.old_row, index, codec.table,
+					simple_lookup)!
 			} else {
 				ColumnValue(NullValue{}), false
 			}
 			new_value, new_has := if state.delete {
 				ColumnValue(NullValue{}), false
 			} else {
-				typed_index_value_lookup_with_hint(state.new_row, index, codec.table, simple_lookup)!
+				typed_index_value_lookup_with_hint(state.new_row, index, codec.table,
+					simple_lookup)!
 			}
 			old_key := if old_has {
-				build_index_entry_key_string_for_value(index_prefix, old_value, column, state.primary_key.bytestr())!
+				build_index_entry_key_string_for_value(index_prefix, old_value, column,
+					state.primary_key.bytestr())!
 			} else {
 				''
 			}
 			new_key := if new_has {
-				build_index_entry_key_string_for_value(index_prefix, new_value, column, state.primary_key.bytestr())!
+				build_index_entry_key_string_for_value(index_prefix, new_value, column,
+					state.primary_key.bytestr())!
 			} else {
 				''
 			}
@@ -2705,13 +2756,18 @@ fn build_split_index_mutation_batches(table_name string, codec TypedRowCodec, in
 			} else {
 				[]u8{}
 			}
-			if old_has && (!new_has || old_key != new_key || (index.stores_row && state.encoded_new_row != old_encoded_row)) {
+			if old_has && (!new_has || old_key != new_key || (index.stores_row
+				&& state.encoded_new_row != old_encoded_row)) {
 				batch.delete_keys[old_key] = true
 				batch.put_items.delete(old_key)
 			}
 			if new_has {
 				batch.delete_keys.delete(new_key)
-				batch.put_items[new_key] = if index.stores_row { state.encoded_new_row.clone() } else { []u8{} }
+				batch.put_items[new_key] = if index.stores_row {
+					state.encoded_new_row.clone()
+				} else {
+					[]u8{}
+				}
 				batch.key_bytes_map[new_key] = new_key.bytes()
 			}
 		}
@@ -2769,7 +2825,8 @@ fn apply_split_index_mutation_batch(base_tree Tree, table_name string, codec Typ
 	use_partitioned_rebuild := cfg.enable_partitioned_rebuild
 		&& should_use_partitioned_rebuild(ordered_keys, new_keys, spans, insert_only_rebuild, deleted_existing_keys.len > 0)
 	mut rebuilt := if insert_only_rebuild {
-		merge_existing_items_with_new_keys(items, new_keys, item_map, batch.key_bytes_map, false).items
+		merge_existing_items_with_new_keys(items, new_keys, item_map, batch.key_bytes_map,
+			false).items
 	} else if use_partitioned_rebuild {
 		build_partitioned_items(items, ordered_keys, new_keys, item_map, batch.key_bytes_map,
 			map[string]bool{}, deleted_existing_keys, touched_existing_keys, spans, false).items
@@ -2784,7 +2841,11 @@ fn apply_split_index_mutation_batch(base_tree Tree, table_name string, codec Typ
 				items[existing_item_index[key]].value
 			}
 			merged[idx] = KVPair{
-				key: if key in batch.key_bytes_map { batch.key_bytes_map[key] } else { key.bytes() }
+				key:   if key in batch.key_bytes_map {
+					batch.key_bytes_map[key]
+				} else {
+					key.bytes()
+				}
 				value: value
 			}
 		}
@@ -2850,7 +2911,7 @@ fn rebuild_typed_indexes_for_tables(tree Tree, specs []TypedTableSpec, table_nam
 			primary_key := row_key.bytes()[row_prefix.len..]
 			row := codec.decode(item_map[row_key])!
 			for index in spec.indexes {
-				if index.is_field_selector() {
+				if index.is_field_selector() || index.is_fts() {
 					continue
 				}
 				index_value, has_value := typed_index_value_lookup(row, index, spec.table)!
@@ -2874,7 +2935,7 @@ fn rebuild_typed_indexes_for_tables(tree Tree, specs []TypedTableSpec, table_nam
 	mut rebuilt := []KVPair{cap: keys.len}
 	for key in keys {
 		rebuilt << KVPair{
-			key: key.bytes()
+			key:   key.bytes()
 			value: item_map[key].clone()
 		}
 	}
@@ -2914,13 +2975,14 @@ pub fn rebuild_typed_aggregates_for_specs(tree Tree, specs []TypedTableSpec, cfg
 		}
 		for column in sum_columns {
 			next_tree = next_tree.put(KVPair{
-				key: encode_table_sum_aggregate_key(spec.table.name, column.name)
-				value: TypedValueEncoder.encode_value(sums[column.name] or { i64(0) }, .i64_)!
+				key:   encode_table_sum_aggregate_key(spec.table.name, column.name)
+				value: TypedValueEncoder.encode_value(sums[column.name] or { i64(0) },
+					.i64_)!
 			}, cfg)!
 			column_buckets := bucket_sums[column.name] or { []i64{len: 256, init: i64(0)} }
 			for bucket := 0; bucket < 256; bucket++ {
 				next_tree = next_tree.put(KVPair{
-					key: encode_table_sum_bucket_key(spec.table.name, column.name, u8(bucket))
+					key:   encode_table_sum_bucket_key(spec.table.name, column.name, u8(bucket))
 					value: TypedValueEncoder.encode_value(column_buckets[bucket], .i64_)!
 				}, cfg)!
 			}
@@ -2972,8 +3034,12 @@ fn json_set_path_value(mut root map[string]json2.Any, path string, value ColumnV
 	rest := segments[1..].join('.')
 	existing := root[head] or { json2.Any(map[string]json2.Any{}) }
 	mut nested := match existing {
-		map[string]json2.Any { existing.clone() }
-		else { map[string]json2.Any{} }
+		map[string]json2.Any {
+			existing.clone()
+		}
+		else {
+			map[string]json2.Any{}
+		}
 	}
 	json_set_path_value(mut nested, rest, value)!
 	root[head] = nested
@@ -2997,7 +3063,9 @@ fn json_delete_path_value(mut root map[string]json2.Any, path string) ! {
 			json_delete_path_value(mut nested, rest)!
 			root[head] = nested
 		}
-		else { return }
+		else {
+			return
+		}
 	}
 }
 
@@ -3035,17 +3103,13 @@ fn json_lookup_path_value(root map[string]json2.Any, path string) !ColumnValue {
 	if segments.len == 0 {
 		return NullValue{}
 	}
-	mut current := root[segments[0]] or {
-		return NullValue{}
-	}
+	mut current := root[segments[0]] or { return NullValue{} }
 	for idx := 1; idx < segments.len; idx++ {
 		segment := segments[idx]
 		match current {
 			map[string]json2.Any {
 				nested := current as map[string]json2.Any
-				current = nested[segment] or {
-					return NullValue{}
-				}
+				current = nested[segment] or { return NullValue{} }
 			}
 			else {
 				return NullValue{}
@@ -3053,20 +3117,48 @@ fn json_lookup_path_value(root map[string]json2.Any, path string) !ColumnValue {
 		}
 	}
 	return match current {
-		json2.Null { ColumnValue(NullValue{}) }
-		string { ColumnValue(current as string) }
-		bool { ColumnValue(current as bool) }
-		i64 { ColumnValue(current as i64) }
-		int { ColumnValue(i64(current as int)) }
-		i32 { ColumnValue(i64(current as i32)) }
-		i16 { ColumnValue(i64(current as i16)) }
-		i8 { ColumnValue(i64(current as i8)) }
-		u64 { ColumnValue(i64(current as u64)) }
-		u32 { ColumnValue(i64(current as u32)) }
-		u16 { ColumnValue(i64(current as u16)) }
-		u8 { ColumnValue(i64(current as u8)) }
-		f64 { ColumnValue(i64(current as f64)) }
-		f32 { ColumnValue(i64(current as f32)) }
+		json2.Null {
+			ColumnValue(NullValue{})
+		}
+		string {
+			ColumnValue(current as string)
+		}
+		bool {
+			ColumnValue(current as bool)
+		}
+		i64 {
+			ColumnValue(current as i64)
+		}
+		int {
+			ColumnValue(i64(current as int))
+		}
+		i32 {
+			ColumnValue(i64(current as i32))
+		}
+		i16 {
+			ColumnValue(i64(current as i16))
+		}
+		i8 {
+			ColumnValue(i64(current as i8))
+		}
+		u64 {
+			ColumnValue(i64(current as u64))
+		}
+		u32 {
+			ColumnValue(i64(current as u32))
+		}
+		u16 {
+			ColumnValue(i64(current as u16))
+		}
+		u8 {
+			ColumnValue(i64(current as u8))
+		}
+		f64 {
+			ColumnValue(i64(current as f64))
+		}
+		f32 {
+			ColumnValue(i64(current as f32))
+		}
 		else {
 			return error('json index only supports nested scalar fields: ${path}')
 		}
@@ -3077,7 +3169,9 @@ fn json_scalar_value_for_index(raw string, index SchemaIndexDef) !ColumnValue {
 	root := json2.decode[map[string]json2.Any](raw)!
 	value := json_lookup_path_value(root, index.json_field)!
 	return match value {
-		NullValue { ColumnValue(NullValue{}) }
+		NullValue {
+			ColumnValue(NullValue{})
+		}
 		string {
 			if index.json_field_type != .string_ && index.json_field_type != .enum_ {
 				return error('json field ${index.target_label()} did not match declared type')
@@ -3220,7 +3314,8 @@ fn plan_mutation_key_spans(existing_keys []string, new_keys []string, deleted_ex
 	for existing_idx < existing_keys.len || new_idx < new_keys.len {
 		mut key := ''
 		mut changed := false
-		if existing_idx < existing_keys.len && (new_idx >= new_keys.len || existing_keys[existing_idx] <= new_keys[new_idx]) {
+		if existing_idx < existing_keys.len
+			&& (new_idx >= new_keys.len || existing_keys[existing_idx] <= new_keys[new_idx]) {
 			key = existing_keys[existing_idx]
 			changed = key in deleted_existing_keys || key in touched_existing_keys
 			existing_idx++
@@ -3233,7 +3328,7 @@ fn plan_mutation_key_spans(existing_keys []string, new_keys []string, deleted_ex
 			if !active {
 				current = MutationKeySpan{
 					start_key: key
-					end_key: key
+					end_key:   key
 					key_count: 1
 				}
 				active = true
@@ -3255,6 +3350,9 @@ fn plan_mutation_key_spans(existing_keys []string, new_keys []string, deleted_ex
 }
 
 fn typed_index_value_lookup(row TypedRowData, index SchemaIndexDef, table TableDef) !(ColumnValue, bool) {
+	if index.is_fts() {
+		return error('fts indexes do not use typed tree value lookup: ${index.name}')
+	}
 	if index.is_field_selector() {
 		return ColumnValue(i64(0)), true
 	}
@@ -3268,7 +3366,9 @@ fn typed_index_value_lookup(row TypedRowData, index SchemaIndexDef, table TableD
 	}
 	base_column := table.column(index.column)!
 	match base_value {
-		NullValue { return NullValue{}, true }
+		NullValue {
+			return NullValue{}, true
+		}
 		string {
 			if base_column.typ != .json_ {
 				return error('json-path index requires json column: ${index.column}')
@@ -3276,7 +3376,9 @@ fn typed_index_value_lookup(row TypedRowData, index SchemaIndexDef, table TableD
 			value := json_scalar_value_for_index(base_value, index)!
 			return value, true
 		}
-		else { return error('json-path index requires json string payload: ${index.column}') }
+		else {
+			return error('json-path index requires json string payload: ${index.column}')
+		}
 	}
 }
 
@@ -3308,7 +3410,7 @@ fn typed_aggregate_deltas_for_ops(view TypedIndexedSchemaView, spec TypedTableSp
 	mut deltas := map[string]TypedAggregateDelta{}
 	for column in sum_columns {
 		deltas[column.name] = TypedAggregateDelta{
-			total: i64(0)
+			total:         i64(0)
 			bucket_deltas: map[u8]i64{}
 		}
 	}
@@ -3318,7 +3420,7 @@ fn typed_aggregate_deltas_for_ops(view TypedIndexedSchemaView, spec TypedTableSp
 		for column in sum_columns {
 			mut delta := deltas[column.name] or {
 				TypedAggregateDelta{
-					total: i64(0)
+					total:         i64(0)
 					bucket_deltas: map[u8]i64{}
 				}
 			}
@@ -3373,20 +3475,22 @@ fn apply_typed_aggregate_deltas(tree_before Tree, tree_after Tree, spec TypedTab
 	for column in spec.table.sum_aggregate_columns() {
 		delta := deltas[column.name] or {
 			TypedAggregateDelta{
-				total: i64(0)
+				total:         i64(0)
 				bucket_deltas: map[u8]i64{}
 			}
 		}
 		base_sum := current_typed_aggregate_sum(tree_before, spec, column)!
 		next_tree = next_tree.put(KVPair{
-			key: encode_table_sum_aggregate_key(spec.table.name, column.name)
+			key:   encode_table_sum_aggregate_key(spec.table.name, column.name)
 			value: TypedValueEncoder.encode_value(base_sum + delta.total, .i64_)!
 		}, cfg)!
 		for bucket, bucket_delta in delta.bucket_deltas {
-			base_bucket_sum := current_typed_aggregate_bucket_sum(tree_before, spec, column, bucket)!
+			base_bucket_sum := current_typed_aggregate_bucket_sum(tree_before, spec, column,
+				bucket)!
 			next_tree = next_tree.put(KVPair{
-				key: encode_table_sum_bucket_key(spec.table.name, column.name, bucket)
-				value: TypedValueEncoder.encode_value(base_bucket_sum + bucket_delta, .i64_)!
+				key:   encode_table_sum_bucket_key(spec.table.name, column.name, bucket)
+				value: TypedValueEncoder.encode_value(base_bucket_sum + bucket_delta,
+					.i64_)!
 			}, cfg)!
 		}
 	}
@@ -3411,7 +3515,9 @@ fn rebuild_typed_indexes_for_changed_rows(tree Tree, specs []TypedTableSpec, cha
 	mut mutations := []Mutation{}
 	mut remove_sw := time.new_stopwatch()
 	for spec in specs {
-		changed := (changed_rows[spec.table.name] or { map[string][]u8{} }).clone()
+		changed := (changed_rows[spec.table.name] or {
+			map[string][]u8{}
+		}).clone()
 		if changed.len == 0 {
 			continue
 		}
@@ -3426,7 +3532,7 @@ fn rebuild_typed_indexes_for_changed_rows(tree Tree, specs []TypedTableSpec, cha
 					continue
 				}
 				entry := decode_index_entry(index_view, KVPair{
-					key: key_bytes
+					key:   key_bytes
 					value: item_map[key]
 				}) or { continue }
 				if entry.primary_key.hex() in changed {
@@ -3442,7 +3548,9 @@ fn rebuild_typed_indexes_for_changed_rows(tree Tree, specs []TypedTableSpec, cha
 	mut inserted_indexes := 0
 	mut insert_sw := time.new_stopwatch()
 	for spec in specs {
-		changed := (changed_rows[spec.table.name] or { map[string][]u8{} }).clone()
+		changed := (changed_rows[spec.table.name] or {
+			map[string][]u8{}
+		}).clone()
 		if changed.len == 0 {
 			continue
 		}
@@ -3456,7 +3564,7 @@ fn rebuild_typed_indexes_for_changed_rows(tree Tree, specs []TypedTableSpec, cha
 			row := codec.decode(item_map[row_key])!
 			encoded_row := codec.encode_without_validation(row)!
 			for index in spec.indexes {
-				if index.is_field_selector() {
+				if index.is_field_selector() || index.is_fts() {
 					continue
 				}
 				index_value, has_value := typed_index_value_lookup(row, index, spec.table)!
@@ -3486,7 +3594,7 @@ fn rebuild_typed_indexes_for_changed_rows(tree Tree, specs []TypedTableSpec, cha
 		mut rebuilt := []KVPair{cap: keys.len}
 		for key in keys {
 			rebuilt << KVPair{
-				key: key.bytes()
+				key:   key.bytes()
 				value: item_map[key].clone()
 			}
 		}
@@ -3494,15 +3602,15 @@ fn rebuild_typed_indexes_for_changed_rows(tree Tree, specs []TypedTableSpec, cha
 	}
 	rebuild_ms := rebuild_sw.elapsed().milliseconds()
 	return rebuilt_tree, ReindexStageTimings{
-		items_ms: items_ms
-		remove_ms: remove_ms
-		insert_ms: insert_ms
-		rebuild_ms: rebuild_ms
-		strategy: if use_patch_strategy { 'patch' } else { 'build' }
-		item_count: items.len
-		changed_tables: changed_tables
-		changed_rows: changed_row_count
-		removed_indexes: removed_indexes
+		items_ms:         items_ms
+		remove_ms:        remove_ms
+		insert_ms:        insert_ms
+		rebuild_ms:       rebuild_ms
+		strategy:         if use_patch_strategy { 'patch' } else { 'build' }
+		item_count:       items.len
+		changed_tables:   changed_tables
+		changed_rows:     changed_row_count
+		removed_indexes:  removed_indexes
 		inserted_indexes: inserted_indexes
 	}
 }
@@ -3528,9 +3636,7 @@ pub fn (codec TypedRowCodec) encode(row TypedRowData) ![]u8 {
 fn (codec TypedRowCodec) encode_without_validation(row TypedRowData) ![]u8 {
 	mut total_len := 4 + (codec.table.columns.len * 5)
 	for column in codec.table.columns {
-		value := row.values[column.name] or {
-			continue
-		}
+		value := row.values[column.name] or { continue }
 		if value is NullValue {
 			continue
 		}
@@ -3567,8 +3673,12 @@ fn (codec TypedRowCodec) encode_without_validation(row TypedRowData) ![]u8 {
 
 fn estimated_encoded_value_len(value ColumnValue, typ ColumnType) int {
 	return match typ {
-		.bool_ { 1 }
-		.i64_ { 8 }
+		.bool_ {
+			1
+		}
+		.i64_ {
+			8
+		}
 		.string_, .enum_, .json_, .datetime_ {
 			match value {
 				string { value.len }
@@ -3717,7 +3827,8 @@ pub fn (codec TypedRowCodec) decode_projected(data []u8, columns []string) !Type
 			return error('typed row payload value overflow')
 		}
 		if column.name in selected {
-			value := TypedValueEncoder.decode_value(data[cursor..cursor + value_len], column.typ)!
+			value := TypedValueEncoder.decode_value(data[cursor..cursor + value_len],
+				column.typ)!
 			row.set(column.name, value)
 		}
 		cursor += value_len
@@ -3759,7 +3870,8 @@ pub fn (codec TypedRowCodec) decode_i64_column(data []u8, name string) !i64 {
 			if cursor + value_len > data.len {
 				return error('typed row payload value overflow')
 			}
-			value := TypedValueEncoder.decode_value(data[cursor..cursor + value_len], current.typ)!
+			value := TypedValueEncoder.decode_value(data[cursor..cursor + value_len],
+				current.typ)!
 			match value {
 				i64 { return value }
 				else { return error('column ${name} did not decode as i64') }
@@ -3807,7 +3919,7 @@ pub fn TypedValueEncoder.validate(column ColumnDef, value ColumnValue) ! {
 			}
 			enum_value := value as string
 			if enum_value !in column.enum_values {
-				return error('column ${column.name} expects one of ${column.enum_values.join("|")}')
+				return error('column ${column.name} expects one of ${column.enum_values.join('|')}')
 			}
 		}
 		.json_ {
@@ -3946,7 +4058,11 @@ fn encode_index_value_without_validation(value ColumnValue, column ColumnDef) ![
 	match column.typ {
 		.bool_ {
 			if value is bool {
-				return [u8(1), if value { u8(1) } else { u8(0) }]
+				return [u8(1), if value {
+					u8(1)
+				} else {
+					u8(0)
+				}]
 			}
 		}
 		.i64_ {
@@ -4123,10 +4239,10 @@ pub fn decode_markdown_ref(data []u8) !MarkdownRef {
 		return error('markdown ref trailing bytes')
 	}
 	return MarkdownRef{
-		version: version
+		version:     version
 		doc_root_id: doc_root_id
 		source_hash: source_hash
-		source_len: source_len
+		source_len:  source_len
 		ast_version: ast_version
 		parse_flags: parse_flags
 	}

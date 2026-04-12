@@ -119,12 +119,11 @@ pub fn browse_store(store PollyDbStore, options BrowserOptions) ! {
 	app.db_session = app.db.begin_session(storage.SessionOptions.for_branch(store_branch))!
 	app.db_ready = true
 	entries_spec := app.db_session.table_spec('entries') or { storage.TypedTableSpec{} }
-	app.has_search_indexes = table_has_index(entries_spec, 'entries_fts_heading_idx')
-		|| table_has_index(entries_spec, 'entries_fts_any_idx')
+	app.has_search_indexes = table_has_index(entries_spec, 'entries_content_text_fts_idx')
 	app.status = if app.has_search_indexes {
 		'browser ready'
 	} else {
-		'search indexes unavailable; run "agentview index-search" to enable indexed search'
+		'search indexes unavailable; run "agentview index-search" to build general FTS indexes'
 	}
 	defer {
 		if app.db_ready {

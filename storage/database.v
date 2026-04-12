@@ -19,7 +19,7 @@ mut:
 	catalog        map[string]TypedTableSpec
 	projectors     map[string]AggregateProjectionDef
 	field_registry FieldCapabilityRegistry
-	catalog_dirty bool
+	catalog_dirty  bool
 }
 
 pub struct PersistentDatabaseOpenTimings {
@@ -38,18 +38,18 @@ pub:
 
 pub struct PersistentDatabaseTypedTransactionOpenResult {
 pub:
-	tx TypedTransaction
+	tx      TypedTransaction
 	timings TypedTransactionOpenTimings
 }
 
 pub struct PersistentDatabaseCheckpointInfo {
 pub:
-	root_dir               string
-	catalog_path           string
-	catalog_exists         bool
-	registered_tables      int
-	registered_projectors  int
-	engine                 PersistentEngineCheckpointInfo
+	root_dir              string
+	catalog_path          string
+	catalog_exists        bool
+	registered_tables     int
+	registered_projectors int
+	engine                PersistentEngineCheckpointInfo
 }
 
 pub struct PersistentDatabaseCheckpointTimings {
@@ -61,37 +61,37 @@ pub:
 
 pub struct PersistentDatabaseRecoveryStatus {
 pub:
-	root_dir               string
-	catalog_path           string
-	catalog_exists         bool
-	engine                 PersistentEngineRecoveryStatus
+	root_dir       string
+	catalog_path   string
+	catalog_exists bool
+	engine         PersistentEngineRecoveryStatus
 }
 
 pub struct PersistentDatabaseStatusReport {
 pub:
-	root_dir                   string
-	default_branch             string
-	catalog_path               string
-	repository_exists          bool
-	catalog_exists             bool
-	registered_tables          int
-	registered_projectors      int
-	fresh_projectors           int
-	stale_projectors           int
+	root_dir                                        string
+	default_branch                                  string
+	catalog_path                                    string
+	repository_exists                               bool
+	catalog_exists                                  bool
+	registered_tables                               int
+	registered_projectors                           int
+	fresh_projectors                                int
+	stale_projectors                                int
 	recommended_aggregate_projection_refresh_policy string
-	branch_count               int
-	branches                   []string
-	data_durable               bool
-	index_snapshots_fresh      bool
-	checkpoint_journal_exists  bool
-	node_index_snapshot_pending bool
-	commit_index_snapshot_pending bool
-	node_index_snapshot_valid  bool
-	commit_index_snapshot_valid bool
-	node_index_entries         int
-	commit_index_entries       int
-	projector_states           []string
-	durable                    bool
+	branch_count                                    int
+	branches                                        []string
+	data_durable                                    bool
+	index_snapshots_fresh                           bool
+	checkpoint_journal_exists                       bool
+	node_index_snapshot_pending                     bool
+	commit_index_snapshot_pending                   bool
+	node_index_snapshot_valid                       bool
+	commit_index_snapshot_valid                     bool
+	node_index_entries                              int
+	commit_index_entries                            int
+	projector_states                                []string
+	durable                                         bool
 }
 
 pub struct IndexSnapshotRefreshResult {
@@ -223,7 +223,7 @@ pub fn (report PersistentDatabaseStatusReport) summary_lines() []string {
 	lines << 'fresh_projectors=${report.fresh_projectors}'
 	lines << 'stale_projectors=${report.stale_projectors}'
 	lines << 'recommended_aggregate_projection_refresh_policy=${report.recommended_aggregate_projection_refresh_policy}'
-	lines << 'branches=${report.branch_count} [${report.branches.join(", ")}]'
+	lines << 'branches=${report.branch_count} [${report.branches.join(', ')}]'
 	lines << 'data_durable=${report.data_durable}'
 	lines << 'index_snapshots_fresh=${report.index_snapshots_fresh}'
 	lines << 'checkpoint_journal_exists=${report.checkpoint_journal_exists}'
@@ -295,15 +295,15 @@ enum TypedIndexScanMode {
 }
 
 struct TypedIndexScanRequest {
-	mode TypedIndexScanMode
-	value ColumnValue
-	has_value bool
-	second_value ColumnValue = NullValue{}
-	has_second_value bool
+	mode              TypedIndexScanMode
+	value             ColumnValue
+	has_value         bool
+	second_value      ColumnValue = NullValue{}
+	has_second_value  bool
 	start_primary_key []u8
-	limit int
-	columns []string
-	reverse bool
+	limit             int
+	columns           []string
+	reverse           bool
 }
 
 pub struct BranchTableReader {
@@ -382,7 +382,7 @@ pub:
 
 pub fn SnapshotReadScheduler.new(provider LocalDatabaseBackendProvider) SnapshotReadScheduler {
 	return SnapshotReadScheduler{
-		root_dir: provider.root_dir
+		root_dir:       provider.root_dir
 		default_branch: provider.default_branch()
 	}
 }
@@ -411,9 +411,9 @@ pub:
 
 pub struct MergeTableStat {
 pub:
-	table_name      string
-	row_changes     int
-	index_changes   int
+	table_name       string
+	row_changes      int
+	index_changes    int
 	conflict_changes int
 }
 
@@ -429,10 +429,10 @@ pub:
 
 pub struct RootHashMergeReport {
 pub:
-	preview         RootHashMergePreview
-	table_stats     []MergeTableStat
-	conflict_keys   []MergeConflictPreview
-	conflict_limit  int
+	preview        RootHashMergePreview
+	table_stats    []MergeTableStat
+	conflict_keys  []MergeConflictPreview
+	conflict_limit int
 }
 
 pub struct TransactionSession {
@@ -446,9 +446,9 @@ mut:
 
 pub struct GroupCommitOptions {
 pub:
-	checkpoint_every             int = 8
-	checkpoint_mode              CheckpointMode = .full
-	auto_refresh_index_snapshots bool
+	checkpoint_every                    int            = 8
+	checkpoint_mode                     CheckpointMode = .full
+	auto_refresh_index_snapshots        bool
 	aggregate_projection_refresh_policy AggregateProjectionRefreshPolicy = .none
 	max_aggregate_projection_refreshes  int
 }
@@ -462,51 +462,55 @@ pub enum AggregateProjectionRefreshPolicy {
 
 pub fn GroupCommitOptions.high_throughput() GroupCommitOptions {
 	return GroupCommitOptions{
-		checkpoint_every: 8
-		checkpoint_mode: .data_only
-		auto_refresh_index_snapshots: true
+		checkpoint_every:                    8
+		checkpoint_mode:                     .data_only
+		auto_refresh_index_snapshots:        true
 		aggregate_projection_refresh_policy: .stale_one
-		max_aggregate_projection_refreshes: 0
+		max_aggregate_projection_refreshes:  0
 	}
 }
 
 pub fn GroupCommitOptions.durable_default() GroupCommitOptions {
 	return GroupCommitOptions{
-		checkpoint_every: 8
-		checkpoint_mode: .full
-		auto_refresh_index_snapshots: false
+		checkpoint_every:                    8
+		checkpoint_mode:                     .full
+		auto_refresh_index_snapshots:        false
 		aggregate_projection_refresh_policy: .none
-		max_aggregate_projection_refreshes: 0
+		max_aggregate_projection_refreshes:  0
 	}
 }
 
 pub fn (options GroupCommitOptions) with_checkpoint_every(value int) GroupCommitOptions {
 	return GroupCommitOptions{
-		checkpoint_every: if value > 0 { value } else { 1 }
-		checkpoint_mode: options.checkpoint_mode
-		auto_refresh_index_snapshots: options.auto_refresh_index_snapshots
+		checkpoint_every:                    if value > 0 { value } else { 1 }
+		checkpoint_mode:                     options.checkpoint_mode
+		auto_refresh_index_snapshots:        options.auto_refresh_index_snapshots
 		aggregate_projection_refresh_policy: options.aggregate_projection_refresh_policy
-		max_aggregate_projection_refreshes: options.max_aggregate_projection_refreshes
+		max_aggregate_projection_refreshes:  options.max_aggregate_projection_refreshes
 	}
 }
 
 pub fn (options GroupCommitOptions) with_max_aggregate_projection_refreshes(value int) GroupCommitOptions {
 	return GroupCommitOptions{
-		checkpoint_every: options.checkpoint_every
-		checkpoint_mode: options.checkpoint_mode
-		auto_refresh_index_snapshots: options.auto_refresh_index_snapshots
-		aggregate_projection_refresh_policy: if value > 0 { .stale_up_to } else { options.aggregate_projection_refresh_policy }
-		max_aggregate_projection_refreshes: if value > 0 { value } else { 0 }
+		checkpoint_every:                    options.checkpoint_every
+		checkpoint_mode:                     options.checkpoint_mode
+		auto_refresh_index_snapshots:        options.auto_refresh_index_snapshots
+		aggregate_projection_refresh_policy: if value > 0 {
+			.stale_up_to
+		} else {
+			options.aggregate_projection_refresh_policy
+		}
+		max_aggregate_projection_refreshes:  if value > 0 { value } else { 0 }
 	}
 }
 
 pub fn (options GroupCommitOptions) with_aggregate_projection_refresh_policy(policy AggregateProjectionRefreshPolicy) GroupCommitOptions {
 	return GroupCommitOptions{
-		checkpoint_every: options.checkpoint_every
-		checkpoint_mode: options.checkpoint_mode
-		auto_refresh_index_snapshots: options.auto_refresh_index_snapshots
+		checkpoint_every:                    options.checkpoint_every
+		checkpoint_mode:                     options.checkpoint_mode
+		auto_refresh_index_snapshots:        options.auto_refresh_index_snapshots
 		aggregate_projection_refresh_policy: policy
-		max_aggregate_projection_refreshes: options.max_aggregate_projection_refreshes
+		max_aggregate_projection_refreshes:  options.max_aggregate_projection_refreshes
 	}
 }
 
@@ -516,11 +520,11 @@ pub:
 	specs       []TypedTableSpec
 	options     GroupCommitOptions
 mut:
-	pending_writes int
-	working_set    TypedWorkingSet
-	last_meta      CommitMeta
-	has_pending_meta bool
-	refresh_handles []IndexSnapshotRefreshHandle
+	pending_writes            int
+	working_set               TypedWorkingSet
+	last_meta                 CommitMeta
+	has_pending_meta          bool
+	refresh_handles           []IndexSnapshotRefreshHandle
 	aggregate_refresh_handles []AggregateProjectionRefreshHandle
 }
 
@@ -530,12 +534,12 @@ pub:
 	specs       []TypedTableSpec
 	options     GroupCommitOptions
 mut:
-	pending_writes int
-	working_set    TypedSplitWorkingSet
-	last_meta      CommitMeta
-	last_cfg       ChunkConfig
-	has_pending_meta bool
-	refresh_handles []IndexSnapshotRefreshHandle
+	pending_writes            int
+	working_set               TypedSplitWorkingSet
+	last_meta                 CommitMeta
+	last_cfg                  ChunkConfig
+	has_pending_meta          bool
+	refresh_handles           []IndexSnapshotRefreshHandle
 	aggregate_refresh_handles []AggregateProjectionRefreshHandle
 }
 
@@ -601,9 +605,9 @@ fn build_merge_table_stats(changed_keys []string, conflicts []MergeConflict) []M
 			index_changes++
 		}
 		stats[table_name] = MergeTableStat{
-			table_name: table_name
-			row_changes: row_changes
-			index_changes: index_changes
+			table_name:       table_name
+			row_changes:      row_changes
+			index_changes:    index_changes
 			conflict_changes: stat.conflict_changes
 		}
 	}
@@ -618,9 +622,9 @@ fn build_merge_table_stats(changed_keys []string, conflicts []MergeConflict) []M
 			}
 		}
 		stats[table_name] = MergeTableStat{
-			table_name: table_name
-			row_changes: stat.row_changes
-			index_changes: stat.index_changes
+			table_name:       table_name
+			row_changes:      stat.row_changes
+			index_changes:    stat.index_changes
 			conflict_changes: stat.conflict_changes + 1
 		}
 	}
@@ -635,14 +639,18 @@ fn build_merge_table_stats(changed_keys []string, conflicts []MergeConflict) []M
 
 fn build_merge_conflict_preview(conflicts []MergeConflict, limit int) []MergeConflictPreview {
 	effective_limit := if limit > 0 { limit } else { conflicts.len }
-	mut out := []MergeConflictPreview{cap: if conflicts.len < effective_limit { conflicts.len } else { effective_limit }}
+	mut out := []MergeConflictPreview{cap: if conflicts.len < effective_limit {
+		conflicts.len
+	} else {
+		effective_limit
+	}}
 	for idx, conflict in conflicts {
 		if idx >= effective_limit {
 			break
 		}
 		_, table_name, index_name := merge_key_scope(conflict.key.bytestr())
 		out << MergeConflictPreview{
-			key: conflict.key.bytestr()
+			key:        conflict.key.bytestr()
 			table_name: table_name
 			index_name: index_name
 		}
@@ -660,9 +668,7 @@ fn format_merge_conflict_row(database &PersistentDatabase, codec TypedRowCodec, 
 	if payload.len == 0 {
 		return '<deleted>'
 	}
-	row := codec.decode(payload) or {
-		return '<decode-error>'
-	}
+	row := codec.decode(payload) or { return '<decode-error>' }
 	base_row := if base_payload.len > 0 {
 		codec.decode(base_payload) or { TypedRowData.new() }
 	} else {
@@ -686,14 +692,28 @@ fn format_merge_conflict_row(database &PersistentDatabase, codec TypedRowCodec, 
 				} else {
 					ColumnValue(NullValue{})
 				}
-				'markdown:${value.doc_root_id}' + markdown_conflict_value_summary(database, column,
-					base_value, value)
+				'markdown:${value.doc_root_id}' +
+					markdown_conflict_value_summary(database, column, base_value, value)
 			}
-			NullValue { 'null' }
-			bool { if value { 'true' } else { 'false' } }
-			i64 { value.str() }
-			string { value }
-			[]u8 { 'hex:${value.hex()}' }
+			NullValue {
+				'null'
+			}
+			bool {
+				if value {
+					'true'
+				} else {
+					'false'
+				}
+			}
+			i64 {
+				value.str()
+			}
+			string {
+				value
+			}
+			[]u8 {
+				'hex:${value.hex()}'
+			}
 		}
 		parts << '${column.name}=${rendered}'
 	}
@@ -718,7 +738,10 @@ fn enrich_merge_conflict_preview(database &PersistentDatabase, conflicts []Merge
 			out << preview
 			continue
 		}
-		spec := specs[preview.table_name] or { out << preview continue }
+		spec := specs[preview.table_name] or {
+			out << preview
+			continue
+		}
 		codec := TypedRowCodec.new(spec.table)
 		prefix := database_table_row_prefix(spec.table.name)
 		if !bytes_has_prefix(raw_conflict.key, prefix) {
@@ -727,12 +750,12 @@ fn enrich_merge_conflict_preview(database &PersistentDatabase, conflicts []Merge
 		}
 		primary_key := raw_conflict.key[prefix.len..].clone()
 		out << MergeConflictPreview{
-			key: preview.key
+			key:        preview.key
 			table_name: preview.table_name
 			index_name: preview.index_name
-			base_row: format_merge_conflict_row(database, codec, primary_key, raw_conflict.base,
+			base_row:   format_merge_conflict_row(database, codec, primary_key, raw_conflict.base,
 				raw_conflict.base)
-			ours_row: format_merge_conflict_row(database, codec, primary_key, raw_conflict.ours,
+			ours_row:   format_merge_conflict_row(database, codec, primary_key, raw_conflict.ours,
 				raw_conflict.base)
 			theirs_row: format_merge_conflict_row(database, codec, primary_key, raw_conflict.theirs,
 				raw_conflict.base)
@@ -753,6 +776,9 @@ fn row_spec_for_merge_key(key []u8, specs []TypedTableSpec) ?TypedTableSpec {
 }
 
 fn persistent_typed_index_values_from_row(root_dir string, row TypedRowData, index SchemaIndexDef, table TableDef) ![]ColumnValue {
+	if index.is_fts() {
+		return []ColumnValue{}
+	}
 	if !index.is_field_selector() {
 		return [typed_index_value_from_row(row, index, table)!]
 	}
@@ -781,7 +807,9 @@ fn rebuild_persistent_typed_indexes_for_changed_rows(root_dir string, tree Tree,
 	mut mutations := []Mutation{}
 	mut remove_sw := time.new_stopwatch()
 	for spec in specs {
-		changed := (changed_rows[spec.table.name] or { map[string][]u8{} }).clone()
+		changed := (changed_rows[spec.table.name] or {
+			map[string][]u8{}
+		}).clone()
 		if changed.len == 0 {
 			continue
 		}
@@ -796,7 +824,7 @@ fn rebuild_persistent_typed_indexes_for_changed_rows(root_dir string, tree Tree,
 					continue
 				}
 				entry := decode_index_entry(index_view, KVPair{
-					key: key_bytes
+					key:   key_bytes
 					value: item_map[key]
 				}) or { continue }
 				if entry.primary_key.hex() in changed {
@@ -811,7 +839,9 @@ fn rebuild_persistent_typed_indexes_for_changed_rows(root_dir string, tree Tree,
 	mut inserted_indexes := 0
 	mut insert_sw := time.new_stopwatch()
 	for spec in specs {
-		changed := (changed_rows[spec.table.name] or { map[string][]u8{} }).clone()
+		changed := (changed_rows[spec.table.name] or {
+			map[string][]u8{}
+		}).clone()
 		if changed.len == 0 {
 			continue
 		}
@@ -828,11 +858,13 @@ fn rebuild_persistent_typed_indexes_for_changed_rows(root_dir string, tree Tree,
 					continue
 				}
 				column := index.value_column(spec.table)!
-				index_values := persistent_typed_index_values_from_row(root_dir, row, index, spec.table)!
+				index_values := persistent_typed_index_values_from_row(root_dir, row,
+					index, spec.table)!
 				index_view := IndexView.new(Tree{}, spec.table.name, index.name)
 				index_value := if index.stores_row { codec.encode(row)! } else { []u8{} }
 				for index_value_entry in index_values {
-					index_key := TypedValueEncoder.encode_index_value(index_value_entry, column)!
+					index_key := TypedValueEncoder.encode_index_value(index_value_entry,
+						column)!
 					index_entry_key := index_view.key_for(index_key, primary_key)
 					item_map[index_entry_key.bytestr()] = index_value.clone()
 					mutations << Mutation.put(index_entry_key, index_value.clone())
@@ -852,7 +884,7 @@ fn rebuild_persistent_typed_indexes_for_changed_rows(root_dir string, tree Tree,
 		mut rebuilt := []KVPair{cap: keys.len}
 		for key in keys {
 			rebuilt << KVPair{
-				key: key.bytes()
+				key:   key.bytes()
 				value: item_map[key].clone()
 			}
 		}
@@ -860,15 +892,15 @@ fn rebuild_persistent_typed_indexes_for_changed_rows(root_dir string, tree Tree,
 	}
 	rebuild_ms := rebuild_sw.elapsed().milliseconds()
 	return rebuilt_tree, ReindexStageTimings{
-		items_ms: items_ms
-		remove_ms: remove_ms
-		insert_ms: insert_ms
-		rebuild_ms: rebuild_ms
-		strategy: if use_patch_strategy { 'patch' } else { 'build' }
-		item_count: items.len
-		changed_tables: changed_tables
-		changed_rows: changed_row_count
-		removed_indexes: removed_indexes
+		items_ms:         items_ms
+		remove_ms:        remove_ms
+		insert_ms:        insert_ms
+		rebuild_ms:       rebuild_ms
+		strategy:         if use_patch_strategy { 'patch' } else { 'build' }
+		item_count:       items.len
+		changed_tables:   changed_tables
+		changed_rows:     changed_row_count
+		removed_indexes:  removed_indexes
 		inserted_indexes: inserted_indexes
 	}
 }
@@ -893,16 +925,17 @@ fn transaction_markdown_index_entries(root_dir string, view TypedIndexedSchemaVi
 	for raw_row in rows {
 		row := TypedSchemaRow{
 			primary_key: raw_row.primary_key
-			data: view.schema.codec.decode(raw_row.value)!
+			data:        view.schema.codec.decode(raw_row.value)!
 		}
 		if !row.data.has(index.column) {
 			continue
 		}
-		index_values := persistent_typed_index_values_from_row(root_dir, row.data, index, view.schema.codec.table)!
+		index_values := persistent_typed_index_values_from_row(root_dir, row.data, index,
+			view.schema.codec.table)!
 		for index_value in index_values {
 			entries << TransactionMarkdownIndexEntry{
 				encoded: TypedValueEncoder.encode_index_value(index_value, column)!
-				row: row
+				row:     row
 			}
 		}
 	}
@@ -1055,7 +1088,9 @@ fn try_auto_merge_typed_row_conflict(mut database PersistentDatabase, conflict M
 			changed = true
 			continue
 		}
-		if merged_value := try_merge_field_values(mut database, column, base_value, ours_value, theirs_value) {
+		if merged_value := try_merge_field_values(mut database, column, base_value, ours_value,
+			theirs_value)
+		{
 			merged.set(column.name, merged_value)
 			changed = true
 			continue
@@ -1071,16 +1106,18 @@ fn try_auto_merge_typed_row_conflict(mut database PersistentDatabase, conflict M
 		return none
 	}
 	return ConflictResolution{
-		key: conflict.key.clone()
+		key:      conflict.key.clone()
 		strategy: .manual
-		value: codec.encode(merged) or { return none }
+		value:    codec.encode(merged) or { return none }
 	}
 }
 
 fn auto_resolve_typed_row_conflicts(mut database PersistentDatabase, conflicts []MergeConflict, specs []TypedTableSpec) []ConflictResolution {
 	mut out := []ConflictResolution{}
 	for conflict in conflicts {
-		resolution := try_auto_merge_typed_row_conflict(mut database, conflict, specs) or { continue }
+		resolution := try_auto_merge_typed_row_conflict(mut database, conflict, specs) or {
+			continue
+		}
 		out << resolution
 	}
 	return out
@@ -1089,7 +1126,7 @@ fn auto_resolve_typed_row_conflicts(mut database PersistentDatabase, conflicts [
 fn snapshot_row_lookup_worker(provider LocalDatabaseBackendProvider, commit_cid string, table_name string, primary_key []u8) SnapshotRowLookupWorkerResult {
 	mut database := PersistentDatabase.open_with_provider(provider) or {
 		return SnapshotRowLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -1098,22 +1135,22 @@ fn snapshot_row_lookup_worker(provider LocalDatabaseBackendProvider, commit_cid 
 	}
 	mut reader := database.snapshot_table_reader_for_commit(commit_cid, table_name) or {
 		return SnapshotRowLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	row := reader.get_row(primary_key) or {
 		return SnapshotRowLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	return SnapshotRowLookupWorkerResult{
-		ok: true
+		ok:  true
 		row: SnapshotRowLookupResult{
 			commit_cid: commit_cid
 			table_name: table_name
-			row: row
+			row:        row
 		}
 	}
 }
@@ -1121,7 +1158,7 @@ fn snapshot_row_lookup_worker(provider LocalDatabaseBackendProvider, commit_cid 
 fn snapshot_index_lookup_worker(provider LocalDatabaseBackendProvider, commit_cid string, table_name string, index_name string, value ColumnValue, limit int) SnapshotIndexLookupWorkerResult {
 	mut database := PersistentDatabase.open_with_provider(provider) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -1130,7 +1167,7 @@ fn snapshot_index_lookup_worker(provider LocalDatabaseBackendProvider, commit_ci
 	}
 	mut reader := database.snapshot_index_reader_for_commit(commit_cid, table_name, index_name) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -1138,25 +1175,25 @@ fn snapshot_index_lookup_worker(provider LocalDatabaseBackendProvider, commit_ci
 	if reader.index.stores_row {
 		rows = reader.find_rows_covering(value, limit) or {
 			return SnapshotIndexLookupWorkerResult{
-				ok: false
+				ok:  false
 				err: err.msg()
 			}
 		}
 	} else {
 		rows = reader.find_rows(value, limit) or {
 			return SnapshotIndexLookupWorkerResult{
-				ok: false
+				ok:  false
 				err: err.msg()
 			}
 		}
 	}
 	return SnapshotIndexLookupWorkerResult{
-		ok: true
+		ok:   true
 		rows: SnapshotIndexLookupResult{
 			commit_cid: commit_cid
 			table_name: table_name
 			index_name: index_name
-			rows: rows
+			rows:       rows
 		}
 	}
 }
@@ -1164,7 +1201,7 @@ fn snapshot_index_lookup_worker(provider LocalDatabaseBackendProvider, commit_ci
 fn snapshot_table_scan_worker(provider LocalDatabaseBackendProvider, commit_cid string, table_name string, limit int) SnapshotIndexLookupWorkerResult {
 	mut database := PersistentDatabase.open_with_provider(provider) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -1173,23 +1210,23 @@ fn snapshot_table_scan_worker(provider LocalDatabaseBackendProvider, commit_cid 
 	}
 	mut reader := database.snapshot_table_reader_for_commit(commit_cid, table_name) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	rows := reader.scan_rows(limit) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	return SnapshotIndexLookupWorkerResult{
-		ok: true
+		ok:   true
 		rows: SnapshotIndexLookupResult{
 			commit_cid: commit_cid
 			table_name: table_name
 			index_name: ''
-			rows: rows
+			rows:       rows
 		}
 	}
 }
@@ -1197,7 +1234,7 @@ fn snapshot_table_scan_worker(provider LocalDatabaseBackendProvider, commit_cid 
 fn snapshot_table_scan_from_worker(provider LocalDatabaseBackendProvider, commit_cid string, table_name string, start_primary_key []u8, limit int) SnapshotIndexLookupWorkerResult {
 	mut database := PersistentDatabase.open_with_provider(provider) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -1206,23 +1243,23 @@ fn snapshot_table_scan_from_worker(provider LocalDatabaseBackendProvider, commit
 	}
 	mut reader := database.snapshot_table_reader_for_commit(commit_cid, table_name) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	rows := reader.scan_rows_from(start_primary_key, limit) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	return SnapshotIndexLookupWorkerResult{
-		ok: true
+		ok:   true
 		rows: SnapshotIndexLookupResult{
 			commit_cid: commit_cid
 			table_name: table_name
 			index_name: ''
-			rows: rows
+			rows:       rows
 		}
 	}
 }
@@ -1230,7 +1267,7 @@ fn snapshot_table_scan_from_worker(provider LocalDatabaseBackendProvider, commit
 fn snapshot_index_prefix_lookup_worker(provider LocalDatabaseBackendProvider, commit_cid string, table_name string, index_name string, value ColumnValue, limit int) SnapshotIndexLookupWorkerResult {
 	mut database := PersistentDatabase.open_with_provider(provider) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -1239,7 +1276,7 @@ fn snapshot_index_prefix_lookup_worker(provider LocalDatabaseBackendProvider, co
 	}
 	mut reader := database.snapshot_index_reader_for_commit(commit_cid, table_name, index_name) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -1247,25 +1284,25 @@ fn snapshot_index_prefix_lookup_worker(provider LocalDatabaseBackendProvider, co
 	if reader.index.stores_row {
 		rows = reader.find_rows_covering_prefix(value, limit) or {
 			return SnapshotIndexLookupWorkerResult{
-				ok: false
+				ok:  false
 				err: err.msg()
 			}
 		}
 	} else {
 		rows = reader.find_rows_prefix(value, limit) or {
 			return SnapshotIndexLookupWorkerResult{
-				ok: false
+				ok:  false
 				err: err.msg()
 			}
 		}
 	}
 	return SnapshotIndexLookupWorkerResult{
-		ok: true
+		ok:   true
 		rows: SnapshotIndexLookupResult{
 			commit_cid: commit_cid
 			table_name: table_name
 			index_name: index_name
-			rows: rows
+			rows:       rows
 		}
 	}
 }
@@ -1273,7 +1310,7 @@ fn snapshot_index_prefix_lookup_worker(provider LocalDatabaseBackendProvider, co
 fn snapshot_index_prefix_lookup_from_worker(provider LocalDatabaseBackendProvider, commit_cid string, table_name string, index_name string, value ColumnValue, start_primary_key []u8, limit int) SnapshotIndexLookupWorkerResult {
 	mut database := PersistentDatabase.open_with_provider(provider) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -1282,7 +1319,7 @@ fn snapshot_index_prefix_lookup_from_worker(provider LocalDatabaseBackendProvide
 	}
 	mut reader := database.snapshot_index_reader_for_commit(commit_cid, table_name, index_name) or {
 		return SnapshotIndexLookupWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -1290,25 +1327,25 @@ fn snapshot_index_prefix_lookup_from_worker(provider LocalDatabaseBackendProvide
 	if reader.index.stores_row {
 		rows = reader.find_rows_covering_prefix_from(value, start_primary_key, limit) or {
 			return SnapshotIndexLookupWorkerResult{
-				ok: false
+				ok:  false
 				err: err.msg()
 			}
 		}
 	} else {
 		rows = reader.find_rows_prefix_from(value, start_primary_key, limit) or {
 			return SnapshotIndexLookupWorkerResult{
-				ok: false
+				ok:  false
 				err: err.msg()
 			}
 		}
 	}
 	return SnapshotIndexLookupWorkerResult{
-		ok: true
+		ok:   true
 		rows: SnapshotIndexLookupResult{
 			commit_cid: commit_cid
 			table_name: table_name
 			index_name: index_name
-			rows: rows
+			rows:       rows
 		}
 	}
 }
@@ -1316,7 +1353,7 @@ fn snapshot_index_prefix_lookup_from_worker(provider LocalDatabaseBackendProvide
 fn snapshot_table_scan_pair_from_worker(provider LocalDatabaseBackendProvider, left_commit_cid string, right_commit_cid string, table_name string, start_primary_key []u8, limit int) SnapshotIndexLookupPairWorkerResult {
 	mut database := PersistentDatabase.open_with_provider(provider) or {
 		return SnapshotIndexLookupPairWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -1325,42 +1362,42 @@ fn snapshot_table_scan_pair_from_worker(provider LocalDatabaseBackendProvider, l
 	}
 	mut left_reader := database.snapshot_table_reader_for_commit(left_commit_cid, table_name) or {
 		return SnapshotIndexLookupPairWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	mut right_reader := database.snapshot_table_reader_for_commit(right_commit_cid, table_name) or {
 		return SnapshotIndexLookupPairWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	left_rows := left_reader.scan_rows_from(start_primary_key, limit) or {
 		return SnapshotIndexLookupPairWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	right_rows := right_reader.scan_rows_from(start_primary_key, limit) or {
 		return SnapshotIndexLookupPairWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	return SnapshotIndexLookupPairWorkerResult{
-		ok: true
+		ok:   true
 		rows: SnapshotIndexLookupPairResult{
-			left: SnapshotIndexLookupResult{
+			left:  SnapshotIndexLookupResult{
 				commit_cid: left_commit_cid
 				table_name: table_name
 				index_name: ''
-				rows: left_rows
+				rows:       left_rows
 			}
 			right: SnapshotIndexLookupResult{
 				commit_cid: right_commit_cid
 				table_name: table_name
 				index_name: ''
-				rows: right_rows
+				rows:       right_rows
 			}
 		}
 	}
@@ -1369,71 +1406,75 @@ fn snapshot_table_scan_pair_from_worker(provider LocalDatabaseBackendProvider, l
 fn snapshot_index_prefix_lookup_pair_from_worker(provider LocalDatabaseBackendProvider, left_commit_cid string, right_commit_cid string, table_name string, index_name string, value ColumnValue, start_primary_key []u8, limit int) SnapshotIndexLookupPairWorkerResult {
 	mut database := PersistentDatabase.open_with_provider(provider) or {
 		return SnapshotIndexLookupPairWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	defer {
 		database.close() or {}
 	}
-	mut left_reader := database.snapshot_index_reader_for_commit(left_commit_cid, table_name, index_name) or {
+	mut left_reader := database.snapshot_index_reader_for_commit(left_commit_cid, table_name,
+		index_name) or {
 		return SnapshotIndexLookupPairWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
-	mut right_reader := database.snapshot_index_reader_for_commit(right_commit_cid, table_name, index_name) or {
+	mut right_reader := database.snapshot_index_reader_for_commit(right_commit_cid, table_name,
+		index_name) or {
 		return SnapshotIndexLookupPairWorkerResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	mut left_rows := []TypedSchemaRow{}
 	if left_reader.index.stores_row {
-		left_rows = left_reader.find_rows_covering_prefix_from(value, start_primary_key, limit) or {
+		left_rows = left_reader.find_rows_covering_prefix_from(value, start_primary_key,
+			limit) or {
 			return SnapshotIndexLookupPairWorkerResult{
-				ok: false
+				ok:  false
 				err: err.msg()
 			}
 		}
 	} else {
 		left_rows = left_reader.find_rows_prefix_from(value, start_primary_key, limit) or {
 			return SnapshotIndexLookupPairWorkerResult{
-				ok: false
+				ok:  false
 				err: err.msg()
 			}
 		}
 	}
 	mut right_rows := []TypedSchemaRow{}
 	if right_reader.index.stores_row {
-		right_rows = right_reader.find_rows_covering_prefix_from(value, start_primary_key, limit) or {
+		right_rows = right_reader.find_rows_covering_prefix_from(value, start_primary_key,
+			limit) or {
 			return SnapshotIndexLookupPairWorkerResult{
-				ok: false
+				ok:  false
 				err: err.msg()
 			}
 		}
 	} else {
 		right_rows = right_reader.find_rows_prefix_from(value, start_primary_key, limit) or {
 			return SnapshotIndexLookupPairWorkerResult{
-				ok: false
+				ok:  false
 				err: err.msg()
 			}
 		}
 	}
 	return SnapshotIndexLookupPairWorkerResult{
-		ok: true
+		ok:   true
 		rows: SnapshotIndexLookupPairResult{
-			left: SnapshotIndexLookupResult{
+			left:  SnapshotIndexLookupResult{
 				commit_cid: left_commit_cid
 				table_name: table_name
 				index_name: index_name
-				rows: left_rows
+				rows:       left_rows
 			}
 			right: SnapshotIndexLookupResult{
 				commit_cid: right_commit_cid
 				table_name: table_name
 				index_name: index_name
-				rows: right_rows
+				rows:       right_rows
 			}
 		}
 	}
@@ -1486,7 +1527,8 @@ fn aggregate_bucket_end_primary_key(bucket int) []u8 {
 }
 
 fn read_declared_sum_bucket(root_cid string, table_name string, column_name string, bucket int, mut node_store NodeByteStore) !i64 {
-	item := Tree.lookup_in_byte_store(root_cid, encode_table_sum_bucket_key(table_name, column_name, u8(bucket)), mut node_store)!
+	item := Tree.lookup_in_byte_store(root_cid, encode_table_sum_bucket_key(table_name,
+		column_name, u8(bucket)), mut node_store)!
 	value := TypedValueEncoder.decode_value(item.value, .i64_)!
 	return match value {
 		i64 { value }
@@ -1496,7 +1538,8 @@ fn read_declared_sum_bucket(root_cid string, table_name string, column_name stri
 
 fn sum_declared_i64_range(root_cid string, table_name string, column_name string, start_primary_key []u8, end_primary_key []u8, codec TypedRowCodec, mut node_store NodeByteStore) !i64 {
 	if start_primary_key.len == 0 && end_primary_key.len == 0 {
-		item := Tree.lookup_in_byte_store(root_cid, encode_table_sum_aggregate_key(table_name, column_name), mut node_store)!
+		item := Tree.lookup_in_byte_store(root_cid, encode_table_sum_aggregate_key(table_name,
+			column_name), mut node_store)!
 		value := TypedValueEncoder.decode_value(item.value, .i64_)!
 		return match value {
 			i64 { value }
@@ -1504,11 +1547,16 @@ fn sum_declared_i64_range(root_cid string, table_name string, column_name string
 		}
 	}
 	start_bucket := aggregate_bucket_for_primary_key(start_primary_key)
-	end_bucket := if end_primary_key.len == 0 { 256 } else { aggregate_bucket_for_primary_key(end_primary_key) }
+	end_bucket := if end_primary_key.len == 0 {
+		256
+	} else {
+		aggregate_bucket_for_primary_key(end_primary_key)
+	}
 	if end_primary_key.len > 0 && start_primary_key.len > 0 && start_bucket == end_bucket {
 		start_key := encode_table_row_key(table_name, start_primary_key)
 		end_key := encode_table_row_key(table_name, end_primary_key)
-		return Tree.sum_i64_column_range_in_byte_store(root_cid, start_key, end_key, codec, column_name, mut node_store)
+		return Tree.sum_i64_column_range_in_byte_store(root_cid, start_key, end_key, codec,
+			column_name, mut node_store)
 	}
 	mut total := i64(0)
 	if start_primary_key.len > 0 {
@@ -1519,18 +1567,21 @@ fn sum_declared_i64_range(root_cid string, table_name string, column_name string
 		} else {
 			encode_table_row_key(table_name, left_end_pk)
 		}
-		total += Tree.sum_i64_column_range_in_byte_store(root_cid, start_key, end_key, codec, column_name, mut node_store)!
+		total += Tree.sum_i64_column_range_in_byte_store(root_cid, start_key, end_key,
+			codec, column_name, mut node_store)!
 	}
 	middle_start := if start_primary_key.len > 0 { start_bucket + 1 } else { 0 }
 	middle_end := if end_primary_key.len == 0 { 256 } else { end_bucket }
 	for bucket := middle_start; bucket < middle_end; bucket++ {
-		total += read_declared_sum_bucket(root_cid, table_name, column_name, bucket, mut node_store) or { i64(0) }
+		total += read_declared_sum_bucket(root_cid, table_name, column_name, bucket, mut
+			node_store) or { i64(0) }
 	}
 	if end_primary_key.len > 0 && (start_primary_key.len == 0 || end_bucket != start_bucket) {
 		right_start_pk := aggregate_bucket_start_primary_key(end_bucket)
 		start_key := encode_table_row_key(table_name, right_start_pk)
 		end_key := encode_table_row_key(table_name, end_primary_key)
-		total += Tree.sum_i64_column_range_in_byte_store(root_cid, start_key, end_key, codec, column_name, mut node_store)!
+		total += Tree.sum_i64_column_range_in_byte_store(root_cid, start_key, end_key,
+			codec, column_name, mut node_store)!
 	}
 	return total
 }
@@ -1555,7 +1606,8 @@ fn (mut reader DatabaseCatalogReader) read_u32() !u32 {
 	if reader.cursor + 4 > reader.data.len {
 		return error('database catalog truncated')
 	}
-	value := u32(reader.data[reader.cursor]) | (u32(reader.data[reader.cursor + 1]) << 8) | (u32(reader.data[reader.cursor + 2]) << 16) | (u32(reader.data[reader.cursor + 3]) << 24)
+	value := u32(reader.data[reader.cursor]) | (u32(reader.data[reader.cursor + 1]) << 8) | (u32(reader.data[
+		reader.cursor + 2]) << 16) | (u32(reader.data[reader.cursor + 3]) << 24)
 	reader.cursor += 4
 	return value
 }
@@ -1698,6 +1750,18 @@ fn catalog_data(catalog map[string]TypedTableSpec, projectors map[string]Aggrega
 			database_append_u8(mut out, if index.stores_row { u8(1) } else { u8(0) })
 		}
 	}
+	mut fts_table_names := []string{}
+	mut fts_indexes := []SchemaIndexDef{}
+	for name in names {
+		spec := catalog[name] or { continue }
+		for index in spec.indexes {
+			if !index.is_fts() {
+				continue
+			}
+			fts_table_names << spec.table.name
+			fts_indexes << index
+		}
+	}
 	projector_names := sorted_projector_names(projectors)
 	database_append_u32(mut out, u32(projector_names.len))
 	for name in projector_names {
@@ -1757,6 +1821,19 @@ fn catalog_data(catalog map[string]TypedTableSpec, projectors map[string]Aggrega
 		database_append_u8(mut out, if column.default_current_timestamp { u8(1) } else { u8(0) })
 		database_append_u8(mut out, if column.auto_update_current_timestamp { u8(1) } else { u8(0) })
 	}
+	database_append_field(mut out, 'schema_fts_indexes_v1'.bytes())
+	database_append_u32(mut out, u32(fts_indexes.len))
+	for idx, index in fts_indexes {
+		database_append_field(mut out, fts_table_names[idx].bytes())
+		database_append_field(mut out, index.name.bytes())
+		database_append_field(mut out, index.fts_source_plugin.bytes())
+		database_append_field(mut out, index.fts_text_mode.bytes())
+		database_append_field(mut out, index.fts_tokenizer.bytes())
+		database_append_u32(mut out, u32(index.fts_prefix_lengths.len))
+		for prefix_len in index.fts_prefix_lengths {
+			database_append_u32(mut out, u32(prefix_len))
+		}
+	}
 	return out
 }
 
@@ -1785,10 +1862,10 @@ fn catalog_from_data(data []u8) !(map[string]TypedTableSpec, map[string]Aggregat
 			}
 			columns << if column_type == .enum_ {
 				ColumnDef{
-					name: column_name
-					typ: .enum_
-					nullable: nullable
-					aggregate: aggregate
+					name:        column_name
+					typ:         .enum_
+					nullable:    nullable
+					aggregate:   aggregate
 					enum_values: enum_values.clone()
 				}
 			} else {
@@ -1810,13 +1887,15 @@ fn catalog_from_data(data []u8) !(map[string]TypedTableSpec, map[string]Aggregat
 			index_json_field_type := column_type_from_u8(reader.read_u8()!)!
 			stores_row := reader.read_u8()! == 1
 			indexes << if index_markdown_selector.len > 0 {
-				SchemaIndexDef.field_selector(index_name, index_column, 'markdown',
-					index_markdown_selector, index_json_field_type, stores_row)!
+				SchemaIndexDef.field_selector(index_name, index_column, 'markdown', index_markdown_selector,
+					index_json_field_type, stores_row)!
 			} else if index_json_field.len > 0 {
 				if stores_row {
-					SchemaIndexDef.json_path_covering(index_name, index_column, index_json_field, index_json_field_type)!
+					SchemaIndexDef.json_path_covering(index_name, index_column, index_json_field,
+						index_json_field_type)!
 				} else {
-					SchemaIndexDef.json_path(index_name, index_column, index_json_field, index_json_field_type)!
+					SchemaIndexDef.json_path(index_name, index_column, index_json_field,
+						index_json_field_type)!
 				}
 			} else if stores_row {
 				SchemaIndexDef.covering(index_name, index_column)!
@@ -1838,14 +1917,14 @@ fn catalog_from_data(data []u8) !(map[string]TypedTableSpec, map[string]Aggregat
 			source_json_path := reader.read_field()!.bytestr()
 			aggregate := column_aggregate_from_u8(reader.read_u8()!)!
 			projectors[name] = AggregateProjectionDef{
-				name: name
-				table_name: table_name
-				column_name: column_name
-				source_json_path: source_json_path
+				name:                     name
+				table_name:               table_name
+				column_name:              column_name
+				source_json_path:         source_json_path
 				source_markdown_selector: ''
-				aggregate: aggregate
-				priority: 100
-				cost_hint: .medium
+				aggregate:                aggregate
+				priority:                 100
+				cost_hint:                .medium
 			}
 		}
 	}
@@ -1881,9 +1960,9 @@ fn catalog_from_data(data []u8) !(map[string]TypedTableSpec, map[string]Aggregat
 					projectors[name] = AggregateProjectionDef{
 						...updated
 						source_json_path: projector.source_json_path
-						aggregate: projector.aggregate
-						priority: projector.priority
-						cost_hint: projector.cost_hint
+						aggregate:        projector.aggregate
+						priority:         projector.priority
+						cost_hint:        projector.cost_hint
 					}
 				}
 			}
@@ -1916,18 +1995,43 @@ fn catalog_from_data(data []u8) !(map[string]TypedTableSpec, map[string]Aggregat
 					mut columns := spec.table.columns.clone()
 					for idx, column in columns {
 						if column.name == column_name {
-							columns[idx] = ColumnDef.new_with_options(
-								column.name,
-								column.typ,
-								column.nullable,
-								column.aggregate,
-								default_current_timestamp,
-								auto_update_current_timestamp,
-							)!
+							columns[idx] = ColumnDef.new_with_options(column.name, column.typ,
+								column.nullable, column.aggregate, default_current_timestamp,
+								auto_update_current_timestamp)!
 						}
 					}
 					table := TableDef.new(spec.table.name, columns, spec.table.primary_key)!
 					catalog[table_name] = TypedTableSpec.new(table, spec.indexes)!
+				}
+			}
+			'schema_fts_indexes_v1' {
+				fts_count := int(reader.read_u32()!)
+				for _ in 0 .. fts_count {
+					table_name := reader.read_field()!.bytestr()
+					index_name := reader.read_field()!.bytestr()
+					source_plugin := reader.read_field()!.bytestr()
+					text_mode := reader.read_field()!.bytestr()
+					tokenizer := reader.read_field()!.bytestr()
+					prefix_count := int(reader.read_u32()!)
+					mut prefix_lengths := []int{cap: prefix_count}
+					for _ in 0 .. prefix_count {
+						prefix_lengths << int(reader.read_u32()!)
+					}
+					spec := catalog[table_name] or { continue }
+					mut indexes := spec.indexes.clone()
+					for idx, index in indexes {
+						if index.name != index_name {
+							continue
+						}
+						indexes[idx] = SchemaIndexDef{
+							...index
+							fts_source_plugin:  source_plugin
+							fts_text_mode:      text_mode
+							fts_tokenizer:      tokenizer
+							fts_prefix_lengths: prefix_lengths.clone()
+						}
+					}
+					catalog[table_name] = TypedTableSpec.new(spec.table, indexes)!
 				}
 			}
 			else {
@@ -1954,7 +2058,8 @@ pub fn PersistentDatabase.open(root_dir string, default_branch string) !Persiste
 }
 
 pub fn PersistentDatabase.init(root_dir string, default_branch string) !PersistentDatabase {
-	return PersistentDatabase.init_with_provider(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+	return PersistentDatabase.init_with_provider(LocalDatabaseBackendProvider.new(root_dir,
+		default_branch))
 }
 
 pub fn PersistentDatabase.open_with_provider(provider LocalDatabaseBackendProvider) !PersistentDatabase {
@@ -1962,7 +2067,8 @@ pub fn PersistentDatabase.open_with_provider(provider LocalDatabaseBackendProvid
 }
 
 pub fn PersistentDatabase.open_profiled(root_dir string, default_branch string) !PersistentDatabaseOpenResult {
-	return PersistentDatabase.open_with_provider_profiled(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+	return PersistentDatabase.open_with_provider_profiled(LocalDatabaseBackendProvider.new(root_dir,
+		default_branch))
 }
 
 pub fn PersistentDatabase.open_with_provider_profiled(provider LocalDatabaseBackendProvider) !PersistentDatabaseOpenResult {
@@ -1974,21 +2080,21 @@ pub fn PersistentDatabase.open_with_provider_profiled(provider LocalDatabaseBack
 	catalog_ms := catalog_sw.elapsed().milliseconds()
 	engine_result := PersistentEngine.open_with_provider_profiled(provider)!
 	database := PersistentDatabase{
-		root_dir: provider.root_dir
+		root_dir:       provider.root_dir
 		default_branch: provider.default_branch()
-		engine: engine_result.engine
-		catalog: catalog
-		projectors: projectors
+		engine:         engine_result.engine
+		catalog:        catalog
+		projectors:     projectors
 		field_registry: default_field_capability_registry()
-		catalog_dirty: false
+		catalog_dirty:  false
 	}
 	return PersistentDatabaseOpenResult{
 		database: database
-		timings: PersistentDatabaseOpenTimings{
+		timings:  PersistentDatabaseOpenTimings{
 			backends_ms: backends_ms
-			catalog_ms: catalog_ms
-			engine: engine_result.timings
-			total_ms: total_sw.elapsed().milliseconds()
+			catalog_ms:  catalog_ms
+			engine:      engine_result.timings
+			total_ms:    total_sw.elapsed().milliseconds()
 		}
 	}
 }
@@ -1996,13 +2102,13 @@ pub fn PersistentDatabase.open_with_provider_profiled(provider LocalDatabaseBack
 pub fn PersistentDatabase.init_with_provider(provider LocalDatabaseBackendProvider) !PersistentDatabase {
 	os.mkdir_all(repository_layout_dir(provider.root_dir))!
 	mut database := PersistentDatabase{
-		root_dir: provider.root_dir
+		root_dir:       provider.root_dir
 		default_branch: provider.default_branch()
-		engine: PersistentEngine.init_with_provider(provider)!
-		catalog: map[string]TypedTableSpec{}
-		projectors: map[string]AggregateProjectionDef{}
+		engine:         PersistentEngine.init_with_provider(provider)!
+		catalog:        map[string]TypedTableSpec{}
+		projectors:     map[string]AggregateProjectionDef{}
 		field_registry: default_field_capability_registry()
-		catalog_dirty: true
+		catalog_dirty:  true
 	}
 	database.persist_catalog()!
 	return database
@@ -2033,11 +2139,13 @@ pub fn (database PersistentDatabase) open_local_backends() !LocalDatabaseBackend
 }
 
 pub fn open_database(root_dir string, default_branch string) !PersistentDatabase {
-	return PersistentDatabase.open_with_provider(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+	return PersistentDatabase.open_with_provider(LocalDatabaseBackendProvider.new(root_dir,
+		default_branch))
 }
 
 pub fn init_database(root_dir string, default_branch string) !PersistentDatabase {
-	return PersistentDatabase.init_with_provider(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+	return PersistentDatabase.init_with_provider(LocalDatabaseBackendProvider.new(root_dir,
+		default_branch))
 }
 
 pub fn (mut database PersistentDatabase) persist_catalog() ! {
@@ -2045,7 +2153,8 @@ pub fn (mut database PersistentDatabase) persist_catalog() ! {
 		return
 	}
 	os.mkdir_all(repository_layout_dir(database.root_dir))!
-	os.write_file(database_catalog_path(database.root_dir), catalog_data(database.catalog, database.projectors).bytestr())!
+	os.write_file(database_catalog_path(database.root_dir), catalog_data(database.catalog,
+		database.projectors).bytestr())!
 	database.catalog_dirty = false
 }
 
@@ -2077,7 +2186,7 @@ pub fn (mut database PersistentDatabase) refresh_index_snapshots() ! {
 fn refresh_index_snapshots_worker(provider LocalDatabaseBackendProvider) IndexSnapshotRefreshResult {
 	mut database := PersistentDatabase.open_with_provider(provider) or {
 		return IndexSnapshotRefreshResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
@@ -2086,12 +2195,12 @@ fn refresh_index_snapshots_worker(provider LocalDatabaseBackendProvider) IndexSn
 	}
 	database.refresh_index_snapshots() or {
 		return IndexSnapshotRefreshResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	return IndexSnapshotRefreshResult{
-		ok: true
+		ok:  true
 		err: ''
 	}
 }
@@ -2110,44 +2219,45 @@ fn refresh_aggregate_projections_worker(provider LocalDatabaseBackendProvider, b
 fn refresh_aggregate_projections_limited_worker(provider LocalDatabaseBackendProvider, branch_name string, limit int) AggregateProjectionRefreshResult {
 	mut database := PersistentDatabase.open_with_provider(provider) or {
 		return AggregateProjectionRefreshResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	defer {
 		database.close() or {}
 	}
-	database.refresh_aggregate_projections_limited(branch_name, ChunkConfig.default(), CommitMeta{
-		author: 'pollydb/projector'
-		message: 'async refresh aggregate projections'
+	database.refresh_aggregate_projections_limited(branch_name, ChunkConfig.default(),
+		CommitMeta{
+		author:    'pollydb/projector'
+		message:   'async refresh aggregate projections'
 		timestamp: 0
-	}, limit) or {
-		return AggregateProjectionRefreshResult{
-			ok: false
-			err: err.msg()
-		}
-	}
+	}, limit) or { return AggregateProjectionRefreshResult{
+		ok:  false
+		err: err.msg()
+	} }
 	database.checkpoint() or {
 		return AggregateProjectionRefreshResult{
-			ok: false
+			ok:  false
 			err: err.msg()
 		}
 	}
 	return AggregateProjectionRefreshResult{
-		ok: true
+		ok:  true
 		err: ''
 	}
 }
 
 pub fn PersistentDatabase.refresh_aggregate_projections_async_for(root_dir string, default_branch string, branch_name string) AggregateProjectionRefreshHandle {
-	return PersistentDatabase.refresh_aggregate_projections_async_limited_for(root_dir, default_branch, branch_name, 0)
+	return PersistentDatabase.refresh_aggregate_projections_async_limited_for(root_dir,
+		default_branch, branch_name, 0)
 }
 
 pub fn PersistentDatabase.refresh_aggregate_projections_async_limited_for(root_dir string, default_branch string, branch_name string, limit int) AggregateProjectionRefreshHandle {
 	provider := LocalDatabaseBackendProvider.new(root_dir, default_branch)
 	return AggregateProjectionRefreshHandle{
 		active: true
-		worker: spawn refresh_aggregate_projections_limited_worker(provider, branch_name, limit)
+		worker: spawn refresh_aggregate_projections_limited_worker(provider, branch_name,
+			limit)
 	}
 }
 
@@ -2156,7 +2266,8 @@ pub fn (mut database PersistentDatabase) refresh_aggregate_projections_async(bra
 		return AggregateProjectionRefreshHandle{}
 	}
 	database.checkpoint_mode(.data_only)!
-	return PersistentDatabase.refresh_aggregate_projections_async_limited_for(database.root_dir, database.default_branch, branch_name, 0)
+	return PersistentDatabase.refresh_aggregate_projections_async_limited_for(database.root_dir,
+		database.default_branch, branch_name, 0)
 }
 
 pub fn (mut database PersistentDatabase) refresh_aggregate_projections_async_with_policy(branch_name string, policy AggregateProjectionRefreshPolicy, limit int) !AggregateProjectionRefreshHandle {
@@ -2165,20 +2276,24 @@ pub fn (mut database PersistentDatabase) refresh_aggregate_projections_async_wit
 	}
 	database.checkpoint_mode(.data_only)!
 	effective_limit := match policy {
-		.none { -1 }
-		.stale_one { 1 }
-		.stale_up_to { if limit > 0 { limit } else { 1 } }
-		.stale_all { 0 }
+		.none {
+			-1
+		}
+		.stale_one {
+			1
+		}
+		.stale_up_to {
+			if limit > 0 { limit } else { 1 }
+		}
+		.stale_all {
+			0
+		}
 	}
 	if effective_limit < 0 {
 		return AggregateProjectionRefreshHandle{}
 	}
-	return PersistentDatabase.refresh_aggregate_projections_async_limited_for(
-		database.root_dir,
-		database.default_branch,
-		branch_name,
-		effective_limit,
-	)
+	return PersistentDatabase.refresh_aggregate_projections_async_limited_for(database.root_dir,
+		database.default_branch, branch_name, effective_limit)
 }
 
 pub fn (mut database PersistentDatabase) checkpoint_mode(mode CheckpointMode) ! {
@@ -2217,8 +2332,8 @@ pub fn (mut database PersistentDatabase) checkpoint_timed() !PersistentDatabaseC
 	engine_timings := database.engine.checkpoint_timed()!
 	return PersistentDatabaseCheckpointTimings{
 		catalog_us: catalog_us
-		engine: engine_timings
-		total_us: total_sw.elapsed().microseconds()
+		engine:     engine_timings
+		total_us:   total_sw.elapsed().microseconds()
 	}
 }
 
@@ -2242,32 +2357,33 @@ pub fn (mut database PersistentDatabase) checkpoint_timed_mode(mode CheckpointMo
 	engine_timings := database.engine.checkpoint_timed_mode(mode)!
 	return PersistentDatabaseCheckpointTimings{
 		catalog_us: catalog_us
-		engine: engine_timings
-		total_us: total_sw.elapsed().microseconds()
+		engine:     engine_timings
+		total_us:   total_sw.elapsed().microseconds()
 	}
 }
 
 pub fn (database PersistentDatabase) checkpoint_info() PersistentDatabaseCheckpointInfo {
 	return PersistentDatabaseCheckpointInfo{
-		root_dir: database.root_dir
-		catalog_path: database_catalog_path(database.root_dir)
-		catalog_exists: os.exists(database_catalog_path(database.root_dir))
-		registered_tables: database.catalog.len
+		root_dir:              database.root_dir
+		catalog_path:          database_catalog_path(database.root_dir)
+		catalog_exists:        os.exists(database_catalog_path(database.root_dir))
+		registered_tables:     database.catalog.len
 		registered_projectors: database.projectors.len
-		engine: database.engine.checkpoint_info()
+		engine:                database.engine.checkpoint_info()
 	}
 }
 
 pub fn PersistentDatabase.recovery_status(root_dir string, default_branch string) !PersistentDatabaseRecoveryStatus {
-	return PersistentDatabase.recovery_status_with_provider(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+	return PersistentDatabase.recovery_status_with_provider(LocalDatabaseBackendProvider.new(root_dir,
+		default_branch))
 }
 
 pub fn PersistentDatabase.recovery_status_with_provider(provider LocalDatabaseBackendProvider) !PersistentDatabaseRecoveryStatus {
 	return PersistentDatabaseRecoveryStatus{
-		root_dir: provider.root_dir
-		catalog_path: database_catalog_path(provider.root_dir)
+		root_dir:       provider.root_dir
+		catalog_path:   database_catalog_path(provider.root_dir)
 		catalog_exists: os.exists(database_catalog_path(provider.root_dir))
-		engine: PersistentEngine.recovery_status_with_provider(provider)!
+		engine:         PersistentEngine.recovery_status_with_provider(provider)!
 	}
 }
 
@@ -2276,34 +2392,35 @@ fn database_status_report_from_recovery(root_dir string, default_branch string, 
 	commit_status := recovery.engine.repository.commit_store.chunk_store
 	data_durable := recovery.catalog_exists && recovery.engine.repository.repository_exists
 		&& (recovery.engine.repository.checkpoint_journal_exists
-			|| (os.exists(repository_nodes_path(root_dir)) && os.exists(repository_commits_path(root_dir))))
+		|| (os.exists(repository_nodes_path(root_dir))
+		&& os.exists(repository_commits_path(root_dir))))
 	index_snapshots_fresh := node_status.index_snapshot_valid && commit_status.index_snapshot_valid
-	durable := data_durable
-		&& node_status.index_snapshot_valid && commit_status.index_snapshot_valid
+	durable := data_durable && node_status.index_snapshot_valid
+		&& commit_status.index_snapshot_valid
 	return PersistentDatabaseStatusReport{
-		root_dir: root_dir
-		default_branch: default_branch
-		catalog_path: recovery.catalog_path
-		repository_exists: recovery.engine.repository.repository_exists
-		catalog_exists: recovery.catalog_exists
-		registered_tables: registered_tables
-		registered_projectors: registered_projectors
-		fresh_projectors: 0
-		stale_projectors: registered_projectors
+		root_dir:                                        root_dir
+		default_branch:                                  default_branch
+		catalog_path:                                    recovery.catalog_path
+		repository_exists:                               recovery.engine.repository.repository_exists
+		catalog_exists:                                  recovery.catalog_exists
+		registered_tables:                               registered_tables
+		registered_projectors:                           registered_projectors
+		fresh_projectors:                                0
+		stale_projectors:                                registered_projectors
 		recommended_aggregate_projection_refresh_policy: 'stale_one'
-		branch_count: branches.len
-		branches: branches.clone()
-		data_durable: data_durable
-		index_snapshots_fresh: index_snapshots_fresh
-		checkpoint_journal_exists: recovery.engine.repository.checkpoint_journal_exists
-		node_index_snapshot_pending: false
-		commit_index_snapshot_pending: false
-		node_index_snapshot_valid: node_status.index_snapshot_valid
-		commit_index_snapshot_valid: commit_status.index_snapshot_valid
-		node_index_entries: node_status.index_entries
-		commit_index_entries: commit_status.index_entries
-		projector_states: []string{}
-		durable: durable
+		branch_count:                                    branches.len
+		branches:                                        branches.clone()
+		data_durable:                                    data_durable
+		index_snapshots_fresh:                           index_snapshots_fresh
+		checkpoint_journal_exists:                       recovery.engine.repository.checkpoint_journal_exists
+		node_index_snapshot_pending:                     false
+		commit_index_snapshot_pending:                   false
+		node_index_snapshot_valid:                       node_status.index_snapshot_valid
+		commit_index_snapshot_valid:                     commit_status.index_snapshot_valid
+		node_index_entries:                              node_status.index_entries
+		commit_index_entries:                            commit_status.index_entries
+		projector_states:                                []string{}
+		durable:                                         durable
 	}
 }
 
@@ -2313,7 +2430,11 @@ fn projector_state_summary(state AggregateProjectorState) string {
 	summary += ' cost_hint=${state.projection.cost_hint}'
 	summary += ' current_data_root=${state.current_data_root_cid}'
 	summary += ' source_data_root=${state.source_data_root_cid}'
-	summary += ' virtual_root=${if state.virtual_root_cid.len > 0 { state.virtual_root_cid } else { "(pending)" }}'
+	summary += ' virtual_root=${if state.virtual_root_cid.len > 0 {
+		state.virtual_root_cid
+	} else {
+		'(pending)'
+	}}'
 	if state.stale_reason.len > 0 {
 		summary += ' stale_reason=${state.stale_reason}'
 	}
@@ -2325,21 +2446,27 @@ fn database_status_report_from_live(mut database PersistentDatabase, recovery Pe
 	commit_status := recovery.engine.repository.commit_store.chunk_store
 	node_chunks := database.engine.repository.node_store.chunks
 	commit_chunks := database.engine.repository.commit_store.chunks
-	repository_exists := recovery.engine.repository.repository_exists || database.engine.repository.meta_dirty
+	repository_exists := recovery.engine.repository.repository_exists
+		|| database.engine.repository.meta_dirty
 	catalog_exists := recovery.catalog_exists || database.catalog_dirty
 	journal_exists := recovery.engine.repository.checkpoint_journal_exists
 		|| os.exists(repository_checkpoint_journal_path(database.root_dir))
-	data_durable := catalog_exists && repository_exists && !database.catalog_dirty && !database.engine.repository.meta_dirty
+	data_durable := catalog_exists && repository_exists && !database.catalog_dirty
+		&& !database.engine.repository.meta_dirty
 		&& ((!node_chunks.data_dirty && !commit_chunks.data_dirty) || journal_exists)
-	node_pending := node_chunks.index_dirty || node_chunks.index_snapshot_sync_pending || journal_exists
-	commit_pending := commit_chunks.index_dirty || commit_chunks.index_snapshot_sync_pending || journal_exists
-	index_snapshots_fresh := node_status.index_snapshot_valid && commit_status.index_snapshot_valid && !node_pending
-		&& !commit_pending
+	node_pending := node_chunks.index_dirty || node_chunks.index_snapshot_sync_pending
+		|| journal_exists
+	commit_pending := commit_chunks.index_dirty || commit_chunks.index_snapshot_sync_pending
+		|| journal_exists
+	index_snapshots_fresh := node_status.index_snapshot_valid && commit_status.index_snapshot_valid
+		&& !node_pending && !commit_pending
 	mut projector_states := []string{}
 	mut fresh_projectors := 0
 	mut stale_projectors := 0
 	if database.projectors.len > 0 && database.engine.repository.has_branch(database.default_branch) {
-		for state in database.projection_states_at_branch(database.default_branch) or { []AggregateProjectorState{} } {
+		for state in database.projection_states_at_branch(database.default_branch) or {
+			[]AggregateProjectorState{}
+		} {
 			projector_states << projector_state_summary(state)
 			if state.fresh {
 				fresh_projectors++
@@ -2349,29 +2476,29 @@ fn database_status_report_from_live(mut database PersistentDatabase, recovery Pe
 		}
 	}
 	return PersistentDatabaseStatusReport{
-		root_dir: database.root_dir
-		default_branch: database.default_branch
-		catalog_path: recovery.catalog_path
-		repository_exists: repository_exists
-		catalog_exists: catalog_exists
-		registered_tables: database.catalog.len
-		registered_projectors: database.projectors.len
-		fresh_projectors: fresh_projectors
-		stale_projectors: stale_projectors
+		root_dir:                                        database.root_dir
+		default_branch:                                  database.default_branch
+		catalog_path:                                    recovery.catalog_path
+		repository_exists:                               repository_exists
+		catalog_exists:                                  catalog_exists
+		registered_tables:                               database.catalog.len
+		registered_projectors:                           database.projectors.len
+		fresh_projectors:                                fresh_projectors
+		stale_projectors:                                stale_projectors
 		recommended_aggregate_projection_refresh_policy: 'stale_one'
-		branch_count: database.branch_names().len
-		branches: database.branch_names()
-		data_durable: data_durable
-		index_snapshots_fresh: index_snapshots_fresh
-		checkpoint_journal_exists: journal_exists
-		node_index_snapshot_pending: node_pending
-		commit_index_snapshot_pending: commit_pending
-		node_index_snapshot_valid: node_status.index_snapshot_valid
-		commit_index_snapshot_valid: commit_status.index_snapshot_valid
-		node_index_entries: node_status.index_entries
-		commit_index_entries: commit_status.index_entries
-		projector_states: projector_states
-		durable: data_durable && index_snapshots_fresh
+		branch_count:                                    database.branch_names().len
+		branches:                                        database.branch_names()
+		data_durable:                                    data_durable
+		index_snapshots_fresh:                           index_snapshots_fresh
+		checkpoint_journal_exists:                       journal_exists
+		node_index_snapshot_pending:                     node_pending
+		commit_index_snapshot_pending:                   commit_pending
+		node_index_snapshot_valid:                       node_status.index_snapshot_valid
+		commit_index_snapshot_valid:                     commit_status.index_snapshot_valid
+		node_index_entries:                              node_status.index_entries
+		commit_index_entries:                            commit_status.index_entries
+		projector_states:                                projector_states
+		durable:                                         data_durable && index_snapshots_fresh
 	}
 }
 
@@ -2381,23 +2508,28 @@ pub fn (mut database PersistentDatabase) status_report() !PersistentDatabaseStat
 }
 
 pub fn PersistentDatabase.inspect(root_dir string, default_branch string) !PersistentDatabaseStatusReport {
-	return PersistentDatabase.inspect_with_provider(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+	return PersistentDatabase.inspect_with_provider(LocalDatabaseBackendProvider.new(root_dir,
+		default_branch))
 }
 
 pub fn PersistentDatabase.inspect_with_provider(provider LocalDatabaseBackendProvider) !PersistentDatabaseStatusReport {
 	recovery := PersistentDatabase.recovery_status_with_provider(provider)!
-	catalog, projectors := load_database_catalog(provider.root_dir) or { map[string]TypedTableSpec{}, map[string]AggregateProjectionDef{} }
+	catalog, projectors := load_database_catalog(provider.root_dir) or {
+		map[string]TypedTableSpec{}, map[string]AggregateProjectionDef{}
+	}
 	mut branches := []string{}
 	if recovery.engine.repository.repository_exists {
 		mut opened := PersistentRepository.open_default(provider.root_dir, provider.default_branch()) or {
-			return database_status_report_from_recovery(provider.root_dir, provider.default_branch(), catalog.len, projectors.len, branches, recovery)
+			return database_status_report_from_recovery(provider.root_dir, provider.default_branch(),
+				catalog.len, projectors.len, branches, recovery)
 		}
 		defer {
 			opened.close() or {}
 		}
 		branches = opened.branch_names()
 	}
-	return database_status_report_from_recovery(provider.root_dir, provider.default_branch(), catalog.len, projectors.len, branches, recovery)
+	return database_status_report_from_recovery(provider.root_dir, provider.default_branch(),
+		catalog.len, projectors.len, branches, recovery)
 }
 
 pub fn (mut database PersistentDatabase) head() !Branch {
@@ -2425,11 +2557,13 @@ pub fn (mut database PersistentDatabase) merge_branches(ours_branch string, thei
 }
 
 pub fn (mut database PersistentDatabase) auto_merge_by_roots(base_root_cid string, ours_root_cid string, theirs_root_cid string, cfg ChunkConfig) !MergeResult {
-	return auto_merge_by_roots(base_root_cid, ours_root_cid, theirs_root_cid, cfg, mut database.engine.repository.node_store)
+	return auto_merge_by_roots(base_root_cid, ours_root_cid, theirs_root_cid, cfg, mut
+		database.engine.repository.node_store)
 }
 
 pub fn (mut database PersistentDatabase) merge_branch_into(ours_branch string, theirs_branch string, resolutions []ConflictResolution, cfg ChunkConfig, meta CommitMeta) !BranchUpdate {
-	return database.engine.merge_branch_into(ours_branch, theirs_branch, resolutions, cfg, meta)
+	return database.engine.merge_branch_into(ours_branch, theirs_branch, resolutions,
+		cfg, meta)
 }
 
 pub fn (mut database PersistentDatabase) preview_merge(ours_branch string, theirs_branch string, cfg ChunkConfig) !RootHashMergePreview {
@@ -2438,20 +2572,20 @@ pub fn (mut database PersistentDatabase) preview_merge(ours_branch string, their
 	theirs := database.engine.checkout(theirs_branch)!
 	result := database.engine.merge_branches(ours_branch, theirs_branch, cfg)!
 	return RootHashMergePreview{
-		ours_branch: ours_branch
-		theirs_branch: theirs_branch
-		base_commit_cid: base.cid
-		base_root_cid: base.root_cid
-		ours_commit_cid: ours.cid
-		ours_root_cid: ours.root_cid
+		ours_branch:       ours_branch
+		theirs_branch:     theirs_branch
+		base_commit_cid:   base.cid
+		base_root_cid:     base.root_cid
+		ours_commit_cid:   ours.cid
+		ours_root_cid:     ours.root_cid
 		theirs_commit_cid: theirs.cid
-		theirs_root_cid: theirs.root_cid
-		conflicts: result.conflicts.len
-		changed_keys: result.changed_keys.len
-		changed_subtrees: result.changed_subtrees.len
-		fast_forward: base.cid == ours.cid || base.cid == theirs.cid
-		ours_unchanged: base.root_cid == ours.root_cid
-		theirs_unchanged: base.root_cid == theirs.root_cid
+		theirs_root_cid:   theirs.root_cid
+		conflicts:         result.conflicts.len
+		changed_keys:      result.changed_keys.len
+		changed_subtrees:  result.changed_subtrees.len
+		fast_forward:      base.cid == ours.cid || base.cid == theirs.cid
+		ours_unchanged:    base.root_cid == ours.root_cid
+		theirs_unchanged:  base.root_cid == theirs.root_cid
 	}
 }
 
@@ -2461,25 +2595,25 @@ pub fn (mut database PersistentDatabase) merge_report(ours_branch string, theirs
 	theirs := database.engine.checkout(theirs_branch)!
 	result := database.engine.merge_branches(ours_branch, theirs_branch, cfg)!
 	preview := RootHashMergePreview{
-		ours_branch: ours_branch
-		theirs_branch: theirs_branch
-		base_commit_cid: base.cid
-		base_root_cid: base.root_cid
-		ours_commit_cid: ours.cid
-		ours_root_cid: ours.root_cid
+		ours_branch:       ours_branch
+		theirs_branch:     theirs_branch
+		base_commit_cid:   base.cid
+		base_root_cid:     base.root_cid
+		ours_commit_cid:   ours.cid
+		ours_root_cid:     ours.root_cid
 		theirs_commit_cid: theirs.cid
-		theirs_root_cid: theirs.root_cid
-		conflicts: result.conflicts.len
-		changed_keys: result.changed_keys.len
-		changed_subtrees: result.changed_subtrees.len
-		fast_forward: base.cid == ours.cid || base.cid == theirs.cid
-		ours_unchanged: base.root_cid == ours.root_cid
-		theirs_unchanged: base.root_cid == theirs.root_cid
+		theirs_root_cid:   theirs.root_cid
+		conflicts:         result.conflicts.len
+		changed_keys:      result.changed_keys.len
+		changed_subtrees:  result.changed_subtrees.len
+		fast_forward:      base.cid == ours.cid || base.cid == theirs.cid
+		ours_unchanged:    base.root_cid == ours.root_cid
+		theirs_unchanged:  base.root_cid == theirs.root_cid
 	}
 	return RootHashMergeReport{
-		preview: preview
-		table_stats: build_merge_table_stats(result.changed_keys, result.conflicts)
-		conflict_keys: enrich_merge_conflict_preview(database, build_merge_conflict_preview(result.conflicts,
+		preview:        preview
+		table_stats:    build_merge_table_stats(result.changed_keys, result.conflicts)
+		conflict_keys:  enrich_merge_conflict_preview(database, build_merge_conflict_preview(result.conflicts,
 			conflict_limit), result.conflicts, database.catalog)
 		conflict_limit: if conflict_limit > 0 { conflict_limit } else { result.conflicts.len }
 	}
@@ -2508,6 +2642,7 @@ pub fn (mut database PersistentDatabase) register_table(spec TypedTableSpec) ! {
 	database.catalog[spec.name()] = spec
 	database.catalog_dirty = true
 	database.persist_catalog()!
+	ensure_fts_sidecar_for_specs(mut database, [spec])!
 }
 
 pub fn (mut database PersistentDatabase) register_or_update_table(spec TypedTableSpec) !bool {
@@ -2527,21 +2662,25 @@ pub fn (mut database PersistentDatabase) register_or_update_table(spec TypedTabl
 	database.catalog[spec.name()] = TypedTableSpec.new(existing.table, merged_indexes)!
 	database.catalog_dirty = true
 	database.persist_catalog()!
+	ensure_fts_sidecar_for_specs(mut database, [database.catalog[spec.name()] or { spec }])!
 	return true
 }
 
 pub fn (mut database PersistentDatabase) rebuild_indexes_at_branch(branch_name string, table_names []string, cfg ChunkConfig) !BranchUpdate {
 	tree := database.tree_at_branch(branch_name)!
-	next_tree := rebuild_typed_indexes_for_tables(tree, database.registered_specs(), table_names, cfg)!
-	return database.commit_to_branch(branch_name, next_tree, CommitMeta{
-		author: 'pollydb'
-		message: if table_names.len > 0 {
-			'rebuild indexes for ${table_names.join(",")}'
+	next_tree := rebuild_typed_indexes_for_tables(tree, database.registered_specs(), table_names,
+		cfg)!
+	update := database.commit_to_branch(branch_name, next_tree, CommitMeta{
+		author:    'pollydb'
+		message:   if table_names.len > 0 {
+			'rebuild indexes for ${table_names.join(',')}'
 		} else {
 			'rebuild indexes'
 		}
 		timestamp: 0
-	})
+	})!
+	database.rebuild_fts_indexes_at_branch(branch_name, table_names)!
+	return update
 }
 
 pub fn (mut database PersistentDatabase) register_aggregate_projection(def AggregateProjectionDef) ! {
@@ -2580,9 +2719,7 @@ pub fn (database PersistentDatabase) table_names() []string {
 }
 
 pub fn (database PersistentDatabase) table_spec(name string) !TypedTableSpec {
-	spec := database.catalog[name] or {
-		return error('typed table not registered: ${name}')
-	}
+	spec := database.catalog[name] or { return error('typed table not registered: ${name}') }
 	return spec
 }
 
@@ -2642,6 +2779,10 @@ fn index_signature(index SchemaIndexDef) string {
 		index.column,
 		index.json_field,
 		index.markdown_selector,
+		index.fts_source_plugin,
+		index.fts_text_mode,
+		index.fts_tokenizer,
+		'prefix:${index.fts_prefix_lengths.map(it.str()).join(',')}',
 		'typ:${index.json_field_type.str()}',
 		'stores:${index.stores_row}',
 	].join('|')
@@ -2658,21 +2799,31 @@ pub fn (mut database PersistentDatabase) projection_states_at_branch(branch_name
 		projector := database.projectors[name] or { continue }
 		virtual_root := existing[name] or {
 			VirtualRootRef{
-				name: projector.name
-				root_cid: ''
+				name:                 projector.name
+				root_cid:             ''
 				source_data_root_cid: commit.root_cid
-				fresh: false
-				stale_reason: 'registration_backfill'
+				fresh:                false
+				stale_reason:         'registration_backfill'
 			}
 		}
-		stale_reason := if virtual_root.fresh { '' } else if virtual_root.stale_reason.len > 0 { virtual_root.stale_reason } else if virtual_root.source_data_root_cid != commit.root_cid { 'new_data_root' } else if virtual_root.root_cid.len == 0 { 'registration_backfill' } else { 'policy_budget_skipped' }
+		stale_reason := if virtual_root.fresh {
+			''
+		} else if virtual_root.stale_reason.len > 0 {
+			virtual_root.stale_reason
+		} else if virtual_root.source_data_root_cid != commit.root_cid {
+			'new_data_root'
+		} else if virtual_root.root_cid.len == 0 {
+			'registration_backfill'
+		} else {
+			'policy_budget_skipped'
+		}
 		states << AggregateProjectorState{
-			projection: projector
+			projection:            projector
 			current_data_root_cid: commit.root_cid
-			source_data_root_cid: virtual_root.source_data_root_cid
-			virtual_root_cid: virtual_root.root_cid
-			fresh: virtual_root.fresh
-			stale_reason: stale_reason
+			source_data_root_cid:  virtual_root.source_data_root_cid
+			virtual_root_cid:      virtual_root.root_cid
+			fresh:                 virtual_root.fresh
+			stale_reason:          stale_reason
 		}
 	}
 	return states
@@ -2703,10 +2854,22 @@ pub fn (mut database PersistentDatabase) has_stale_projections_at_branch(branch_
 
 fn (options GroupCommitOptions) aggregate_projection_refresh_limit() int {
 	return match options.aggregate_projection_refresh_policy {
-		.none { -1 }
-		.stale_one { 1 }
-		.stale_up_to { if options.max_aggregate_projection_refreshes > 0 { options.max_aggregate_projection_refreshes } else { 1 } }
-		.stale_all { 0 }
+		.none {
+			-1
+		}
+		.stale_one {
+			1
+		}
+		.stale_up_to {
+			if options.max_aggregate_projection_refreshes > 0 {
+				options.max_aggregate_projection_refreshes
+			} else {
+				1
+			}
+		}
+		.stale_all {
+			0
+		}
 	}
 }
 
@@ -2740,19 +2903,23 @@ fn (mut database PersistentDatabase) virtual_roots_for_new_data_root(branch_name
 		projector := database.projectors[name] or { continue }
 		previous := previous_roots[name] or {
 			VirtualRootRef{
-				name: projector.name
-				root_cid: ''
+				name:                 projector.name
+				root_cid:             ''
 				source_data_root_cid: previous_commit.root_cid
-				fresh: false
-				stale_reason: 'registration_backfill'
+				fresh:                false
+				stale_reason:         'registration_backfill'
 			}
 		}
 		refs << VirtualRootRef{
-			name: projector.name
-			root_cid: previous.root_cid
+			name:                 projector.name
+			root_cid:             previous.root_cid
 			source_data_root_cid: new_root_cid
-			fresh: false
-			stale_reason: if previous.root_cid.len == 0 { 'registration_backfill' } else { 'new_data_root' }
+			fresh:                false
+			stale_reason:         if previous.root_cid.len == 0 {
+				'registration_backfill'
+			} else {
+				'new_data_root'
+			}
 		}
 	}
 	return refs
@@ -2769,9 +2936,9 @@ pub fn (database PersistentDatabase) begin_session(options SessionOptions) !Data
 		return error('session branch name cannot be empty')
 	}
 	return DatabaseSession{
-		root_dir: database.root_dir
+		root_dir:    database.root_dir
 		branch_name: options.branch_name
-		specs: database.registered_specs()
+		specs:       database.registered_specs()
 	}
 }
 
@@ -2788,24 +2955,30 @@ pub fn (mut database PersistentDatabase) begin_group_commit_session(options Sess
 		return error('session branch name cannot be empty')
 	}
 	return GroupCommitSession{
-		branch_name: options.branch_name
-		specs: database.registered_specs()
-		options: GroupCommitOptions{
-			checkpoint_every: if group.checkpoint_every > 0 { group.checkpoint_every } else { 1 }
-			checkpoint_mode: group.checkpoint_mode
-			auto_refresh_index_snapshots: group.auto_refresh_index_snapshots
+		branch_name:               options.branch_name
+		specs:                     database.registered_specs()
+		options:                   GroupCommitOptions{
+			checkpoint_every:                    if group.checkpoint_every > 0 {
+				group.checkpoint_every
+			} else {
+				1
+			}
+			checkpoint_mode:                     group.checkpoint_mode
+			auto_refresh_index_snapshots:        group.auto_refresh_index_snapshots
 			aggregate_projection_refresh_policy: group.aggregate_projection_refresh_policy
-			max_aggregate_projection_refreshes: group.max_aggregate_projection_refreshes
+			max_aggregate_projection_refreshes:  group.max_aggregate_projection_refreshes
 		}
-		working_set: database.begin_working_set_with_specs(options.branch_name, database.registered_specs())!
-		last_meta: CommitMeta{}
-		refresh_handles: []IndexSnapshotRefreshHandle{}
+		working_set:               database.begin_working_set_with_specs(options.branch_name,
+			database.registered_specs())!
+		last_meta:                 CommitMeta{}
+		refresh_handles:           []IndexSnapshotRefreshHandle{}
 		aggregate_refresh_handles: []AggregateProjectionRefreshHandle{}
 	}
 }
 
 pub fn (mut database PersistentDatabase) begin_default_group_commit_session(group GroupCommitOptions) !GroupCommitSession {
-	return database.begin_group_commit_session(SessionOptions.for_branch(database.default_branch), group)
+	return database.begin_group_commit_session(SessionOptions.for_branch(database.default_branch),
+		group)
 }
 
 pub fn (mut database PersistentDatabase) begin_high_throughput_group_commit_session(options SessionOptions) !GroupCommitSession {
@@ -2821,33 +2994,41 @@ pub fn (mut database PersistentDatabase) begin_split_group_commit_session(option
 		return error('session branch name cannot be empty')
 	}
 	return SplitGroupCommitSession{
-		branch_name: options.branch_name
-		specs: database.registered_specs()
-		options: GroupCommitOptions{
-			checkpoint_every: if group.checkpoint_every > 0 { group.checkpoint_every } else { 1 }
-			checkpoint_mode: group.checkpoint_mode
-			auto_refresh_index_snapshots: group.auto_refresh_index_snapshots
+		branch_name:               options.branch_name
+		specs:                     database.registered_specs()
+		options:                   GroupCommitOptions{
+			checkpoint_every:                    if group.checkpoint_every > 0 {
+				group.checkpoint_every
+			} else {
+				1
+			}
+			checkpoint_mode:                     group.checkpoint_mode
+			auto_refresh_index_snapshots:        group.auto_refresh_index_snapshots
 			aggregate_projection_refresh_policy: group.aggregate_projection_refresh_policy
-			max_aggregate_projection_refreshes: group.max_aggregate_projection_refreshes
+			max_aggregate_projection_refreshes:  group.max_aggregate_projection_refreshes
 		}
-		working_set: database.begin_split_working_set_with_specs(options.branch_name, database.registered_specs(), cfg)!
-		last_meta: CommitMeta{}
-		last_cfg: cfg
-		refresh_handles: []IndexSnapshotRefreshHandle{}
+		working_set:               database.begin_split_working_set_with_specs(options.branch_name,
+			database.registered_specs(), cfg)!
+		last_meta:                 CommitMeta{}
+		last_cfg:                  cfg
+		refresh_handles:           []IndexSnapshotRefreshHandle{}
 		aggregate_refresh_handles: []AggregateProjectionRefreshHandle{}
 	}
 }
 
 pub fn (mut database PersistentDatabase) begin_default_split_group_commit_session(group GroupCommitOptions, cfg ChunkConfig) !SplitGroupCommitSession {
-	return database.begin_split_group_commit_session(SessionOptions.for_branch(database.default_branch), group, cfg)
+	return database.begin_split_group_commit_session(SessionOptions.for_branch(database.default_branch),
+		group, cfg)
 }
 
 pub fn (mut database PersistentDatabase) begin_split_high_throughput_group_commit_session(options SessionOptions, cfg ChunkConfig) !SplitGroupCommitSession {
-	return database.begin_split_group_commit_session(options, GroupCommitOptions.high_throughput(), cfg)
+	return database.begin_split_group_commit_session(options, GroupCommitOptions.high_throughput(),
+		cfg)
 }
 
 pub fn (mut database PersistentDatabase) begin_default_split_high_throughput_group_commit_session(cfg ChunkConfig) !SplitGroupCommitSession {
-	return database.begin_default_split_group_commit_session(GroupCommitOptions.high_throughput(), cfg)
+	return database.begin_default_split_group_commit_session(GroupCommitOptions.high_throughput(),
+		cfg)
 }
 
 pub fn (mut database PersistentDatabase) begin_transaction_with_specs(branch_name string, specs []TypedTableSpec) !TypedTransaction {
@@ -2857,7 +3038,7 @@ pub fn (mut database PersistentDatabase) begin_transaction_with_specs(branch_nam
 pub fn (mut database PersistentDatabase) begin_transaction_profiled(branch_name string) !PersistentDatabaseTypedTransactionOpenResult {
 	result := database.engine.typed_transaction_at_branch_profiled(branch_name, database.registered_specs())!
 	return PersistentDatabaseTypedTransactionOpenResult{
-		tx: result.tx
+		tx:      result.tx
 		timings: result.timings
 	}
 }
@@ -2879,16 +3060,18 @@ pub fn (mut database PersistentDatabase) begin_split_working_set_with_specs(bran
 }
 
 pub fn (mut database PersistentDatabase) begin_split_working_set(branch_name string, cfg ChunkConfig) !TypedSplitWorkingSet {
-	return database.begin_split_working_set_with_specs(branch_name, database.registered_specs(), cfg)
+	return database.begin_split_working_set_with_specs(branch_name, database.registered_specs(),
+		cfg)
 }
 
 pub fn (mut database PersistentDatabase) apply_typed_write_set_with_specs(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
 	if cfg.enable_split_backed_working_set {
-		split_result := database.apply_typed_write_set_split_backed_with_specs(branch_name, specs, write_set, cfg, meta)!
+		split_result := database.apply_typed_write_set_split_backed_with_specs(branch_name,
+			specs, write_set, cfg, meta)!
 		return BranchTypedTransactionResult{
-			update: split_result.update
+			update:             split_result.update
 			transaction_update: split_result.transaction_update
-			timings: BranchTypedTransactionTimings{}
+			timings:            BranchTypedTransactionTimings{}
 		}
 	}
 	tx := database.engine.typed_transaction_at_branch(branch_name, specs)!
@@ -2899,40 +3082,46 @@ pub fn (mut database PersistentDatabase) apply_typed_write_set_with_specs(branch
 	normalized_tree, _ := rebuild_persistent_typed_indexes_for_changed_rows(database.root_dir,
 		transaction_update.tx.current_tree(), specs, changed_rows, cfg)!
 	virtual_roots := database.virtual_roots_for_new_data_root(branch_name, normalized_tree.root.cid)
-	update := database.engine.commit_to_branch_with_virtual_roots(branch_name, normalized_tree, meta,
-		virtual_roots)!
+	update := database.engine.commit_to_branch_with_virtual_roots(branch_name, normalized_tree,
+		meta, virtual_roots)!
+	database.apply_fts_write_set(branch_name, specs, normalized_write_set)!
 	return BranchTypedTransactionResult{
-		update: update
+		update:             update
 		transaction_update: TypedTransactionResult{
-			tx: new_typed_transaction_with_specs(normalized_tree, specs)!
+			tx:   new_typed_transaction_with_specs(normalized_tree, specs)!
 			diff: base_tree.diff(normalized_tree)
 		}
-		timings: BranchTypedTransactionTimings{}
+		timings:            BranchTypedTransactionTimings{}
 	}
 }
 
 pub fn (mut database PersistentDatabase) apply_typed_write_set(branch_name string, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
-	return database.apply_typed_write_set_with_specs(branch_name, database.registered_specs(), write_set, cfg, meta)
+	return database.apply_typed_write_set_with_specs(branch_name, database.registered_specs(),
+		write_set, cfg, meta)
 }
 
 pub fn (mut database PersistentDatabase) apply_typed_write_set_split_backed_with_specs(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedWorkingSetResult {
 	mut set := database.begin_split_working_set_with_specs(branch_name, specs, cfg)!
 	normalized_write_set := normalize_temporal_split_write_set(set.transaction(), write_set)!
 	_ = set.apply_write_set(normalized_write_set, cfg)!
-	return database.commit_typed_split_working_set(mut set, meta, cfg)
+	result := database.commit_typed_split_working_set(mut set, meta, cfg)!
+	database.apply_fts_write_set(branch_name, specs, normalized_write_set)!
+	return result
 }
 
 pub fn (mut database PersistentDatabase) apply_typed_write_set_split_backed(branch_name string, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedWorkingSetResult {
-	return database.apply_typed_write_set_split_backed_with_specs(branch_name, database.registered_specs(), write_set, cfg, meta)
+	return database.apply_typed_write_set_split_backed_with_specs(branch_name, database.registered_specs(),
+		write_set, cfg, meta)
 }
 
 pub fn (mut database PersistentDatabase) apply_typed_write_set_buffered_with_specs(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
 	if cfg.enable_split_backed_working_set {
-		split_result := database.apply_typed_write_set_split_backed_with_specs(branch_name, specs, write_set, cfg, meta)!
+		split_result := database.apply_typed_write_set_split_backed_with_specs(branch_name,
+			specs, write_set, cfg, meta)!
 		return BranchTypedTransactionResult{
-			update: split_result.update
+			update:             split_result.update
 			transaction_update: split_result.transaction_update
-			timings: BranchTypedTransactionTimings{}
+			timings:            BranchTypedTransactionTimings{}
 		}
 	}
 	tx := database.engine.typed_transaction_at_branch(branch_name, specs)!
@@ -2943,20 +3132,22 @@ pub fn (mut database PersistentDatabase) apply_typed_write_set_buffered_with_spe
 	normalized_tree, _ := rebuild_persistent_typed_indexes_for_changed_rows(database.root_dir,
 		transaction_update.tx.current_tree(), specs, changed_rows, cfg)!
 	virtual_roots := database.virtual_roots_for_new_data_root(branch_name, normalized_tree.root.cid)
-	update := database.engine.commit_to_branch_with_virtual_roots(branch_name, normalized_tree, meta,
-		virtual_roots)!
+	update := database.engine.commit_to_branch_with_virtual_roots(branch_name, normalized_tree,
+		meta, virtual_roots)!
+	database.apply_fts_write_set(branch_name, specs, normalized_write_set)!
 	return BranchTypedTransactionResult{
-		update: update
+		update:             update
 		transaction_update: TypedTransactionResult{
-			tx: new_typed_transaction_with_specs(normalized_tree, specs)!
+			tx:   new_typed_transaction_with_specs(normalized_tree, specs)!
 			diff: base_tree.diff(normalized_tree)
 		}
-		timings: BranchTypedTransactionTimings{}
+		timings:            BranchTypedTransactionTimings{}
 	}
 }
 
 pub fn (mut database PersistentDatabase) apply_typed_write_set_buffered(branch_name string, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
-	return database.apply_typed_write_set_buffered_with_specs(branch_name, database.registered_specs(), write_set, cfg, meta)
+	return database.apply_typed_write_set_buffered_with_specs(branch_name, database.registered_specs(),
+		write_set, cfg, meta)
 }
 
 pub fn (mut database PersistentDatabase) commit_typed_working_set(mut set TypedWorkingSet, meta CommitMeta) !BranchTypedWorkingSetResult {
@@ -2966,13 +3157,13 @@ pub fn (mut database PersistentDatabase) commit_typed_working_set(mut set TypedW
 	set.replace_working_tree(normalized_tree)!
 	diff := set.staged_diff()
 	virtual_roots := database.virtual_roots_for_new_data_root(set.branch_name, normalized_tree.root.cid)
-	update := database.engine.commit_to_branch_with_virtual_roots(set.branch_name, normalized_tree, meta,
-		virtual_roots)!
+	update := database.engine.commit_to_branch_with_virtual_roots(set.branch_name, normalized_tree,
+		meta, virtual_roots)!
 	set.sync_to_tree(update.snapshot.tree, update.snapshot.commit.cid)!
 	return BranchTypedWorkingSetResult{
-		update: update
+		update:             update
 		transaction_update: TypedTransactionResult{
-			tx: set.transaction()
+			tx:   set.transaction()
 			diff: diff
 		}
 	}
@@ -2987,16 +3178,16 @@ fn (mut database PersistentDatabase) commit_typed_split_working_set_mode(mut set
 	mut mixed_tx := new_typed_transaction_with_specs(mixed_tree, set.specs)!
 	diff := set.base_tree.diff(mixed_tree)
 	virtual_roots := database.virtual_roots_for_new_data_root(set.branch_name, mixed_tree.root.cid)
-	update := database.engine.commit_to_branch_with_virtual_roots(set.branch_name, mixed_tree, meta,
-		virtual_roots)!
+	update := database.engine.commit_to_branch_with_virtual_roots(set.branch_name, mixed_tree,
+		meta, virtual_roots)!
 	if sync_back {
 		set.sync_to_tree(update.snapshot.tree, update.snapshot.commit.cid, cfg)!
 	}
 	mixed_tx = new_typed_transaction_with_specs(update.snapshot.tree, set.specs)!
 	return BranchTypedWorkingSetResult{
-		update: update
+		update:             update
 		transaction_update: TypedTransactionResult{
-			tx: mixed_tx
+			tx:   mixed_tx
 			diff: diff
 		}
 	}
@@ -3009,13 +3200,13 @@ pub fn (mut database PersistentDatabase) commit_typed_working_set_buffered(mut s
 	set.replace_working_tree(normalized_tree)!
 	diff := set.staged_diff()
 	virtual_roots := database.virtual_roots_for_new_data_root(set.branch_name, normalized_tree.root.cid)
-	update := database.engine.commit_to_branch_with_virtual_roots(set.branch_name, normalized_tree, meta,
-		virtual_roots)!
+	update := database.engine.commit_to_branch_with_virtual_roots(set.branch_name, normalized_tree,
+		meta, virtual_roots)!
 	set.sync_to_tree(update.snapshot.tree, update.snapshot.commit.cid)!
 	return BranchTypedWorkingSetResult{
-		update: update
+		update:             update
 		transaction_update: TypedTransactionResult{
-			tx: set.transaction()
+			tx:   set.transaction()
 			diff: diff
 		}
 	}
@@ -3023,8 +3214,7 @@ pub fn (mut database PersistentDatabase) commit_typed_working_set_buffered(mut s
 
 pub fn (mut database PersistentDatabase) merge_into_working_set(mut set TypedWorkingSet, theirs_branch string, resolutions []ConflictResolution, cfg ChunkConfig) !WorkingSetMergeResult {
 	base_commit := database.engine.repository.repo.merge_base_commit(set.base_commit_cid,
-		(database.engine.repository.repo.branch(theirs_branch)!).commit_cid,
-		mut database.engine.repository.commit_store)!
+		(database.engine.repository.repo.branch(theirs_branch)!).commit_cid, mut database.engine.repository.commit_store)!
 	ours_commit := database.engine.repository.commit_store.get(set.base_commit_cid)!
 	theirs_commit := database.engine.repository.repo.checkout(theirs_branch, mut database.engine.repository.commit_store)!
 	base_tree := Tree.load(base_commit.root_cid, mut database.engine.repository.node_store)!
@@ -3032,11 +3222,12 @@ pub fn (mut database PersistentDatabase) merge_into_working_set(mut set TypedWor
 	theirs_tree := Tree.load(theirs_commit.root_cid, mut database.engine.repository.node_store)!
 	merge_progress_log('   -> merge stage: three_way_merge')
 	mut merge_sw := time.new_stopwatch()
-	merge_result := three_way_merge(base_commit, ours_commit, theirs_commit, base_tree, ours_tree,
-		theirs_tree, cfg)!
+	merge_result := three_way_merge(base_commit, ours_commit, theirs_commit, base_tree,
+		ours_tree, theirs_tree, cfg)!
 	merge_ms := merge_sw.elapsed().milliseconds()
 	merge_progress_log('   -> merge stage done: three_way_merge (${merge_ms} ms, changed_keys=${merge_result.changed_keys.len}, changed_subtrees=${merge_result.changed_subtrees.len}, conflicts=${merge_result.conflicts.len})')
-	auto_resolutions := auto_resolve_typed_row_conflicts(mut database, merge_result.conflicts, set.specs)
+	auto_resolutions := auto_resolve_typed_row_conflicts(mut database, merge_result.conflicts,
+		set.specs)
 	merge_progress_log('   -> merge stage: resolve_conflicts')
 	mut resolve_sw := time.new_stopwatch()
 	mut combined_resolutions := auto_resolutions.clone()
@@ -3055,24 +3246,24 @@ pub fn (mut database PersistentDatabase) merge_into_working_set(mut set TypedWor
 	merge_progress_log('   -> merge stage done: exact_changed_rows (${changed_rows_ms} ms, tables=${changed_rows.len}, rows=${changed_row_count})')
 	merge_progress_log('   -> merge stage: reindex')
 	mut reindex_sw := time.new_stopwatch()
-	normalized_tree, reindex_timings := rebuild_persistent_typed_indexes_for_changed_rows(database.root_dir, resolution.tree,
-		set.specs, changed_rows, cfg)!
+	normalized_tree, reindex_timings := rebuild_persistent_typed_indexes_for_changed_rows(database.root_dir,
+		resolution.tree, set.specs, changed_rows, cfg)!
 	reindex_ms := reindex_sw.elapsed().milliseconds()
 	merge_progress_log('   -> merge stage done: reindex (${reindex_ms} ms, strategy=${reindex_timings.strategy}, items=${reindex_timings.item_count}, changed_rows=${reindex_timings.changed_rows})')
 	set.replace_working_tree(normalized_tree)!
 	return WorkingSetMergeResult{
 		merge_result: merge_result
-		resolution: MergeResolution{
-			tree: normalized_tree
+		resolution:   MergeResolution{
+			tree:          normalized_tree
 			resolved_keys: resolution.resolved_keys.clone()
 		}
-		staged_diff: set.staged_diff()
-		timings: MergeStageTimings{
-			merge_ms: merge_ms
-			resolve_ms: resolve_ms
+		staged_diff:  set.staged_diff()
+		timings:      MergeStageTimings{
+			merge_ms:        merge_ms
+			resolve_ms:      resolve_ms
 			changed_rows_ms: changed_rows_ms
-			reindex_ms: reindex_ms
-			reindex: reindex_timings
+			reindex_ms:      reindex_ms
+			reindex:         reindex_timings
 		}
 	}
 }
@@ -3099,28 +3290,31 @@ pub fn (session DatabaseSession) begin_transaction(mut database PersistentDataba
 }
 
 pub fn (session DatabaseSession) begin_transaction_profiled(mut database PersistentDatabase) !PersistentDatabaseTypedTransactionOpenResult {
-	result := database.engine.typed_transaction_at_branch_profiled(session.branch_name, session.specs)!
+	result := database.engine.typed_transaction_at_branch_profiled(session.branch_name,
+		session.specs)!
 	return PersistentDatabaseTypedTransactionOpenResult{
-		tx: result.tx
+		tx:      result.tx
 		timings: result.timings
 	}
 }
 
 pub fn (session DatabaseSession) begin_working_set(mut database PersistentDatabase) !TransactionSession {
 	return TransactionSession{
-		root_dir: session.root_dir
+		root_dir:    session.root_dir
 		branch_name: session.branch_name
-		specs: session.specs.clone()
+		specs:       session.specs.clone()
 		working_set: database.begin_working_set_with_specs(session.branch_name, session.specs)!
 	}
 }
 
 pub fn (session DatabaseSession) begin_split_working_set(mut database PersistentDatabase, cfg ChunkConfig) !TypedSplitWorkingSet {
-	return database.begin_split_working_set_with_specs(session.branch_name, session.specs, cfg)
+	return database.begin_split_working_set_with_specs(session.branch_name, session.specs,
+		cfg)
 }
 
 pub fn (session DatabaseSession) begin_group_commit(mut database PersistentDatabase, group GroupCommitOptions) !GroupCommitSession {
-	return database.begin_group_commit_session(SessionOptions.for_branch(session.branch_name), group)
+	return database.begin_group_commit_session(SessionOptions.for_branch(session.branch_name),
+		group)
 }
 
 pub fn (session DatabaseSession) begin_high_throughput_group_commit(mut database PersistentDatabase) !GroupCommitSession {
@@ -3128,15 +3322,18 @@ pub fn (session DatabaseSession) begin_high_throughput_group_commit(mut database
 }
 
 pub fn (session DatabaseSession) begin_split_group_commit(mut database PersistentDatabase, group GroupCommitOptions, cfg ChunkConfig) !SplitGroupCommitSession {
-	return database.begin_split_group_commit_session(SessionOptions.for_branch(session.branch_name), group, cfg)
+	return database.begin_split_group_commit_session(SessionOptions.for_branch(session.branch_name),
+		group, cfg)
 }
 
 pub fn (session DatabaseSession) begin_split_high_throughput_group_commit(mut database PersistentDatabase, cfg ChunkConfig) !SplitGroupCommitSession {
-	return database.begin_split_high_throughput_group_commit_session(SessionOptions.for_branch(session.branch_name), cfg)
+	return database.begin_split_high_throughput_group_commit_session(SessionOptions.for_branch(session.branch_name),
+		cfg)
 }
 
 pub fn (session DatabaseSession) apply_write_set(mut database PersistentDatabase, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
-	return database.apply_typed_write_set_with_specs(session.branch_name, session.specs, write_set, cfg, meta)
+	return database.apply_typed_write_set_with_specs(session.branch_name, session.specs,
+		write_set, cfg, meta)
 }
 
 pub fn (session DatabaseSession) table_reader(mut database PersistentDatabase, table_name string) !BranchTableReader {
@@ -3144,11 +3341,11 @@ pub fn (session DatabaseSession) table_reader(mut database PersistentDatabase, t
 	root_cid := database.engine.root_cid_at_branch(session.branch_name)!
 	return BranchTableReader{
 		branch_name: session.branch_name
-		spec: spec
-		root_cid: root_cid
-		codec: TypedRowCodec.new(spec.table)
-		row_prefix: database_table_row_prefix(spec.table.name)
-		node_store: database.engine.repository.node_store
+		spec:        spec
+		root_cid:    root_cid
+		codec:       TypedRowCodec.new(spec.table)
+		row_prefix:  database_table_row_prefix(spec.table.name)
+		node_store:  database.engine.repository.node_store
 	}
 }
 
@@ -3157,9 +3354,9 @@ pub fn (mut database PersistentDatabase) snapshot_table_reader_for_commit(commit
 	root_cid := database.engine.root_cid_at_commit(commit_cid)!
 	return SnapshotTableReader{
 		commit_cid: commit_cid
-		root_cid: root_cid
-		spec: spec
-		codec: TypedRowCodec.new(spec.table)
+		root_cid:   root_cid
+		spec:       spec
+		codec:      TypedRowCodec.new(spec.table)
 		row_prefix: database_table_row_prefix(spec.table.name)
 		node_store: database.engine.repository.node_store
 	}
@@ -3172,10 +3369,11 @@ pub fn (mut database PersistentDatabase) snapshot_table_reader_for_branch(branch
 
 pub fn (mut database PersistentDatabase) snapshot_table_pair_reader_for_commits(left_commit_cid string, right_commit_cid string, table_name string) !SnapshotTablePairReader {
 	return SnapshotTablePairReader{
-		left_commit_cid: left_commit_cid
+		left_commit_cid:  left_commit_cid
 		right_commit_cid: right_commit_cid
-		left: database.snapshot_table_reader_for_commit(left_commit_cid, table_name)!
-		right: database.snapshot_table_reader_for_commit(right_commit_cid, table_name)!
+		left:             database.snapshot_table_reader_for_commit(left_commit_cid, table_name)!
+		right:            database.snapshot_table_reader_for_commit(right_commit_cid,
+			table_name)!
 	}
 }
 
@@ -3196,15 +3394,15 @@ pub fn (session DatabaseSession) index_reader(mut database PersistentDatabase, t
 	root_cid := database.engine.root_cid_at_branch(session.branch_name)!
 	column := target_index.value_column(spec.table)!
 	return BranchIndexReader{
-		branch_name: session.branch_name
-		spec: spec
-		index: target_index
-		root_cid: root_cid
-		codec: TypedRowCodec.new(spec.table)
-		row_prefix: database_table_row_prefix(spec.table.name)
+		branch_name:  session.branch_name
+		spec:         spec
+		index:        target_index
+		root_cid:     root_cid
+		codec:        TypedRowCodec.new(spec.table)
+		row_prefix:   database_table_row_prefix(spec.table.name)
 		index_prefix: database_index_entry_prefix(spec.table.name, target_index.name)
 		index_column: column
-		node_store: database.engine.repository.node_store
+		node_store:   database.engine.repository.node_store
 	}
 }
 
@@ -3225,15 +3423,15 @@ pub fn (mut database PersistentDatabase) snapshot_index_reader_for_commit(commit
 	root_cid := database.engine.root_cid_at_commit(commit_cid)!
 	column := target_index.value_column(spec.table)!
 	return SnapshotIndexReader{
-		commit_cid: commit_cid
-		root_cid: root_cid
-		spec: spec
-		index: target_index
-		codec: TypedRowCodec.new(spec.table)
-		row_prefix: database_table_row_prefix(spec.table.name)
+		commit_cid:   commit_cid
+		root_cid:     root_cid
+		spec:         spec
+		index:        target_index
+		codec:        TypedRowCodec.new(spec.table)
+		row_prefix:   database_table_row_prefix(spec.table.name)
 		index_prefix: database_index_entry_prefix(spec.table.name, target_index.name)
 		index_column: column
-		node_store: database.engine.repository.node_store
+		node_store:   database.engine.repository.node_store
 	}
 }
 
@@ -3244,10 +3442,12 @@ pub fn (mut database PersistentDatabase) snapshot_index_reader_for_branch(branch
 
 pub fn (mut database PersistentDatabase) snapshot_index_pair_reader_for_commits(left_commit_cid string, right_commit_cid string, table_name string, index_name string) !SnapshotIndexPairReader {
 	return SnapshotIndexPairReader{
-		left_commit_cid: left_commit_cid
+		left_commit_cid:  left_commit_cid
 		right_commit_cid: right_commit_cid
-		left: database.snapshot_index_reader_for_commit(left_commit_cid, table_name, index_name)!
-		right: database.snapshot_index_reader_for_commit(right_commit_cid, table_name, index_name)!
+		left:             database.snapshot_index_reader_for_commit(left_commit_cid, table_name,
+			index_name)!
+		right:            database.snapshot_index_reader_for_commit(right_commit_cid,
+			table_name, index_name)!
 	}
 }
 
@@ -3276,7 +3476,7 @@ pub fn (session DatabaseSession) scan_table(mut db PersistentDatabase, table_nam
 	for row in rows {
 		decoded << TypedSchemaRow{
 			primary_key: row.primary_key
-			data: view.schema.codec.decode(row.value)!
+			data:        view.schema.codec.decode(row.value)!
 		}
 	}
 	return decoded
@@ -3293,11 +3493,13 @@ pub fn (session DatabaseSession) sum_i64_column(mut db PersistentDatabase, table
 	mut reader := session.table_reader(mut db, table_name)!
 	column := reader.spec.table.column(column_name)!
 	if column.aggregate == .sum {
-		return sum_declared_i64_range(reader.root_cid, reader.spec.table.name, column_name, []u8{}, []u8{}, reader.codec, mut reader.node_store)
+		return sum_declared_i64_range(reader.root_cid, reader.spec.table.name, column_name,
+			[]u8{}, []u8{}, reader.codec, mut reader.node_store)
 	}
 	start_key := encode_table_row_key(reader.spec.table.name, []u8{})
 	end_key := encode_table_range_end(reader.spec.table.name)!
-	return Tree.sum_i64_column_range_in_byte_store(reader.root_cid, start_key, end_key, reader.codec, column_name, mut reader.node_store)
+	return Tree.sum_i64_column_range_in_byte_store(reader.root_cid, start_key, end_key,
+		reader.codec, column_name, mut reader.node_store)
 }
 
 pub fn (session DatabaseSession) count_rows_range(mut db PersistentDatabase, table_name string, start_primary_key []u8, end_primary_key []u8) !int {
@@ -3315,7 +3517,8 @@ pub fn (session DatabaseSession) sum_i64_column_range(mut db PersistentDatabase,
 	mut reader := session.table_reader(mut db, table_name)!
 	column := reader.spec.table.column(column_name)!
 	if column.aggregate == .sum {
-		return sum_declared_i64_range(reader.root_cid, reader.spec.table.name, column_name, start_primary_key, end_primary_key, reader.codec, mut reader.node_store)
+		return sum_declared_i64_range(reader.root_cid, reader.spec.table.name, column_name,
+			start_primary_key, end_primary_key, reader.codec, mut reader.node_store)
 	}
 	start_key := encode_table_row_key(reader.spec.table.name, start_primary_key)
 	end_key := if end_primary_key.len == 0 {
@@ -3323,7 +3526,8 @@ pub fn (session DatabaseSession) sum_i64_column_range(mut db PersistentDatabase,
 	} else {
 		encode_table_row_key(reader.spec.table.name, end_primary_key)
 	}
-	return Tree.sum_i64_column_range_in_byte_store(reader.root_cid, start_key, end_key, reader.codec, column_name, mut reader.node_store)
+	return Tree.sum_i64_column_range_in_byte_store(reader.root_cid, start_key, end_key,
+		reader.codec, column_name, mut reader.node_store)
 }
 
 pub fn (session DatabaseSession) lookup_index(mut db PersistentDatabase, table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
@@ -3339,31 +3543,31 @@ pub fn (session DatabaseSession) lookup_index_ordered(mut db PersistentDatabase,
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .all
-		value: clone_column_value(start_value)
-		has_value: has_start_value
+		mode:              .all
+		value:             clone_column_value(start_value)
+		has_value:         has_start_value
 		start_primary_key: start_primary_key.clone()
-		limit: limit
-		reverse: reverse
+		limit:             limit
+		reverse:           reverse
 	})!
 }
 
 pub fn (session DatabaseSession) lookup_index_ordered_projected(mut db PersistentDatabase, table_name string, index_name string, start_value ColumnValue, has_start_value bool, start_primary_key []u8, limit int, columns []string, reverse bool) ![]TypedSchemaRow {
 	mut reader := session.index_reader(mut db, table_name, index_name)!
 	if reader.index.stores_row {
-		return reader.find_rows_covering_ordered_projected(start_value, has_start_value, start_primary_key,
-			limit, columns, reverse)
+		return reader.find_rows_covering_ordered_projected(start_value, has_start_value,
+			start_primary_key, limit, columns, reverse)
 	}
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .all
-		value: clone_column_value(start_value)
-		has_value: has_start_value
+		mode:              .all
+		value:             clone_column_value(start_value)
+		has_value:         has_start_value
 		start_primary_key: start_primary_key.clone()
-		limit: limit
-		columns: columns.clone()
-		reverse: reverse
+		limit:             limit
+		columns:           columns.clone()
+		reverse:           reverse
 	})!
 }
 
@@ -3375,9 +3579,9 @@ pub fn (session DatabaseSession) lookup_index_projected(mut db PersistentDatabas
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .exact
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .exact
+		value:   clone_column_value(value)
+		limit:   limit
 		columns: columns.clone()
 	})
 }
@@ -3404,9 +3608,9 @@ pub fn (session DatabaseSession) lookup_index_prefix_reverse(mut db PersistentDa
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .prefix
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .prefix
+		value:   clone_column_value(value)
+		limit:   limit
 		reverse: true
 	})
 }
@@ -3415,9 +3619,9 @@ pub fn (session DatabaseSession) lookup_index_prefix_reverse_projected(mut db Pe
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .prefix
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .prefix
+		value:   clone_column_value(value)
+		limit:   limit
 		columns: columns.clone()
 		reverse: true
 	})
@@ -3427,12 +3631,12 @@ pub fn (session DatabaseSession) lookup_index_between_projected(mut db Persisten
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .between
-		value: clone_column_value(start_value)
-		second_value: clone_column_value(end_value)
+		mode:             .between
+		value:            clone_column_value(start_value)
+		second_value:     clone_column_value(end_value)
 		has_second_value: true
-		limit: limit
-		columns: columns.clone()
+		limit:            limit
+		columns:          columns.clone()
 	})
 }
 
@@ -3440,11 +3644,11 @@ pub fn (session DatabaseSession) lookup_index_after_projected(mut db PersistentD
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .after
-		value: clone_column_value(value)
+		mode:      .after
+		value:     clone_column_value(value)
 		has_value: true
-		limit: limit
-		columns: columns.clone()
+		limit:     limit
+		columns:   columns.clone()
 	})
 }
 
@@ -3452,11 +3656,11 @@ pub fn (session DatabaseSession) lookup_index_after_reverse(mut db PersistentDat
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .after
-		value: clone_column_value(value)
+		mode:      .after
+		value:     clone_column_value(value)
 		has_value: true
-		limit: limit
-		reverse: true
+		limit:     limit
+		reverse:   true
 	})
 }
 
@@ -3464,12 +3668,12 @@ pub fn (session DatabaseSession) lookup_index_after_reverse_projected(mut db Per
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .after
-		value: clone_column_value(value)
+		mode:      .after
+		value:     clone_column_value(value)
 		has_value: true
-		limit: limit
-		columns: columns.clone()
-		reverse: true
+		limit:     limit
+		columns:   columns.clone()
+		reverse:   true
 	})
 }
 
@@ -3477,9 +3681,9 @@ pub fn (session DatabaseSession) lookup_index_before_projected(mut db Persistent
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .before
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .before
+		value:   clone_column_value(value)
+		limit:   limit
 		columns: columns.clone()
 	})
 }
@@ -3489,17 +3693,17 @@ pub fn (session DatabaseSession) lookup_index_between(mut db PersistentDatabase,
 	view := tx.indexed_view(table_name)!
 	for index in view.indexes {
 		if index.name == index_name && index.is_field_selector() {
-			return transaction_markdown_index_lookup_between(session.root_dir, view, index, start_value,
-				end_value, limit)
+			return transaction_markdown_index_lookup_between(session.root_dir, view, index,
+				start_value, end_value, limit)
 		}
 	}
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .between
-		value: clone_column_value(start_value)
-		second_value: clone_column_value(end_value)
-		has_value: true
+		mode:             .between
+		value:            clone_column_value(start_value)
+		second_value:     clone_column_value(end_value)
+		has_value:        true
 		has_second_value: true
-		limit: limit
+		limit:            limit
 	})
 }
 
@@ -3507,13 +3711,13 @@ pub fn (session DatabaseSession) lookup_index_between_reverse(mut db PersistentD
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .between
-		value: clone_column_value(start_value)
-		second_value: clone_column_value(end_value)
-		has_value: true
+		mode:             .between
+		value:            clone_column_value(start_value)
+		second_value:     clone_column_value(end_value)
+		has_value:        true
 		has_second_value: true
-		limit: limit
-		reverse: true
+		limit:            limit
+		reverse:          true
 	})
 }
 
@@ -3521,14 +3725,14 @@ pub fn (session DatabaseSession) lookup_index_between_reverse_projected(mut db P
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .between
-		value: clone_column_value(start_value)
-		second_value: clone_column_value(end_value)
-		has_value: true
+		mode:             .between
+		value:            clone_column_value(start_value)
+		second_value:     clone_column_value(end_value)
+		has_value:        true
 		has_second_value: true
-		limit: limit
-		columns: columns.clone()
-		reverse: true
+		limit:            limit
+		columns:          columns.clone()
+		reverse:          true
 	})
 }
 
@@ -3537,14 +3741,15 @@ pub fn (session DatabaseSession) lookup_index_after(mut db PersistentDatabase, t
 	view := tx.indexed_view(table_name)!
 	for index in view.indexes {
 		if index.name == index_name && index.is_field_selector() {
-			return transaction_markdown_index_lookup_after(session.root_dir, view, index, value, limit)
+			return transaction_markdown_index_lookup_after(session.root_dir, view, index,
+				value, limit)
 		}
 	}
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .after
-		value: clone_column_value(value)
+		mode:      .after
+		value:     clone_column_value(value)
 		has_value: true
-		limit: limit
+		limit:     limit
 	})
 }
 
@@ -3553,11 +3758,12 @@ pub fn (session DatabaseSession) lookup_index_before(mut db PersistentDatabase, 
 	view := tx.indexed_view(table_name)!
 	for index in view.indexes {
 		if index.name == index_name && index.is_field_selector() {
-			return transaction_markdown_index_lookup_before(session.root_dir, view, index, value, limit)
+			return transaction_markdown_index_lookup_before(session.root_dir, view, index,
+				value, limit)
 		}
 	}
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .before
+		mode:  .before
 		value: clone_column_value(value)
 		limit: limit
 	})
@@ -3567,9 +3773,9 @@ pub fn (session DatabaseSession) lookup_index_before_reverse(mut db PersistentDa
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .before
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .before
+		value:   clone_column_value(value)
+		limit:   limit
 		reverse: true
 	})
 }
@@ -3578,9 +3784,9 @@ pub fn (session DatabaseSession) lookup_index_before_reverse_projected(mut db Pe
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .before
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .before
+		value:   clone_column_value(value)
+		limit:   limit
 		columns: columns.clone()
 		reverse: true
 	})
@@ -3590,7 +3796,7 @@ pub fn (session DatabaseSession) table_cursor(mut db PersistentDatabase, table_n
 	tx := session.begin_transaction(mut db)!
 	view := tx.indexed_view(table_name)!
 	return TypedTableCursor{
-		view: view
+		view:   view
 		cursor: view.schema.table.cursor(start_primary_key, limit)!
 	}
 }
@@ -3613,9 +3819,10 @@ pub fn (session DatabaseSession) index_cursor(mut db PersistentDatabase, table_n
 	column := target_index.value_column(view.schema.codec.table)!
 	encoded := TypedValueEncoder.encode_index_value(value, column)!
 	return TypedIndexCursor{
-		view: view
+		view:       view
 		index_name: index_name
-		cursor: IndexView.new(view.schema.table.tree, table_name, index_name).cursor(encoded, start_primary_key, limit)!
+		cursor:     IndexView.new(view.schema.table.tree, table_name, index_name).cursor(encoded,
+			start_primary_key, limit)!
 	}
 }
 
@@ -3633,7 +3840,8 @@ fn normalize_temporal_row(table TableDef, existing_row TypedRowData, has_existin
 	}
 	for column in table.columns {
 		if !has_existing {
-			if !next_row.has(column.name) && (column.default_current_timestamp || column.auto_update_current_timestamp) {
+			if !next_row.has(column.name)
+				&& (column.default_current_timestamp || column.auto_update_current_timestamp) {
 				next_row.set(column.name, current_timestamp)
 			}
 			continue
@@ -3679,7 +3887,8 @@ fn normalize_temporal_write_set_with_views(specs map[string]TypedTableSpec, mut 
 				existing_row = existing.data.clone()
 			}
 		}
-		next_row := normalize_temporal_row(spec.table, existing_row, has_existing, op.row, current_timestamp)!
+		next_row := normalize_temporal_row(spec.table, existing_row, has_existing, op.row,
+			current_timestamp)!
 		normalized.put(op.table_name, op.primary_key, next_row)
 		cached_rows[cache_key] = next_row.clone()
 		cached_exists[cache_key] = true
@@ -3767,8 +3976,8 @@ pub fn (session DatabaseSession) patch_json_paths(mut database PersistentDatabas
 pub fn (session DatabaseSession) set_json_path(mut db PersistentDatabase, table_name string, primary_key []u8, column_name string, json_path string, value ColumnValue, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
 	return session.patch_json_paths(mut db, table_name, primary_key, column_name, [
 		JsonPathUpdate{
-			path: json_path
-			op: .set
+			path:  json_path
+			op:    .set
 			value: value
 		},
 	], cfg, meta)
@@ -3790,7 +3999,8 @@ pub fn (session DatabaseSession) put_markdown(mut db PersistentDatabase, table_n
 		MarkdownRef { stored }
 		else { return error('markdown ingest did not return MarkdownRef payload: ${column_name}') }
 	}
-	return session.put_markdown_ref(mut db, table_name, primary_key, column_name, ref, cfg, meta)
+	return session.put_markdown_ref(mut db, table_name, primary_key, column_name, ref,
+		cfg, meta)
 }
 
 pub fn (session DatabaseSession) get_markdown_ref(mut db PersistentDatabase, table_name string, primary_key []u8, column_name string) !MarkdownRef {
@@ -3812,14 +4022,15 @@ pub fn (session DatabaseSession) get_markdown(mut db PersistentDatabase, table_n
 }
 
 pub fn (session DatabaseSession) set_json_path_null(mut db PersistentDatabase, table_name string, primary_key []u8, column_name string, json_path string, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
-	return session.set_json_path(mut db, table_name, primary_key, column_name, json_path, NullValue{}, cfg, meta)
+	return session.set_json_path(mut db, table_name, primary_key, column_name, json_path,
+		NullValue{}, cfg, meta)
 }
 
 pub fn (session DatabaseSession) delete_json_path(mut db PersistentDatabase, table_name string, primary_key []u8, column_name string, json_path string, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
 	return session.patch_json_paths(mut db, table_name, primary_key, column_name, [
 		JsonPathUpdate{
-			path: json_path
-			op: .delete
+			path:  json_path
+			op:    .delete
 			value: NullValue{}
 		},
 	], cfg, meta)
@@ -3854,7 +4065,8 @@ pub fn (session TransactionSession) staged_diff() TreeDiff {
 }
 
 pub fn (mut session TransactionSession) apply_write_set(write_set TypedWriteSet, cfg ChunkConfig) !TypedTransactionResult {
-	normalized_write_set := normalize_temporal_write_set(session.working_set.transaction(), write_set)!
+	normalized_write_set := normalize_temporal_write_set(session.working_set.transaction(),
+		write_set)!
 	return session.working_set.apply_write_set(normalized_write_set, cfg)
 }
 
@@ -3882,7 +4094,7 @@ pub fn (session TransactionSession) scan_table(table_name string, limit int) ![]
 	for row in rows {
 		decoded << TypedSchemaRow{
 			primary_key: row.primary_key
-			data: view.schema.codec.decode(row.value)!
+			data:        view.schema.codec.decode(row.value)!
 		}
 	}
 	return decoded
@@ -3902,13 +4114,15 @@ pub fn (session TransactionSession) sum_i64_column(table_name string, column_nam
 
 pub fn (session TransactionSession) count_rows_range(table_name string, start_primary_key []u8, end_primary_key []u8) !int {
 	view := session.working_set.transaction().indexed_view(table_name)!
-	mut cursor := view.schema.table.raw_range_cursor(start_primary_key, end_primary_key, 0)!
+	mut cursor := view.schema.table.raw_range_cursor(start_primary_key, end_primary_key,
+		0)!
 	return cursor.count_remaining()
 }
 
 pub fn (session TransactionSession) sum_i64_column_range(table_name string, column_name string, start_primary_key []u8, end_primary_key []u8) !i64 {
 	view := session.working_set.transaction().indexed_view(table_name)!
-	mut cursor := view.schema.table.raw_range_cursor(start_primary_key, end_primary_key, 0)!
+	mut cursor := view.schema.table.raw_range_cursor(start_primary_key, end_primary_key,
+		0)!
 	return cursor.sum_i64_column(view.schema.codec, column_name)
 }
 
@@ -3916,7 +4130,8 @@ pub fn (session TransactionSession) lookup_index(table_name string, index_name s
 	view := session.working_set.transaction().indexed_view(table_name)!
 	for index in view.indexes {
 		if index.name == index_name && index.is_field_selector() {
-			return transaction_markdown_index_lookup(session.root_dir, view, index, value, limit)
+			return transaction_markdown_index_lookup(session.root_dir, view, index, value,
+				limit)
 		}
 	}
 	return view.find_by_index(index_name, value, limit)
@@ -3925,25 +4140,25 @@ pub fn (session TransactionSession) lookup_index(table_name string, index_name s
 pub fn (session TransactionSession) lookup_index_ordered(table_name string, index_name string, start_value ColumnValue, has_start_value bool, start_primary_key []u8, limit int, reverse bool) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .all
-		value: clone_column_value(start_value)
-		has_value: has_start_value
+		mode:              .all
+		value:             clone_column_value(start_value)
+		has_value:         has_start_value
 		start_primary_key: start_primary_key.clone()
-		limit: limit
-		reverse: reverse
+		limit:             limit
+		reverse:           reverse
 	})!
 }
 
 pub fn (session TransactionSession) lookup_index_ordered_projected(table_name string, index_name string, start_value ColumnValue, has_start_value bool, start_primary_key []u8, limit int, columns []string, reverse bool) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .all
-		value: clone_column_value(start_value)
-		has_value: has_start_value
+		mode:              .all
+		value:             clone_column_value(start_value)
+		has_value:         has_start_value
 		start_primary_key: start_primary_key.clone()
-		limit: limit
-		columns: columns.clone()
-		reverse: reverse
+		limit:             limit
+		columns:           columns.clone()
+		reverse:           reverse
 	})!
 }
 
@@ -3951,11 +4166,12 @@ pub fn (session TransactionSession) lookup_index_prefix(table_name string, index
 	view := session.working_set.transaction().indexed_view(table_name)!
 	for index in view.indexes {
 		if index.name == index_name && index.is_field_selector() {
-			return transaction_markdown_index_lookup_prefix(session.root_dir, view, index, value, limit)
+			return transaction_markdown_index_lookup_prefix(session.root_dir, view, index,
+				value, limit)
 		}
 	}
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .prefix
+		mode:  .prefix
 		value: clone_column_value(value)
 		limit: limit
 	})
@@ -3964,9 +4180,9 @@ pub fn (session TransactionSession) lookup_index_prefix(table_name string, index
 pub fn (session TransactionSession) lookup_index_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .exact
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .exact
+		value:   clone_column_value(value)
+		limit:   limit
 		columns: columns.clone()
 	})
 }
@@ -3974,9 +4190,9 @@ pub fn (session TransactionSession) lookup_index_projected(table_name string, in
 pub fn (session TransactionSession) lookup_index_prefix_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .prefix
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .prefix
+		value:   clone_column_value(value)
+		limit:   limit
 		columns: columns.clone()
 	})
 }
@@ -3984,9 +4200,9 @@ pub fn (session TransactionSession) lookup_index_prefix_projected(table_name str
 pub fn (session TransactionSession) lookup_index_prefix_reverse(table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .prefix
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .prefix
+		value:   clone_column_value(value)
+		limit:   limit
 		reverse: true
 	})
 }
@@ -3994,9 +4210,9 @@ pub fn (session TransactionSession) lookup_index_prefix_reverse(table_name strin
 pub fn (session TransactionSession) lookup_index_prefix_reverse_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .prefix
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .prefix
+		value:   clone_column_value(value)
+		limit:   limit
 		columns: columns.clone()
 		reverse: true
 	})
@@ -4006,56 +4222,56 @@ pub fn (session TransactionSession) lookup_index_between(table_name string, inde
 	view := session.working_set.transaction().indexed_view(table_name)!
 	for index in view.indexes {
 		if index.name == index_name && index.is_field_selector() {
-			return transaction_markdown_index_lookup_between(session.root_dir, view, index, start_value,
-				end_value, limit)
+			return transaction_markdown_index_lookup_between(session.root_dir, view, index,
+				start_value, end_value, limit)
 		}
 	}
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .between
-		value: clone_column_value(start_value)
-		second_value: clone_column_value(end_value)
-		has_value: true
+		mode:             .between
+		value:            clone_column_value(start_value)
+		second_value:     clone_column_value(end_value)
+		has_value:        true
 		has_second_value: true
-		limit: limit
+		limit:            limit
 	})
 }
 
 pub fn (session TransactionSession) lookup_index_between_reverse(table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .between
-		value: clone_column_value(start_value)
-		second_value: clone_column_value(end_value)
-		has_value: true
+		mode:             .between
+		value:            clone_column_value(start_value)
+		second_value:     clone_column_value(end_value)
+		has_value:        true
 		has_second_value: true
-		limit: limit
-		reverse: true
+		limit:            limit
+		reverse:          true
 	})
 }
 
 pub fn (session TransactionSession) lookup_index_between_reverse_projected(table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .between
-		value: clone_column_value(start_value)
-		second_value: clone_column_value(end_value)
-		has_value: true
+		mode:             .between
+		value:            clone_column_value(start_value)
+		second_value:     clone_column_value(end_value)
+		has_value:        true
 		has_second_value: true
-		limit: limit
-		columns: columns.clone()
-		reverse: true
+		limit:            limit
+		columns:          columns.clone()
+		reverse:          true
 	})
 }
 
 pub fn (session TransactionSession) lookup_index_between_projected(table_name string, index_name string, start_value ColumnValue, end_value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .between
-		value: clone_column_value(start_value)
-		second_value: clone_column_value(end_value)
+		mode:             .between
+		value:            clone_column_value(start_value)
+		second_value:     clone_column_value(end_value)
 		has_second_value: true
-		limit: limit
-		columns: columns.clone()
+		limit:            limit
+		columns:          columns.clone()
 	})
 }
 
@@ -4063,12 +4279,12 @@ pub fn (session TransactionSession) lookup_index_after(table_name string, index_
 	view := session.working_set.transaction().indexed_view(table_name)!
 	for index in view.indexes {
 		if index.name == index_name && index.is_field_selector() {
-			return transaction_markdown_index_lookup_after(session.root_dir, view, index, value,
-				limit)
+			return transaction_markdown_index_lookup_after(session.root_dir, view, index,
+				value, limit)
 		}
 	}
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .after
+		mode:  .after
 		value: clone_column_value(value)
 		limit: limit
 	})
@@ -4077,34 +4293,34 @@ pub fn (session TransactionSession) lookup_index_after(table_name string, index_
 pub fn (session TransactionSession) lookup_index_after_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .after
-		value: clone_column_value(value)
+		mode:      .after
+		value:     clone_column_value(value)
 		has_value: true
-		limit: limit
-		columns: columns.clone()
+		limit:     limit
+		columns:   columns.clone()
 	})
 }
 
 pub fn (session TransactionSession) lookup_index_after_reverse(table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .after
-		value: clone_column_value(value)
+		mode:      .after
+		value:     clone_column_value(value)
 		has_value: true
-		limit: limit
-		reverse: true
+		limit:     limit
+		reverse:   true
 	})
 }
 
 pub fn (session TransactionSession) lookup_index_after_reverse_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .after
-		value: clone_column_value(value)
+		mode:      .after
+		value:     clone_column_value(value)
 		has_value: true
-		limit: limit
-		columns: columns.clone()
-		reverse: true
+		limit:     limit
+		columns:   columns.clone()
+		reverse:   true
 	})
 }
 
@@ -4112,12 +4328,12 @@ pub fn (session TransactionSession) lookup_index_before(table_name string, index
 	view := session.working_set.transaction().indexed_view(table_name)!
 	for index in view.indexes {
 		if index.name == index_name && index.is_field_selector() {
-			return transaction_markdown_index_lookup_before(session.root_dir, view, index, value,
-				limit)
+			return transaction_markdown_index_lookup_before(session.root_dir, view, index,
+				value, limit)
 		}
 	}
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .before
+		mode:  .before
 		value: clone_column_value(value)
 		limit: limit
 	})
@@ -4126,9 +4342,9 @@ pub fn (session TransactionSession) lookup_index_before(table_name string, index
 pub fn (session TransactionSession) lookup_index_before_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .before
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .before
+		value:   clone_column_value(value)
+		limit:   limit
 		columns: columns.clone()
 	})
 }
@@ -4136,9 +4352,9 @@ pub fn (session TransactionSession) lookup_index_before_projected(table_name str
 pub fn (session TransactionSession) lookup_index_before_reverse(table_name string, index_name string, value ColumnValue, limit int) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .before
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .before
+		value:   clone_column_value(value)
+		limit:   limit
 		reverse: true
 	})
 }
@@ -4146,9 +4362,9 @@ pub fn (session TransactionSession) lookup_index_before_reverse(table_name strin
 pub fn (session TransactionSession) lookup_index_before_reverse_projected(table_name string, index_name string, value ColumnValue, limit int, columns []string) ![]TypedSchemaRow {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return typed_scan_rows_by_index(view, index_name, TypedIndexScanRequest{
-		mode: .before
-		value: clone_column_value(value)
-		limit: limit
+		mode:    .before
+		value:   clone_column_value(value)
+		limit:   limit
 		columns: columns.clone()
 		reverse: true
 	})
@@ -4157,7 +4373,7 @@ pub fn (session TransactionSession) lookup_index_before_reverse_projected(table_
 pub fn (session TransactionSession) table_cursor(table_name string, start_primary_key []u8, limit int) !TypedTableCursor {
 	view := session.working_set.transaction().indexed_view(table_name)!
 	return TypedTableCursor{
-		view: view
+		view:   view
 		cursor: view.schema.table.cursor(start_primary_key, limit)!
 	}
 }
@@ -4178,21 +4394,22 @@ pub fn (session TransactionSession) index_cursor(table_name string, index_name s
 	}
 	if target_index.is_field_selector() {
 		return TypedIndexCursor{
-			view: view
-			index_name: index_name
-			markdown_entries: transaction_markdown_index_cursor_entries(session.root_dir, view,
-				target_index, value, start_primary_key, limit)!
-			markdown_pos: 0
+			view:             view
+			index_name:       index_name
+			markdown_entries: transaction_markdown_index_cursor_entries(session.root_dir,
+				view, target_index, value, start_primary_key, limit)!
+			markdown_pos:     0
 		}
 	}
 	column := target_index.value_column(view.schema.codec.table)!
 	encoded := TypedValueEncoder.encode_index_value(value, column)!
 	return TypedIndexCursor{
-		view: view
-		index_name: index_name
-		cursor: IndexView.new(view.schema.table.tree, table_name, index_name).cursor(encoded, start_primary_key, limit)!
+		view:             view
+		index_name:       index_name
+		cursor:           IndexView.new(view.schema.table.tree, table_name, index_name).cursor(encoded,
+			start_primary_key, limit)!
 		markdown_entries: []TransactionMarkdownIndexEntry{}
-		markdown_pos: 0
+		markdown_pos:     0
 	}
 }
 
@@ -4213,8 +4430,8 @@ pub fn (mut session TransactionSession) patch_json_paths(table_name string, prim
 pub fn (mut session TransactionSession) set_json_path(table_name string, primary_key []u8, column_name string, json_path string, value ColumnValue, cfg ChunkConfig) !TypedTransactionResult {
 	return session.patch_json_paths(table_name, primary_key, column_name, [
 		JsonPathUpdate{
-			path: json_path
-			op: .set
+			path:  json_path
+			op:    .set
 			value: value
 		},
 	], cfg)
@@ -4258,14 +4475,15 @@ pub fn (session TransactionSession) get_markdown(mut db PersistentDatabase, tabl
 }
 
 pub fn (mut session TransactionSession) set_json_path_null(table_name string, primary_key []u8, column_name string, json_path string, cfg ChunkConfig) !TypedTransactionResult {
-	return session.set_json_path(table_name, primary_key, column_name, json_path, NullValue{}, cfg)
+	return session.set_json_path(table_name, primary_key, column_name, json_path, NullValue{},
+		cfg)
 }
 
 pub fn (mut session TransactionSession) delete_json_path(table_name string, primary_key []u8, column_name string, json_path string, cfg ChunkConfig) !TypedTransactionResult {
 	return session.patch_json_paths(table_name, primary_key, column_name, [
 		JsonPathUpdate{
-			path: json_path
-			op: .delete
+			path:  json_path
+			op:    .delete
 			value: NullValue{}
 		},
 	], cfg)
@@ -4285,7 +4503,7 @@ pub fn (cursor TypedTableCursor) current() !TypedSchemaRow {
 	row := cursor.cursor.current()!
 	return TypedSchemaRow{
 		primary_key: row.primary_key
-		data: cursor.view.schema.codec.decode(row.value)!
+		data:        cursor.view.schema.codec.decode(row.value)!
 	}
 }
 
@@ -4293,7 +4511,7 @@ pub fn (mut cursor TypedTableCursor) peek() !TypedSchemaRow {
 	row := cursor.cursor.peek()!
 	return TypedSchemaRow{
 		primary_key: row.primary_key
-		data: cursor.view.schema.codec.decode(row.value)!
+		data:        cursor.view.schema.codec.decode(row.value)!
 	}
 }
 
@@ -4301,7 +4519,7 @@ pub fn (mut cursor TypedTableCursor) next() !TypedSchemaRow {
 	row := cursor.cursor.next()!
 	return TypedSchemaRow{
 		primary_key: row.primary_key
-		data: cursor.view.schema.codec.decode(row.value)!
+		data:        cursor.view.schema.codec.decode(row.value)!
 	}
 }
 
@@ -4315,7 +4533,7 @@ pub fn (mut cursor TypedTableCursor) collect(count int) ![]TypedSchemaRow {
 	for row in rows {
 		decoded << TypedSchemaRow{
 			primary_key: row.primary_key
-			data: cursor.view.schema.codec.decode(row.value)!
+			data:        cursor.view.schema.codec.decode(row.value)!
 		}
 	}
 	return decoded
@@ -4325,7 +4543,8 @@ pub fn (mut cursor TypedIndexCursor) seek(index_key []u8, primary_key []u8) ! {
 	if cursor.markdown_entries.len > 0 {
 		for idx, entry in cursor.markdown_entries {
 			key_cmp := compare_key_bytes(entry.encoded, index_key)
-			if key_cmp > 0 || (key_cmp == 0 && compare_key_bytes(entry.row.primary_key, primary_key) >= 0) {
+			if key_cmp > 0
+				|| (key_cmp == 0 && compare_key_bytes(entry.row.primary_key, primary_key) >= 0) {
 				cursor.markdown_pos = idx
 				return
 			}
@@ -4339,18 +4558,18 @@ pub fn (mut cursor TypedIndexCursor) seek(index_key []u8, primary_key []u8) ! {
 fn typed_index_row_from_entry(view TypedIndexedSchemaView, entry IndexEntry) !TypedIndexRow {
 	if entry.value.len > 0 {
 		return TypedIndexRow{
-			index_key: entry.index_key
+			index_key:   entry.index_key
 			primary_key: entry.primary_key
-			row: TypedSchemaRow{
+			row:         TypedSchemaRow{
 				primary_key: entry.primary_key
-				data: view.schema.codec.decode(entry.value)!
+				data:        view.schema.codec.decode(entry.value)!
 			}
 		}
 	}
 	return TypedIndexRow{
-		index_key: entry.index_key
+		index_key:   entry.index_key
 		primary_key: entry.primary_key
-		row: view.get(entry.primary_key)!
+		row:         view.get(entry.primary_key)!
 	}
 }
 
@@ -4361,7 +4580,7 @@ fn typed_schema_row_from_index_entry(view TypedIndexedSchemaView, entry IndexEnt
 	if entry.value.len > 0 {
 		return TypedSchemaRow{
 			primary_key: entry.primary_key
-			data: view.schema.codec.decode_projected(entry.value, columns)!
+			data:        view.schema.codec.decode_projected(entry.value, columns)!
 		}
 	}
 	full_row := view.get(entry.primary_key)!
@@ -4373,7 +4592,7 @@ fn typed_schema_row_from_index_entry(view TypedIndexedSchemaView, entry IndexEnt
 	}
 	return TypedSchemaRow{
 		primary_key: full_row.primary_key
-		data: projected
+		data:        projected
 	}
 }
 
@@ -4401,7 +4620,8 @@ fn typed_scan_rows_by_index(view TypedIndexedSchemaView, index_name string, requ
 				} else {
 					[]u8{}
 				}
-				mut cursor := index_view.reverse_cursor([]u8{}, []u8{}, end_index_key, request.start_primary_key, request.limit)!
+				mut cursor := index_view.reverse_cursor([]u8{}, []u8{}, end_index_key,
+					request.start_primary_key, request.limit)!
 				for {
 					if request.limit > 0 && rows.len >= request.limit {
 						break
@@ -4427,7 +4647,8 @@ fn typed_scan_rows_by_index(view TypedIndexedSchemaView, index_name string, requ
 				} else {
 					[]u8{}
 				}
-				mut cursor := index_view.cursor(start_index_key, request.start_primary_key, request.limit)!
+				mut cursor := index_view.cursor(start_index_key, request.start_primary_key,
+					request.limit)!
 				for {
 					if request.limit > 0 && rows.len >= request.limit {
 						break
@@ -4504,7 +4725,8 @@ fn typed_scan_rows_by_index(view TypedIndexedSchemaView, index_name string, requ
 		.after {
 			encoded := TypedValueEncoder.encode_index_value(request.value, column)!
 			if request.reverse {
-				mut cursor := index_view.reverse_cursor(encoded, request.start_primary_key, []u8{}, []u8{}, request.limit)!
+				mut cursor := index_view.reverse_cursor(encoded, request.start_primary_key,
+					[]u8{}, []u8{}, request.limit)!
 				for {
 					if request.limit > 0 && rows.len >= request.limit {
 						break
@@ -4534,7 +4756,8 @@ fn typed_scan_rows_by_index(view TypedIndexedSchemaView, index_name string, requ
 		.before {
 			encoded := TypedValueEncoder.encode_index_value(request.value, column)!
 			if request.reverse {
-				mut cursor := index_view.reverse_cursor([]u8{}, []u8{}, encoded, request.start_primary_key, request.limit)!
+				mut cursor := index_view.reverse_cursor([]u8{}, []u8{}, encoded, request.start_primary_key,
+					request.limit)!
 				for {
 					if request.limit > 0 && rows.len >= request.limit {
 						break
@@ -4562,9 +4785,11 @@ fn typed_scan_rows_by_index(view TypedIndexedSchemaView, index_name string, requ
 		}
 		.between {
 			encoded_start := TypedValueEncoder.encode_index_value(request.value, column)!
-			encoded_end := TypedValueEncoder.encode_index_value(request.second_value, column)!
+			encoded_end := TypedValueEncoder.encode_index_value(request.second_value,
+				column)!
 			if request.reverse {
-				mut cursor := index_view.reverse_cursor(encoded_start, request.start_primary_key, encoded_end, []u8{}, request.limit)!
+				mut cursor := index_view.reverse_cursor(encoded_start, request.start_primary_key,
+					encoded_end, []u8{}, request.limit)!
 				for {
 					if request.limit > 0 && rows.len >= request.limit {
 						break
@@ -4580,7 +4805,8 @@ fn typed_scan_rows_by_index(view TypedIndexedSchemaView, index_name string, requ
 					rows << typed_schema_row_from_index_entry(view, cursor.next()!, request.columns)!
 				}
 			} else {
-				mut cursor := index_view.cursor(encoded_start, request.start_primary_key, request.limit)!
+				mut cursor := index_view.cursor(encoded_start, request.start_primary_key,
+					request.limit)!
 				for {
 					if request.limit > 0 && rows.len >= request.limit {
 						break
@@ -4604,9 +4830,9 @@ pub fn (cursor TypedIndexCursor) current() !TypedIndexRow {
 		}
 		entry := cursor.markdown_entries[cursor.markdown_pos]
 		return TypedIndexRow{
-			index_key: entry.encoded.clone()
+			index_key:   entry.encoded.clone()
 			primary_key: entry.row.primary_key.clone()
-			row: entry.row
+			row:         entry.row
 		}
 	}
 	entry := cursor.cursor.current()!
@@ -4620,9 +4846,9 @@ pub fn (mut cursor TypedIndexCursor) peek() !TypedIndexRow {
 		}
 		entry := cursor.markdown_entries[cursor.markdown_pos]
 		return TypedIndexRow{
-			index_key: entry.encoded.clone()
+			index_key:   entry.encoded.clone()
 			primary_key: entry.row.primary_key.clone()
-			row: entry.row
+			row:         entry.row
 		}
 	}
 	entry := cursor.cursor.peek()!
@@ -4637,9 +4863,9 @@ pub fn (mut cursor TypedIndexCursor) next() !TypedIndexRow {
 		entry := cursor.markdown_entries[cursor.markdown_pos]
 		cursor.markdown_pos++
 		return TypedIndexRow{
-			index_key: entry.encoded.clone()
+			index_key:   entry.encoded.clone()
 			primary_key: entry.row.primary_key.clone()
-			row: entry.row
+			row:         entry.row
 		}
 	}
 	entry := cursor.cursor.next()!
@@ -4677,18 +4903,20 @@ pub fn (mut cursor TypedIndexCursor) collect(count int) ![]TypedIndexRow {
 }
 
 pub fn (mut reader BranchTableReader) get_row(primary_key []u8) !TypedSchemaRow {
-	item := Tree.lookup_in_byte_store(reader.root_cid, database_row_key_with_prefix(reader.row_prefix, primary_key), mut reader.node_store)!
+	item := Tree.lookup_in_byte_store(reader.root_cid, database_row_key_with_prefix(reader.row_prefix,
+		primary_key), mut reader.node_store)!
 	return TypedSchemaRow{
 		primary_key: primary_key.clone()
-		data: reader.codec.decode(item.value)!
+		data:        reader.codec.decode(item.value)!
 	}
 }
 
 pub fn (mut reader BranchTableReader) get_row_projected(primary_key []u8, columns []string) !TypedSchemaRow {
-	item := Tree.lookup_in_byte_store(reader.root_cid, database_row_key_with_prefix(reader.row_prefix, primary_key), mut reader.node_store)!
+	item := Tree.lookup_in_byte_store(reader.root_cid, database_row_key_with_prefix(reader.row_prefix,
+		primary_key), mut reader.node_store)!
 	return TypedSchemaRow{
 		primary_key: primary_key.clone()
-		data: reader.codec.decode_projected(item.value, columns)!
+		data:        reader.codec.decode_projected(item.value, columns)!
 	}
 }
 
@@ -4702,15 +4930,16 @@ pub fn (mut reader BranchIndexReader) find_rows(value ColumnValue, limit int) ![
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
 	prefix << [u8(`|`)]
-	primary_keys := Tree.suffix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	primary_keys := Tree.suffix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut
+		reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: primary_keys.len}
 	mut table_reader := BranchTableReader{
 		branch_name: reader.branch_name
-		spec: reader.spec
-		root_cid: reader.root_cid
-		codec: reader.codec
-		row_prefix: reader.row_prefix.clone()
-		node_store: reader.node_store
+		spec:        reader.spec
+		root_cid:    reader.root_cid
+		codec:       reader.codec
+		row_prefix:  reader.row_prefix.clone()
+		node_store:  reader.node_store
 	}
 	for primary_key in primary_keys {
 		rows << table_reader.get_row(primary_key)!
@@ -4722,15 +4951,16 @@ pub fn (mut reader BranchIndexReader) find_rows_prefix(value ColumnValue, limit 
 	encoded := TypedValueEncoder.encode_index_prefix(value, reader.index_column)!
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
-	suffixes := Tree.suffix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	suffixes := Tree.suffix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut
+		reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: suffixes.len}
 	mut table_reader := BranchTableReader{
 		branch_name: reader.branch_name
-		spec: reader.spec
-		root_cid: reader.root_cid
-		codec: reader.codec
-		row_prefix: reader.row_prefix.clone()
-		node_store: reader.node_store
+		spec:        reader.spec
+		root_cid:    reader.root_cid
+		codec:       reader.codec
+		row_prefix:  reader.row_prefix.clone()
+		node_store:  reader.node_store
 	}
 	for suffix in suffixes {
 		separator_idx := bytes_index_byte(suffix, `|`) or {
@@ -4747,22 +4977,23 @@ pub fn (mut reader BranchIndexReader) find_rows_covering(value ColumnValue, limi
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
 	prefix << [u8(`|`)]
-	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut
+		reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: items.len}
 	mut table_reader := BranchTableReader{
 		branch_name: reader.branch_name
-		spec: reader.spec
-		root_cid: reader.root_cid
-		codec: reader.codec
-		row_prefix: reader.row_prefix.clone()
-		node_store: reader.node_store
+		spec:        reader.spec
+		root_cid:    reader.root_cid
+		codec:       reader.codec
+		row_prefix:  reader.row_prefix.clone()
+		node_store:  reader.node_store
 	}
 	for item in items {
 		primary_key := item.key[prefix.len..].clone()
 		if item.value.len > 0 {
 			rows << TypedSchemaRow{
 				primary_key: primary_key
-				data: reader.codec.decode(item.value)!
+				data:        reader.codec.decode(item.value)!
 			}
 			continue
 		}
@@ -4776,22 +5007,23 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_projected(value ColumnV
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
 	prefix << [u8(`|`)]
-	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut
+		reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: items.len}
 	mut table_reader := BranchTableReader{
 		branch_name: reader.branch_name
-		spec: reader.spec
-		root_cid: reader.root_cid
-		codec: reader.codec
-		row_prefix: reader.row_prefix.clone()
-		node_store: reader.node_store
+		spec:        reader.spec
+		root_cid:    reader.root_cid
+		codec:       reader.codec
+		row_prefix:  reader.row_prefix.clone()
+		node_store:  reader.node_store
 	}
 	for item in items {
 		primary_key := item.key[prefix.len..].clone()
 		if item.value.len > 0 {
 			rows << TypedSchemaRow{
 				primary_key: primary_key
-				data: reader.codec.decode_projected(item.value, columns)!
+				data:        reader.codec.decode_projected(item.value, columns)!
 			}
 			continue
 		}
@@ -4804,7 +5036,7 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_projected(value ColumnV
 		}
 		rows << TypedSchemaRow{
 			primary_key: full_row.primary_key
-			data: projected
+			data:        projected
 		}
 	}
 	return rows
@@ -4814,15 +5046,16 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_prefix(value ColumnValu
 	encoded := TypedValueEncoder.encode_index_prefix(value, reader.index_column)!
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
-	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut
+		reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: items.len}
 	mut table_reader := BranchTableReader{
 		branch_name: reader.branch_name
-		spec: reader.spec
-		root_cid: reader.root_cid
-		codec: reader.codec
-		row_prefix: reader.row_prefix.clone()
-		node_store: reader.node_store
+		spec:        reader.spec
+		root_cid:    reader.root_cid
+		codec:       reader.codec
+		row_prefix:  reader.row_prefix.clone()
+		node_store:  reader.node_store
 	}
 	for item in items {
 		suffix := item.key[prefix.len..]
@@ -4833,7 +5066,7 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_prefix(value ColumnValu
 		if item.value.len > 0 {
 			rows << TypedSchemaRow{
 				primary_key: primary_key
-				data: reader.codec.decode(item.value)!
+				data:        reader.codec.decode(item.value)!
 			}
 			continue
 		}
@@ -4846,15 +5079,16 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_prefix_projected(value 
 	encoded := TypedValueEncoder.encode_index_prefix(value, reader.index_column)!
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
-	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut
+		reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: items.len}
 	mut table_reader := BranchTableReader{
 		branch_name: reader.branch_name
-		spec: reader.spec
-		root_cid: reader.root_cid
-		codec: reader.codec
-		row_prefix: reader.row_prefix.clone()
-		node_store: reader.node_store
+		spec:        reader.spec
+		root_cid:    reader.root_cid
+		codec:       reader.codec
+		row_prefix:  reader.row_prefix.clone()
+		node_store:  reader.node_store
 	}
 	for item in items {
 		suffix := item.key[prefix.len..]
@@ -4865,7 +5099,7 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_prefix_projected(value 
 		if item.value.len > 0 {
 			rows << TypedSchemaRow{
 				primary_key: primary_key
-				data: reader.codec.decode_projected(item.value, columns)!
+				data:        reader.codec.decode_projected(item.value, columns)!
 			}
 			continue
 		}
@@ -4878,7 +5112,7 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_prefix_projected(value 
 		}
 		rows << TypedSchemaRow{
 			primary_key: full_row.primary_key
-			data: projected
+			data:        projected
 		}
 	}
 	return rows
@@ -4901,7 +5135,8 @@ fn branch_index_scan_bounds(mut reader BranchIndexReader, start_value ColumnValu
 		return range_start, prefix_upper_bound(entry_prefix)!
 	}
 	if start_primary_key.len > 0 {
-		return prefix_upper_bound(build_index_entry_key(reader.index_prefix, encoded, start_primary_key))!, range_end
+		return prefix_upper_bound(build_index_entry_key(reader.index_prefix, encoded,
+			start_primary_key))!, range_end
 	}
 	return entry_prefix, range_end
 }
@@ -4913,17 +5148,18 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_ordered_projected(start
 }
 
 pub fn (mut reader BranchIndexReader) find_rows_covering_ordered_projected_with_stats(start_value ColumnValue, has_start_value bool, start_primary_key []u8, limit int, columns []string, reverse bool) !([]TypedSchemaRow, OrderedScanStats) {
-	start_key, end_key := branch_index_scan_bounds(mut reader, start_value, has_start_value, start_primary_key,
-		reverse)!
-	items, stats := Tree.ordered_scan_in_byte_store_with_stats(reader.root_cid, start_key, end_key, limit, reverse, mut reader.node_store)!
+	start_key, end_key := branch_index_scan_bounds(mut reader, start_value, has_start_value,
+		start_primary_key, reverse)!
+	items, stats := Tree.ordered_scan_in_byte_store_with_stats(reader.root_cid, start_key,
+		end_key, limit, reverse, mut reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: items.len}
 	mut table_reader := BranchTableReader{
 		branch_name: reader.branch_name
-		spec: reader.spec
-		root_cid: reader.root_cid
-		codec: reader.codec
-		row_prefix: reader.row_prefix.clone()
-		node_store: reader.node_store
+		spec:        reader.spec
+		root_cid:    reader.root_cid
+		codec:       reader.codec
+		row_prefix:  reader.row_prefix.clone()
+		node_store:  reader.node_store
 	}
 	for item in items {
 		suffix := item.key[reader.index_prefix.len..]
@@ -4934,7 +5170,7 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_ordered_projected_with_
 		if item.value.len > 0 {
 			rows << TypedSchemaRow{
 				primary_key: primary_key
-				data: reader.codec.decode_projected(item.value, columns)!
+				data:        reader.codec.decode_projected(item.value, columns)!
 			}
 			continue
 		}
@@ -4947,28 +5183,30 @@ pub fn (mut reader BranchIndexReader) find_rows_covering_ordered_projected_with_
 		}
 		rows << TypedSchemaRow{
 			primary_key: full_row.primary_key
-			data: projected
+			data:        projected
 		}
 	}
 	return rows, stats
 }
 
 pub fn (mut reader SnapshotTableReader) get_row(primary_key []u8) !TypedSchemaRow {
-	item := Tree.lookup_in_byte_store(reader.root_cid, database_row_key_with_prefix(reader.row_prefix, primary_key), mut reader.node_store)!
+	item := Tree.lookup_in_byte_store(reader.root_cid, database_row_key_with_prefix(reader.row_prefix,
+		primary_key), mut reader.node_store)!
 	return TypedSchemaRow{
 		primary_key: primary_key.clone()
-		data: reader.codec.decode(item.value)!
+		data:        reader.codec.decode(item.value)!
 	}
 }
 
 pub fn (mut reader SnapshotTableReader) scan_rows(limit int) ![]TypedSchemaRow {
-	items := Tree.prefix_scan_in_byte_store(reader.root_cid, reader.row_prefix, reader.row_prefix, limit, mut reader.node_store)!
+	items := Tree.prefix_scan_in_byte_store(reader.root_cid, reader.row_prefix, reader.row_prefix,
+		limit, mut reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: items.len}
 	for item in items {
 		primary_key := item.key[reader.row_prefix.len..].clone()
 		rows << TypedSchemaRow{
 			primary_key: primary_key
-			data: reader.codec.decode(item.value)!
+			data:        reader.codec.decode(item.value)!
 		}
 	}
 	return rows
@@ -4976,13 +5214,14 @@ pub fn (mut reader SnapshotTableReader) scan_rows(limit int) ![]TypedSchemaRow {
 
 pub fn (mut reader SnapshotTableReader) scan_rows_from(start_primary_key []u8, limit int) ![]TypedSchemaRow {
 	start_key := database_row_key_with_prefix(reader.row_prefix, start_primary_key)
-	items := Tree.prefix_scan_in_byte_store(reader.root_cid, start_key, reader.row_prefix, limit, mut reader.node_store)!
+	items := Tree.prefix_scan_in_byte_store(reader.root_cid, start_key, reader.row_prefix,
+		limit, mut reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: items.len}
 	for item in items {
 		primary_key := item.key[reader.row_prefix.len..].clone()
 		rows << TypedSchemaRow{
 			primary_key: primary_key
-			data: reader.codec.decode(item.value)!
+			data:        reader.codec.decode(item.value)!
 		}
 	}
 	return rows
@@ -4993,13 +5232,14 @@ pub fn (mut reader SnapshotIndexReader) find_rows(value ColumnValue, limit int) 
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
 	prefix << [u8(`|`)]
-	primary_keys := Tree.suffix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	primary_keys := Tree.suffix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut
+		reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: primary_keys.len}
 	mut table_reader := SnapshotTableReader{
 		commit_cid: reader.commit_cid
-		root_cid: reader.root_cid
-		spec: reader.spec
-		codec: reader.codec
+		root_cid:   reader.root_cid
+		spec:       reader.spec
+		codec:      reader.codec
 		row_prefix: reader.row_prefix.clone()
 		node_store: reader.node_store
 	}
@@ -5013,13 +5253,14 @@ pub fn (mut reader SnapshotIndexReader) find_rows_prefix(value ColumnValue, limi
 	encoded := TypedValueEncoder.encode_index_prefix(value, reader.index_column)!
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
-	suffixes := Tree.suffix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	suffixes := Tree.suffix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut
+		reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: suffixes.len}
 	mut table_reader := SnapshotTableReader{
 		commit_cid: reader.commit_cid
-		root_cid: reader.root_cid
-		spec: reader.spec
-		codec: reader.codec
+		root_cid:   reader.root_cid
+		spec:       reader.spec
+		codec:      reader.codec
 		row_prefix: reader.row_prefix.clone()
 		node_store: reader.node_store
 	}
@@ -5038,9 +5279,9 @@ pub fn (mut reader SnapshotIndexReader) find_rows_prefix_from(value ColumnValue,
 	mut rows := []TypedSchemaRow{cap: primary_keys.len}
 	mut table_reader := SnapshotTableReader{
 		commit_cid: reader.commit_cid
-		root_cid: reader.root_cid
-		spec: reader.spec
-		codec: reader.codec
+		root_cid:   reader.root_cid
+		spec:       reader.spec
+		codec:      reader.codec
 		row_prefix: reader.row_prefix.clone()
 		node_store: reader.node_store
 	}
@@ -5055,13 +5296,14 @@ pub fn (mut reader SnapshotIndexReader) find_rows_covering(value ColumnValue, li
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
 	prefix << [u8(`|`)]
-	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut
+		reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: items.len}
 	mut table_reader := SnapshotTableReader{
 		commit_cid: reader.commit_cid
-		root_cid: reader.root_cid
-		spec: reader.spec
-		codec: reader.codec
+		root_cid:   reader.root_cid
+		spec:       reader.spec
+		codec:      reader.codec
 		row_prefix: reader.row_prefix.clone()
 		node_store: reader.node_store
 	}
@@ -5070,7 +5312,7 @@ pub fn (mut reader SnapshotIndexReader) find_rows_covering(value ColumnValue, li
 		if item.value.len > 0 {
 			rows << TypedSchemaRow{
 				primary_key: primary_key
-				data: reader.codec.decode(item.value)!
+				data:        reader.codec.decode(item.value)!
 			}
 			continue
 		}
@@ -5083,13 +5325,14 @@ pub fn (mut reader SnapshotIndexReader) find_rows_covering_prefix(value ColumnVa
 	encoded := TypedValueEncoder.encode_index_prefix(value, reader.index_column)!
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
-	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut reader.node_store)!
+	items := Tree.prefix_scan_in_byte_store(reader.root_cid, prefix, prefix, limit, mut
+		reader.node_store)!
 	mut rows := []TypedSchemaRow{cap: items.len}
 	mut table_reader := SnapshotTableReader{
 		commit_cid: reader.commit_cid
-		root_cid: reader.root_cid
-		spec: reader.spec
-		codec: reader.codec
+		root_cid:   reader.root_cid
+		spec:       reader.spec
+		codec:      reader.codec
 		row_prefix: reader.row_prefix.clone()
 		node_store: reader.node_store
 	}
@@ -5102,7 +5345,7 @@ pub fn (mut reader SnapshotIndexReader) find_rows_covering_prefix(value ColumnVa
 		if item.value.len > 0 {
 			rows << TypedSchemaRow{
 				primary_key: primary_key
-				data: reader.codec.decode(item.value)!
+				data:        reader.codec.decode(item.value)!
 			}
 			continue
 		}
@@ -5119,9 +5362,9 @@ pub fn (mut reader SnapshotIndexReader) find_rows_covering_prefix_from(value Col
 	mut rows := []TypedSchemaRow{}
 	mut table_reader := SnapshotTableReader{
 		commit_cid: reader.commit_cid
-		root_cid: reader.root_cid
-		spec: reader.spec
-		codec: reader.codec
+		root_cid:   reader.root_cid
+		spec:       reader.spec
+		codec:      reader.codec
 		row_prefix: reader.row_prefix.clone()
 		node_store: reader.node_store
 	}
@@ -5137,7 +5380,7 @@ pub fn (mut reader SnapshotIndexReader) find_rows_covering_prefix_from(value Col
 		if item.value.len > 0 {
 			rows << TypedSchemaRow{
 				primary_key: primary_key
-				data: reader.codec.decode(item.value)!
+				data:        reader.codec.decode(item.value)!
 			}
 			continue
 		}
@@ -5157,9 +5400,9 @@ pub fn (mut reader SnapshotIndexReader) find_rows_covering_prefix_projected_from
 	mut rows := []TypedSchemaRow{}
 	mut table_reader := SnapshotTableReader{
 		commit_cid: reader.commit_cid
-		root_cid: reader.root_cid
-		spec: reader.spec
-		codec: reader.codec
+		root_cid:   reader.root_cid
+		spec:       reader.spec
+		codec:      reader.codec
 		row_prefix: reader.row_prefix.clone()
 		node_store: reader.node_store
 	}
@@ -5175,7 +5418,7 @@ pub fn (mut reader SnapshotIndexReader) find_rows_covering_prefix_projected_from
 		if item.value.len > 0 {
 			rows << TypedSchemaRow{
 				primary_key: primary_key
-				data: reader.codec.decode_projected(item.value, columns)!
+				data:        reader.codec.decode_projected(item.value, columns)!
 			}
 		} else {
 			full_row := table_reader.get_row(primary_key)!
@@ -5187,7 +5430,7 @@ pub fn (mut reader SnapshotIndexReader) find_rows_covering_prefix_projected_from
 			}
 			rows << TypedSchemaRow{
 				primary_key: full_row.primary_key
-				data: projected
+				data:        projected
 			}
 		}
 		if limit > 0 && rows.len >= limit {
@@ -5201,7 +5444,8 @@ pub fn (mut reader SnapshotIndexReader) prefix_primary_keys_from(value ColumnVal
 	encoded := TypedValueEncoder.encode_index_prefix(value, reader.index_column)!
 	mut prefix := reader.index_prefix.clone()
 	prefix << encoded
-	suffixes := Tree.suffix_scan_in_byte_store(reader.root_cid, prefix, prefix, 0, mut reader.node_store)!
+	suffixes := Tree.suffix_scan_in_byte_store(reader.root_cid, prefix, prefix, 0, mut
+		reader.node_store)!
 	mut primary_keys := [][]u8{}
 	for suffix in suffixes {
 		separator_idx := bytes_index_byte(suffix, `|`) or {
@@ -5226,85 +5470,89 @@ pub fn (mut reader SnapshotIndexReader) prefix_count_from(value ColumnValue, sta
 
 pub fn (mut reader SnapshotTablePairReader) scan_rows_from(start_primary_key []u8, limit int) !SnapshotIndexLookupPairResult {
 	return SnapshotIndexLookupPairResult{
-		left: SnapshotIndexLookupResult{
+		left:  SnapshotIndexLookupResult{
 			commit_cid: reader.left_commit_cid
 			table_name: reader.left.spec.name()
 			index_name: ''
-			rows: reader.left.scan_rows_from(start_primary_key, limit)!
+			rows:       reader.left.scan_rows_from(start_primary_key, limit)!
 		}
 		right: SnapshotIndexLookupResult{
 			commit_cid: reader.right_commit_cid
 			table_name: reader.right.spec.name()
 			index_name: ''
-			rows: reader.right.scan_rows_from(start_primary_key, limit)!
+			rows:       reader.right.scan_rows_from(start_primary_key, limit)!
 		}
 	}
 }
 
 pub fn (mut reader SnapshotIndexPairReader) find_rows_covering_prefix_from(value ColumnValue, start_primary_key []u8, limit int) !SnapshotIndexLookupPairResult {
 	return SnapshotIndexLookupPairResult{
-		left: SnapshotIndexLookupResult{
+		left:  SnapshotIndexLookupResult{
 			commit_cid: reader.left_commit_cid
 			table_name: reader.left.spec.name()
 			index_name: reader.left.index.name
-			rows: reader.left.find_rows_covering_prefix_from(value, start_primary_key, limit)!
+			rows:       reader.left.find_rows_covering_prefix_from(value, start_primary_key,
+				limit)!
 		}
 		right: SnapshotIndexLookupResult{
 			commit_cid: reader.right_commit_cid
 			table_name: reader.right.spec.name()
 			index_name: reader.right.index.name
-			rows: reader.right.find_rows_covering_prefix_from(value, start_primary_key, limit)!
+			rows:       reader.right.find_rows_covering_prefix_from(value, start_primary_key,
+				limit)!
 		}
 	}
 }
 
 pub fn (mut reader SnapshotIndexPairReader) find_rows_covering(value ColumnValue, limit int) !SnapshotIndexLookupPairResult {
 	return SnapshotIndexLookupPairResult{
-		left: SnapshotIndexLookupResult{
+		left:  SnapshotIndexLookupResult{
 			commit_cid: reader.left_commit_cid
 			table_name: reader.left.spec.name()
 			index_name: reader.left.index.name
-			rows: reader.left.find_rows_covering(value, limit)!
+			rows:       reader.left.find_rows_covering(value, limit)!
 		}
 		right: SnapshotIndexLookupResult{
 			commit_cid: reader.right_commit_cid
 			table_name: reader.right.spec.name()
 			index_name: reader.right.index.name
-			rows: reader.right.find_rows_covering(value, limit)!
+			rows:       reader.right.find_rows_covering(value, limit)!
 		}
 	}
 }
 
 pub fn (mut reader SnapshotIndexPairReader) find_rows_prefix_from(value ColumnValue, start_primary_key []u8, limit int) !SnapshotIndexLookupPairResult {
 	return SnapshotIndexLookupPairResult{
-		left: SnapshotIndexLookupResult{
+		left:  SnapshotIndexLookupResult{
 			commit_cid: reader.left_commit_cid
 			table_name: reader.left.spec.name()
 			index_name: reader.left.index.name
-			rows: reader.left.find_rows_prefix_from(value, start_primary_key, limit)!
+			rows:       reader.left.find_rows_prefix_from(value, start_primary_key, limit)!
 		}
 		right: SnapshotIndexLookupResult{
 			commit_cid: reader.right_commit_cid
 			table_name: reader.right.spec.name()
 			index_name: reader.right.index.name
-			rows: reader.right.find_rows_prefix_from(value, start_primary_key, limit)!
+			rows:       reader.right.find_rows_prefix_from(value, start_primary_key, limit)!
 		}
 	}
 }
 
 pub fn (mut reader SnapshotIndexPairReader) find_rows_covering_prefix_projected_from(value ColumnValue, start_primary_key []u8, limit int, columns []string) !SnapshotIndexLookupPairResult {
 	return SnapshotIndexLookupPairResult{
-		left: SnapshotIndexLookupResult{
+		left:  SnapshotIndexLookupResult{
 			commit_cid: reader.left_commit_cid
 			table_name: reader.left.spec.name()
 			index_name: reader.left.index.name
-			rows: reader.left.find_rows_covering_prefix_projected_from(value, start_primary_key, limit, columns)!
+			rows:       reader.left.find_rows_covering_prefix_projected_from(value, start_primary_key,
+				limit, columns)!
 		}
 		right: SnapshotIndexLookupResult{
 			commit_cid: reader.right_commit_cid
 			table_name: reader.right.spec.name()
 			index_name: reader.right.index.name
-			rows: reader.right.find_rows_covering_prefix_projected_from(value, start_primary_key, limit, columns)!
+			rows:       reader.right.find_rows_covering_prefix_projected_from(value, start_primary_key,
+				limit, columns)!
 		}
 	}
 }
@@ -5331,7 +5579,8 @@ pub fn (scheduler SnapshotReadScheduler) get_row_async(commit_cid string, table_
 pub fn (scheduler SnapshotReadScheduler) lookup_index_async(commit_cid string, table_name string, index_name string, value ColumnValue, limit int) SnapshotIndexLookupHandle {
 	provider := scheduler.backend_provider()
 	return SnapshotIndexLookupHandle{
-		worker: spawn snapshot_index_lookup_worker(provider, commit_cid, table_name, index_name, value, limit)
+		worker: spawn snapshot_index_lookup_worker(provider, commit_cid, table_name, index_name,
+			value, limit)
 	}
 }
 
@@ -5345,35 +5594,41 @@ pub fn (scheduler SnapshotReadScheduler) scan_table_async(commit_cid string, tab
 pub fn (scheduler SnapshotReadScheduler) scan_table_from_async(commit_cid string, table_name string, start_primary_key []u8, limit int) SnapshotIndexLookupHandle {
 	provider := scheduler.backend_provider()
 	return SnapshotIndexLookupHandle{
-		worker: spawn snapshot_table_scan_from_worker(provider, commit_cid, table_name, start_primary_key.clone(), limit)
+		worker: spawn snapshot_table_scan_from_worker(provider, commit_cid, table_name,
+			start_primary_key.clone(), limit)
 	}
 }
 
 pub fn (scheduler SnapshotReadScheduler) lookup_index_prefix_async(commit_cid string, table_name string, index_name string, value ColumnValue, limit int) SnapshotIndexLookupHandle {
 	provider := scheduler.backend_provider()
 	return SnapshotIndexLookupHandle{
-		worker: spawn snapshot_index_prefix_lookup_worker(provider, commit_cid, table_name, index_name, value, limit)
+		worker: spawn snapshot_index_prefix_lookup_worker(provider, commit_cid, table_name,
+			index_name, value, limit)
 	}
 }
 
 pub fn (scheduler SnapshotReadScheduler) lookup_index_prefix_from_async(commit_cid string, table_name string, index_name string, value ColumnValue, start_primary_key []u8, limit int) SnapshotIndexLookupHandle {
 	provider := scheduler.backend_provider()
 	return SnapshotIndexLookupHandle{
-		worker: spawn snapshot_index_prefix_lookup_from_worker(provider, commit_cid, table_name, index_name, value, start_primary_key.clone(), limit)
+		worker: spawn snapshot_index_prefix_lookup_from_worker(provider, commit_cid, table_name,
+			index_name, value, start_primary_key.clone(), limit)
 	}
 }
 
 pub fn (scheduler SnapshotReadScheduler) scan_table_pair_from_async(left_commit_cid string, right_commit_cid string, table_name string, start_primary_key []u8, limit int) SnapshotIndexLookupPairHandle {
 	provider := scheduler.backend_provider()
 	return SnapshotIndexLookupPairHandle{
-		worker: spawn snapshot_table_scan_pair_from_worker(provider, left_commit_cid, right_commit_cid, table_name, start_primary_key.clone(), limit)
+		worker: spawn snapshot_table_scan_pair_from_worker(provider, left_commit_cid,
+			right_commit_cid, table_name, start_primary_key.clone(), limit)
 	}
 }
 
 pub fn (scheduler SnapshotReadScheduler) lookup_index_prefix_pair_from_async(left_commit_cid string, right_commit_cid string, table_name string, index_name string, value ColumnValue, start_primary_key []u8, limit int) SnapshotIndexLookupPairHandle {
 	provider := scheduler.backend_provider()
 	return SnapshotIndexLookupPairHandle{
-		worker: spawn snapshot_index_prefix_lookup_pair_from_worker(provider, left_commit_cid, right_commit_cid, table_name, index_name, value, start_primary_key.clone(), limit)
+		worker: spawn snapshot_index_prefix_lookup_pair_from_worker(provider, left_commit_cid,
+			right_commit_cid, table_name, index_name, value, start_primary_key.clone(),
+			limit)
 	}
 }
 
@@ -5382,7 +5637,8 @@ pub fn (mut session TransactionSession) commit(mut database PersistentDatabase, 
 }
 
 pub fn (mut session TransactionSession) merge_from(mut database PersistentDatabase, theirs_branch string, resolutions []ConflictResolution, cfg ChunkConfig) !WorkingSetMergeResult {
-	return database.merge_into_working_set(mut session.working_set, theirs_branch, resolutions, cfg)
+	return database.merge_into_working_set(mut session.working_set, theirs_branch, resolutions,
+		cfg)
 }
 
 pub fn (session GroupCommitSession) transaction() TypedTransaction {
@@ -5398,7 +5654,8 @@ pub fn (session GroupCommitSession) staged_diff() TreeDiff {
 }
 
 pub fn (mut session GroupCommitSession) apply_write_set(mut db PersistentDatabase, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !TypedTransactionResult {
-	normalized_write_set := normalize_temporal_write_set(session.working_set.transaction(), write_set)!
+	normalized_write_set := normalize_temporal_write_set(session.working_set.transaction(),
+		write_set)!
 	mut tx_sw := time.new_stopwatch()
 	result := session.working_set.apply_write_set(normalized_write_set, cfg)!
 	mut group_commit := GroupCommitStageTimings{
@@ -5411,16 +5668,16 @@ pub fn (mut session GroupCommitSession) apply_write_set(mut db PersistentDatabas
 		flush_timings := session.flush_with_timings(mut db)!
 		group_commit = GroupCommitStageTimings{
 			transaction_ms: group_commit.transaction_ms
-			commit_ms: flush_timings.commit_ms
-			checkpoint_ms: flush_timings.checkpoint_ms
-			flush_ms: flush_timings.flush_ms
-			flushed: flush_timings.flushed
+			commit_ms:      flush_timings.commit_ms
+			checkpoint_ms:  flush_timings.checkpoint_ms
+			flush_ms:       flush_timings.flush_ms
+			flushed:        flush_timings.flushed
 		}
 	}
 	return TypedTransactionResult{
-		tx: result.tx
-		diff: result.diff
-		timings: result.timings
+		tx:           result.tx
+		diff:         result.diff
+		timings:      result.timings
 		group_commit: group_commit
 	}
 }
@@ -5465,15 +5722,17 @@ fn (mut session GroupCommitSession) flush_with_timings(mut database PersistentDa
 	database.checkpoint_mode(session.options.checkpoint_mode)!
 	checkpoint_ms := checkpoint_sw.elapsed().milliseconds()
 	if session.options.checkpoint_mode == .data_only && session.options.auto_refresh_index_snapshots {
-		session.refresh_handles << PersistentDatabase.refresh_index_snapshots_async_for(database.root_dir, database.default_branch)
+		session.refresh_handles << PersistentDatabase.refresh_index_snapshots_async_for(database.root_dir,
+			database.default_branch)
 	}
 	if session.options.checkpoint_mode == .data_only {
 		limit := session.options.aggregate_projection_refresh_limit()
-		mut handle := database.refresh_aggregate_projections_async_with_policy(
-			session.branch_name,
-			session.options.aggregate_projection_refresh_policy,
-			if limit > 0 { limit } else { session.options.max_aggregate_projection_refreshes },
-		)!
+		mut handle := database.refresh_aggregate_projections_async_with_policy(session.branch_name,
+			session.options.aggregate_projection_refresh_policy, if limit > 0 {
+			limit
+		} else {
+			session.options.max_aggregate_projection_refreshes
+		})!
 		if handle.active {
 			session.aggregate_refresh_handles << handle
 		}
@@ -5482,10 +5741,10 @@ fn (mut session GroupCommitSession) flush_with_timings(mut database PersistentDa
 	session.has_pending_meta = false
 	return GroupCommitStageTimings{
 		transaction_ms: 0
-		commit_ms: commit_ms
-		checkpoint_ms: checkpoint_ms
-		flush_ms: total_sw.elapsed().milliseconds()
-		flushed: true
+		commit_ms:      commit_ms
+		checkpoint_ms:  checkpoint_ms
+		flush_ms:       total_sw.elapsed().milliseconds()
+		flushed:        true
 	}
 }
 
@@ -5514,7 +5773,8 @@ pub fn (session SplitGroupCommitSession) has_changes() bool {
 }
 
 pub fn (mut session SplitGroupCommitSession) apply_write_set(mut db PersistentDatabase, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !TypedSplitTransactionResult {
-	normalized_write_set := normalize_temporal_split_write_set(session.working_set.transaction(), write_set)!
+	normalized_write_set := normalize_temporal_split_write_set(session.working_set.transaction(),
+		write_set)!
 	mut tx_sw := time.new_stopwatch()
 	result := session.working_set.apply_write_set(normalized_write_set, cfg)!
 	mut group_commit := GroupCommitStageTimings{
@@ -5528,14 +5788,14 @@ pub fn (mut session SplitGroupCommitSession) apply_write_set(mut db PersistentDa
 		flush_timings := session.flush_with_timings(mut db, false)!
 		group_commit = GroupCommitStageTimings{
 			transaction_ms: group_commit.transaction_ms
-			commit_ms: flush_timings.commit_ms
-			checkpoint_ms: flush_timings.checkpoint_ms
-			flush_ms: flush_timings.flush_ms
-			flushed: flush_timings.flushed
+			commit_ms:      flush_timings.commit_ms
+			checkpoint_ms:  flush_timings.checkpoint_ms
+			flush_ms:       flush_timings.flush_ms
+			flushed:        flush_timings.flushed
 		}
 	}
 	return TypedSplitTransactionResult{
-		tx: result.tx
+		tx:           result.tx
 		group_commit: group_commit
 	}
 }
@@ -5574,21 +5834,24 @@ fn (mut session SplitGroupCommitSession) flush_with_timings(mut database Persist
 	}
 	mut total_sw := time.new_stopwatch()
 	mut commit_sw := time.new_stopwatch()
-	database.commit_typed_split_working_set_mode(mut session.working_set, session.last_meta, session.last_cfg, !final_flush)!
+	database.commit_typed_split_working_set_mode(mut session.working_set, session.last_meta,
+		session.last_cfg, !final_flush)!
 	commit_ms := commit_sw.elapsed().milliseconds()
 	mut checkpoint_sw := time.new_stopwatch()
 	database.checkpoint_mode(session.options.checkpoint_mode)!
 	checkpoint_ms := checkpoint_sw.elapsed().milliseconds()
 	if session.options.checkpoint_mode == .data_only && session.options.auto_refresh_index_snapshots {
-		session.refresh_handles << PersistentDatabase.refresh_index_snapshots_async_for(database.root_dir, database.default_branch)
+		session.refresh_handles << PersistentDatabase.refresh_index_snapshots_async_for(database.root_dir,
+			database.default_branch)
 	}
 	if session.options.checkpoint_mode == .data_only {
 		limit := session.options.aggregate_projection_refresh_limit()
-		mut handle := database.refresh_aggregate_projections_async_with_policy(
-			session.branch_name,
-			session.options.aggregate_projection_refresh_policy,
-			if limit > 0 { limit } else { session.options.max_aggregate_projection_refreshes },
-		)!
+		mut handle := database.refresh_aggregate_projections_async_with_policy(session.branch_name,
+			session.options.aggregate_projection_refresh_policy, if limit > 0 {
+			limit
+		} else {
+			session.options.max_aggregate_projection_refreshes
+		})!
 		if handle.active {
 			session.aggregate_refresh_handles << handle
 		}
@@ -5597,10 +5860,10 @@ fn (mut session SplitGroupCommitSession) flush_with_timings(mut database Persist
 	session.has_pending_meta = false
 	return GroupCommitStageTimings{
 		transaction_ms: 0
-		commit_ms: commit_ms
-		checkpoint_ms: checkpoint_ms
-		flush_ms: total_sw.elapsed().milliseconds()
-		flushed: true
+		commit_ms:      commit_ms
+		checkpoint_ms:  checkpoint_ms
+		flush_ms:       total_sw.elapsed().milliseconds()
+		flushed:        true
 	}
 }
 

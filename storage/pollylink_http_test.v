@@ -48,6 +48,24 @@ fn sidecar_markdown_value_and_fts_indexed_spec() !TypedTableSpec {
 	])
 }
 
+fn sidecar_docs_general_fts_spec() !TypedTableSpec {
+	table := TableDef.new('docs', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('content_text', .string_, false)!,
+		ColumnDef.new('body', .markdown_, false)!,
+	], ['id'])!
+	return TypedTableSpec.new(table, [
+		SchemaIndexDef.fts_with_options('content_text_fts_idx', 'content_text', FtsIndexOptions{
+			tokenizer:      'unicode61 remove_diacritics 2'
+			prefix_lengths: [2, 3, 4]
+		})!,
+		SchemaIndexDef.fts_markdown_with_options('body_fts_idx', 'body', .visible_text_with_code,
+			FtsIndexOptions{
+			prefix_lengths: [2, 4]
+		})!,
+	])
+}
+
 fn test_sidecar_repo_root_dir_uses_namespace_when_present() {
 	assert sidecar_repo_root_dir('/tmp/hub', '') == '/tmp/hub'
 	assert sidecar_repo_root_dir('/tmp/hub', '.') == '/tmp/hub'
@@ -91,30 +109,30 @@ fn test_sidecar_branch_log_returns_recent_commits_for_namespaced_repo() {
 	mut repo := open_sidecar_repository(root_dir, 'team-a', 'main') or { panic(err) }
 	cfg := ChunkConfig.default()
 	tree1 := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
 	], cfg) or { panic(err) }
 	tree2 := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '2'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '2'.bytes() },
 	], cfg) or { panic(err) }
 	repo.commit_to_branch('main', tree1, CommitMeta{
-		author: 'gwg'
-		message: 'first'
+		author:    'gwg'
+		message:   'first'
 		timestamp: 1
 	}) or { panic(err) }
 	repo.commit_to_branch('main', tree2, CommitMeta{
-		author: 'gwg'
-		message: 'second'
+		author:    'gwg'
+		message:   'second'
 		timestamp: 2
 	}) or { panic(err) }
 	repo.close() or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/branch-log?repo=team-a&branch=main&limit=2'
-	}) 
+		url:    '/v1/branch-log?repo=team-a&branch=main&limit=2'
+	})
 	assert response.status_code == 200
 	payload := json.decode(SidecarBranchLogDto, response.body) or { panic(err) }
 	assert payload.commits.len == 2
@@ -130,19 +148,19 @@ fn test_sidecar_repository_info_tracks_latest_branch_activity() {
 	mut repo := open_sidecar_repository(root_dir, 'team-b', 'main') or { panic(err) }
 	repo.create_branch('feature', 'main') or { panic(err) }
 	tree_main := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
 	], ChunkConfig.default()) or { panic(err) }
 	tree_feature := Tree.build([
-		KVPair{key: 'b'.bytes(), value: '2'.bytes()},
+		KVPair{ key: 'b'.bytes(), value: '2'.bytes() },
 	], ChunkConfig.default()) or { panic(err) }
 	repo.commit_to_branch('main', tree_main, CommitMeta{
-		author: 'gwg'
-		message: 'main-update'
+		author:    'gwg'
+		message:   'main-update'
 		timestamp: 10
 	}) or { panic(err) }
 	repo.commit_to_branch('feature', tree_feature, CommitMeta{
-		author: 'gwg'
-		message: 'feature-update'
+		author:    'gwg'
+		message:   'feature-update'
 		timestamp: 20
 	}) or { panic(err) }
 	info := sidecar_repository_info(root_dir, mut repo, 'team-b')
@@ -161,29 +179,29 @@ fn test_sidecar_repo_activity_returns_branches_sorted_by_latest_commit() {
 	mut repo := open_sidecar_repository(root_dir, 'team-c', 'main') or { panic(err) }
 	repo.create_branch('feature', 'main') or { panic(err) }
 	main_tree := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
 	], ChunkConfig.default()) or { panic(err) }
 	feature_tree := Tree.build([
-		KVPair{key: 'b'.bytes(), value: '2'.bytes()},
+		KVPair{ key: 'b'.bytes(), value: '2'.bytes() },
 	], ChunkConfig.default()) or { panic(err) }
 	repo.commit_to_branch('main', main_tree, CommitMeta{
-		author: 'gwg'
-		message: 'main-update'
+		author:    'gwg'
+		message:   'main-update'
 		timestamp: 10
 	}) or { panic(err) }
 	repo.commit_to_branch('feature', feature_tree, CommitMeta{
-		author: 'gwg'
-		message: 'feature-update'
+		author:    'gwg'
+		message:   'feature-update'
 		timestamp: 20
 	}) or { panic(err) }
 	repo.close() or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/repo-activity?repo=team-c&limit=2'
+		url:    '/v1/repo-activity?repo=team-c&limit=2'
 	})
 	assert response.status_code == 200
 	payload := json.decode(SidecarRepoActivityDto, response.body) or { panic(err) }
@@ -200,21 +218,21 @@ fn test_list_sidecar_repository_infos_sorts_by_latest_timestamp() {
 	}
 	mut repo_a := open_sidecar_repository(root_dir, 'team-a', 'main') or { panic(err) }
 	tree_a := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
 	], ChunkConfig.default()) or { panic(err) }
 	repo_a.commit_to_branch('main', tree_a, CommitMeta{
-		author: 'gwg'
-		message: 'older'
+		author:    'gwg'
+		message:   'older'
 		timestamp: 10
 	}) or { panic(err) }
 	repo_a.close() or { panic(err) }
 	mut repo_b := open_sidecar_repository(root_dir, 'team-b', 'main') or { panic(err) }
 	tree_b := Tree.build([
-		KVPair{key: 'b'.bytes(), value: '2'.bytes()},
+		KVPair{ key: 'b'.bytes(), value: '2'.bytes() },
 	], ChunkConfig.default()) or { panic(err) }
 	repo_b.commit_to_branch('main', tree_b, CommitMeta{
-		author: 'gwg'
-		message: 'newer'
+		author:    'gwg'
+		message:   'newer'
 		timestamp: 20
 	}) or { panic(err) }
 	repo_b.close() or { panic(err) }
@@ -231,21 +249,21 @@ fn test_list_sidecar_global_activity_sorts_across_repositories() {
 	}
 	mut repo_a := open_sidecar_repository(root_dir, 'team-a', 'main') or { panic(err) }
 	tree_a := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
 	], ChunkConfig.default()) or { panic(err) }
 	repo_a.commit_to_branch('main', tree_a, CommitMeta{
-		author: 'gwg'
-		message: 'older'
+		author:    'gwg'
+		message:   'older'
 		timestamp: 10
 	}) or { panic(err) }
 	repo_a.close() or { panic(err) }
 	mut repo_b := open_sidecar_repository(root_dir, 'team-b', 'main') or { panic(err) }
 	tree_b := Tree.build([
-		KVPair{key: 'b'.bytes(), value: '2'.bytes()},
+		KVPair{ key: 'b'.bytes(), value: '2'.bytes() },
 	], ChunkConfig.default()) or { panic(err) }
 	repo_b.commit_to_branch('main', tree_b, CommitMeta{
-		author: 'gwg'
-		message: 'newer'
+		author:    'gwg'
+		message:   'newer'
 		timestamp: 20
 	}) or { panic(err) }
 	repo_b.close() or { panic(err) }
@@ -266,12 +284,12 @@ fn test_pollyhub_governance_enforces_bearer_and_repo_acl() {
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-a', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	unauthorized := handler.handle(http.Request{
 		method: .get
-		url: '/v1/repos'
+		url:    '/v1/repos'
 		header: http.new_header()
 	})
 	assert unauthorized.status_code == 401
@@ -279,7 +297,7 @@ fn test_pollyhub_governance_enforces_bearer_and_repo_acl() {
 	ok_header.add(.authorization, 'Bearer secret-token')
 	authorized := handler.handle(http.Request{
 		method: .get
-		url: '/v1/repos'
+		url:    '/v1/repos'
 		header: ok_header
 	})
 	assert authorized.status_code == 200
@@ -303,19 +321,19 @@ fn test_sidecar_governance_status_reports_auth_and_rate_limit() {
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	set_pollyhub_rate_limit_policy(root_dir, 120) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut header := http.new_header()
 	header.add(.authorization, 'Bearer secret-token')
 	_ = handler.handle(http.Request{
 		method: .get
-		url: '/v1/repos'
+		url:    '/v1/repos'
 		header: header
 	})
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/governance-status'
+		url:    '/v1/governance-status'
 		header: header
 	})
 	assert response.status_code == 200
@@ -347,20 +365,20 @@ fn test_sidecar_rate_limit_denies_when_actor_exceeds_budget() {
 	grant_pollyhub_repo_access(root_dir, 'team-a', 'alice', .reader) or { panic(err) }
 	set_pollyhub_rate_limit_policy(root_dir, 1) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut header := http.new_header()
 	header.add(.authorization, 'Bearer secret-token')
 	first := handler.handle(http.Request{
 		method: .get
-		url: '/v1/repos'
+		url:    '/v1/repos'
 		header: header
 	})
 	assert first.status_code == 200
 	second := handler.handle(http.Request{
 		method: .get
-		url: '/v1/repos'
+		url:    '/v1/repos'
 		header: header
 	})
 	assert second.status_code == 429
@@ -381,7 +399,9 @@ fn test_pollyhub_repo_policy_roundtrip_and_sidecar_repo_info() {
 	mut repo := open_sidecar_repository(root_dir, 'team-policy', 'main') or { panic(err) }
 	repo.close() or { panic(err) }
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
-	set_pollyhub_repo_policy(root_dir, 'team-policy', false, true, 'manifest_depth1') or { panic(err) }
+	set_pollyhub_repo_policy(root_dir, 'team-policy', false, true, 'manifest_depth1') or {
+		panic(err)
+	}
 	policy := pollyhub_repo_policy(root_dir, 'team-policy') or { panic(err) }
 	assert policy.allow_push_to_default == false
 	assert policy.require_auto_merge == true
@@ -394,14 +414,14 @@ fn test_pollyhub_repo_policy_roundtrip_and_sidecar_repo_info() {
 	assert info.default_sync_policy == 'manifest_depth1'
 	reopened.close() or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/repo-info?repo=team-policy'
+		url:    '/v1/repo-info?repo=team-policy'
 		header: auth_header
 	})
 	assert response.status_code == 200
@@ -419,11 +439,11 @@ fn test_sidecar_apply_respects_repo_policy_for_default_branch() {
 	}
 	mut source_repo := open_sidecar_repository(source_root, 'team-policy', 'main') or { panic(err) }
 	tree := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
 	], ChunkConfig.default()) or { panic(err) }
 	commit_result := source_repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	offer := sync_offer_for_branch(mut source_repo, 'main') or { panic(err) }
@@ -437,18 +457,18 @@ fn test_sidecar_apply_respects_repo_policy_for_default_branch() {
 	set_pollyhub_repo_policy(target_root, 'team-policy', false, false, 'auto') or { panic(err) }
 
 	handler := PollyLinkSidecarHandler{
-		root_dir: target_root
+		root_dir:       target_root
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/sync/apply'
+		url:    '/v1/sync/apply'
 		header: auth_header
-		data: json.encode(SyncApplyRequestDto{
+		data:   json.encode(SyncApplyRequestDto{
 			repo_name: 'team-policy'
-			exchange: sync_exchange_to_dto(exchange)
+			exchange:  sync_exchange_to_dto(exchange)
 		})
 	})
 	assert response.status_code == 401
@@ -472,52 +492,62 @@ fn test_sidecar_apply_requires_merge_commit_when_repo_policy_enabled() {
 	cfg := ChunkConfig.default()
 	mut source_repo := open_sidecar_repository(source_root, 'team-merge', 'main') or { panic(err) }
 	base_tree := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
 	], cfg) or { panic(err) }
 	base_update := source_repo.commit_to_branch('main', base_tree, CommitMeta{
-		author: 'gwg'
-		message: 'base'
+		author:    'gwg'
+		message:   'base'
 		timestamp: 1
 	}) or { panic(err) }
 	source_repo.create_branch('feature', base_update.branch.commit_cid) or { panic(err) }
 	main_tree := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
-		KVPair{key: 'b'.bytes(), value: '2'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
+		KVPair{
+			key:   'b'.bytes()
+			value: '2'.bytes()
+		},
 	], cfg) or { panic(err) }
 	feature_tree := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
-		KVPair{key: 'c'.bytes(), value: '3'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
+		KVPair{
+			key:   'c'.bytes()
+			value: '3'.bytes()
+		},
 	], cfg) or { panic(err) }
 	main_update := source_repo.commit_to_branch('main', main_tree, CommitMeta{
-		author: 'gwg'
-		message: 'main-update'
+		author:    'gwg'
+		message:   'main-update'
 		timestamp: 2
 	}) or { panic(err) }
 	feature_update := source_repo.commit_to_branch('feature', feature_tree, CommitMeta{
-		author: 'gwg'
-		message: 'feature-update'
+		author:    'gwg'
+		message:   'feature-update'
 		timestamp: 3
 	}) or { panic(err) }
-	merge_result := source_repo.repo.merge_branches('main', 'feature', cfg, mut source_repo.node_store, mut source_repo.commit_store) or {
-		panic(err)
-	}
+	merge_result := source_repo.repo.merge_branches('main', 'feature', cfg, mut source_repo.node_store, mut
+		source_repo.commit_store) or { panic(err) }
 	assert merge_result.conflicts.len == 0
-	merge_snapshot := Snapshot.new(merge_result.tree, [main_update.branch.commit_cid, feature_update.branch.commit_cid], CommitMeta{
-		author: 'gwg'
-		message: 'merge feature'
+	merge_snapshot := Snapshot.new(merge_result.tree, [main_update.branch.commit_cid, feature_update.branch.commit_cid],
+		CommitMeta{
+		author:    'gwg'
+		message:   'merge feature'
 		timestamp: 4
 	})
-	merge_snapshot.persist(mut source_repo.node_store, mut source_repo.commit_store) or { panic(err) }
+	merge_snapshot.persist(mut source_repo.node_store, mut source_repo.commit_store) or {
+		panic(err)
+	}
 	single_parent_offer := sync_offer_for_branch(mut source_repo, 'main') or { panic(err) }
-	single_parent_exchange := full_sync_exchange_for_offer(mut source_repo, single_parent_offer) or { panic(err) }
+	single_parent_exchange := full_sync_exchange_for_offer(mut source_repo, single_parent_offer) or {
+		panic(err)
+	}
 	merge_offer := SyncOffer{
-		request: SyncRequest{
+		request:                 SyncRequest{
 			local_root_hash: merge_snapshot.commit.root_cid
-			branch_name: 'main'
+			branch_name:     'main'
 		}
 		expected_old_commit_cid: ''
-		target_commit_cid: merge_snapshot.commit.cid
-		target_root_cid: merge_snapshot.commit.root_cid
+		target_commit_cid:       merge_snapshot.commit.cid
+		target_root_cid:         merge_snapshot.commit.root_cid
 	}
 	merge_exchange := full_sync_exchange_for_offer(mut source_repo, merge_offer) or { panic(err) }
 	source_repo.close() or { panic(err) }
@@ -530,18 +560,18 @@ fn test_sidecar_apply_requires_merge_commit_when_repo_policy_enabled() {
 	set_pollyhub_repo_policy(target_root, 'team-merge', true, true, 'auto') or { panic(err) }
 
 	handler := PollyLinkSidecarHandler{
-		root_dir: target_root
+		root_dir:       target_root
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	rejected := handler.handle(http.Request{
 		method: .post
-		url: '/v1/sync/apply'
+		url:    '/v1/sync/apply'
 		header: auth_header
-		data: json.encode(SyncApplyRequestDto{
+		data:   json.encode(SyncApplyRequestDto{
 			repo_name: 'team-merge'
-			exchange: sync_exchange_to_dto(single_parent_exchange)
+			exchange:  sync_exchange_to_dto(single_parent_exchange)
 		})
 	})
 	assert rejected.status_code == 401
@@ -550,11 +580,11 @@ fn test_sidecar_apply_requires_merge_commit_when_repo_policy_enabled() {
 
 	accepted := handler.handle(http.Request{
 		method: .post
-		url: '/v1/sync/apply'
+		url:    '/v1/sync/apply'
 		header: auth_header
-		data: json.encode(SyncApplyRequestDto{
+		data:   json.encode(SyncApplyRequestDto{
 			repo_name: 'team-merge'
-			exchange: sync_exchange_to_dto(merge_exchange)
+			exchange:  sync_exchange_to_dto(merge_exchange)
 		})
 	})
 	assert accepted.status_code == 200
@@ -578,9 +608,8 @@ fn test_sidecar_branch_statuses_include_merge_and_projector_state() {
 	spec := sidecar_test_items_spec() or { panic(err) }
 	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection((AggregateProjectionDef.sum_json_i64('sum(items.meta.amount)', 'items', 'meta', 'amount') or {
-		panic(err)
-	}).with_priority(200).with_cost_hint(.low)) or {
+	db.register_aggregate_projection((AggregateProjectionDef.sum_json_i64('sum(items.meta.amount)',
+		'items', 'meta', 'amount') or { panic(err) }).with_priority(200).with_cost_hint(.low)) or {
 		panic(err)
 	}
 	codec := TypedRowCodec.new(spec.table)
@@ -591,13 +620,13 @@ fn test_sidecar_branch_statuses_include_merge_and_projector_state() {
 	seed_row.set('meta', '{"amount":4,"kind":"seed"}')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'items').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'items').key_for('001'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	base := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 10
 	}) or { panic(err) }
 	db.create_branch('feature', base.branch.commit_cid) or { panic(err) }
@@ -609,12 +638,14 @@ fn test_sidecar_branch_statuses_include_merge_and_projector_state() {
 	next_row.set('meta', '{"amount":6,"kind":"next"}')
 	writes.put('items', '002'.bytes(), next_row)
 	_ = db.apply_typed_write_set('feature', writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature change'
+		author:    'gwg'
+		message:   'feature change'
 		timestamp: 20
 	}) or { panic(err) }
 	db.close() or { panic(err) }
-	set_pollyhub_branch_policy(root_dir, 'team-status', 'feature', false, true, 'manifest_depth2') or { panic(err) }
+	set_pollyhub_branch_policy(root_dir, 'team-status', 'feature', false, true, 'manifest_depth2') or {
+		panic(err)
+	}
 
 	statuses := list_sidecar_branch_statuses(root_dir, 'team-status', 'main') or { panic(err) }
 	assert statuses.len == 2
@@ -660,29 +691,29 @@ fn test_sidecar_projector_value_returns_markdown_projector_value() {
 	seed_row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'[a](https://example.com/a)\n\n[b](https://example.com/b)\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'markdown'
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '[a](https://example.com/a)\n\n[b](https://example.com/b)\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'markdown'
 		timestamp: 2
 	}) or { panic(err) }
 	_ = db.refresh_aggregate_projections('main', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'refresh projector'
+		author:    'gwg'
+		message:   'refresh projector'
 		timestamp: 3
 	}) or { panic(err) }
 	db.close() or { panic(err) }
@@ -690,37 +721,37 @@ fn test_sidecar_projector_value_returns_markdown_projector_value() {
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-md', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/projector-value?repo=team-md&branch=main&name=count(notes.body.links)'
+		url:    '/v1/projector-value?repo=team-md&branch=main&name=count(notes.body.links)'
 		header: auth_header
 	})
 	assert response.status_code == 200
 	dto := json.decode(SidecarProjectorValueDto, response.body) or { panic(err) }
 	value := SidecarProjectorValue{
-		name: dto.name
-		branch_name: dto.branch_name
-		value: dto.value
-		current_data_root_cid: dto.current_data_root_cid
-		source_data_root_cid: dto.source_data_root_cid
-		virtual_root_cid: dto.virtual_root_cid
-		fresh: dto.fresh
-		stale_reason: dto.stale_reason
-		source_json_path: dto.source_json_path
-		source_field_selector_meta: SidecarFieldSelectorMeta{
+		name:                         dto.name
+		branch_name:                  dto.branch_name
+		value:                        dto.value
+		current_data_root_cid:        dto.current_data_root_cid
+		source_data_root_cid:         dto.source_data_root_cid
+		virtual_root_cid:             dto.virtual_root_cid
+		fresh:                        dto.fresh
+		stale_reason:                 dto.stale_reason
+		source_json_path:             dto.source_json_path
+		source_field_selector_meta:   SidecarFieldSelectorMeta{
 			plugin_name: dto.source_field_selector_meta.plugin_name
-			selector: dto.source_field_selector_meta.selector
-			value_type: dto.source_field_selector_meta.value_type
-			stores_row: dto.source_field_selector_meta.stores_row
+			selector:    dto.source_field_selector_meta.selector
+			value_type:  dto.source_field_selector_meta.value_type
+			stores_row:  dto.source_field_selector_meta.stores_row
 		}
 		source_field_selector_plugin: dto.source_field_selector_plugin
-		source_field_selector: dto.source_field_selector
-		source_markdown_selector: dto.source_markdown_selector
+		source_field_selector:        dto.source_field_selector
+		source_markdown_selector:     dto.source_markdown_selector
 	}
 	assert value.value == i64(2)
 	assert value.fresh
@@ -751,24 +782,24 @@ fn test_sidecar_markdown_metric_returns_ad_hoc_markdown_count() {
 	seed_row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\n```v\nprintln("ok")\n```\n\n```sql\nselect 1;\n```\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'markdown'
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\n```v\nprintln("ok")\n```\n\n```sql\nselect 1;\n```\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'markdown'
 		timestamp: 2
 	}) or { panic(err) }
 	db.close() or { panic(err) }
@@ -776,24 +807,24 @@ fn test_sidecar_markdown_metric_returns_ad_hoc_markdown_count() {
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-md-metric', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/markdown-metric?repo=team-md-metric&branch=main&table=notes&column=body&selector=code_blocks:v'
+		url:    '/v1/markdown-metric?repo=team-md-metric&branch=main&table=notes&column=body&selector=code_blocks:v'
 		header: auth_header
 	})
 	assert response.status_code == 200
 	dto := json.decode(SidecarMarkdownMetricDto, response.body) or { panic(err) }
 	metric := SidecarMarkdownMetric{
 		branch_name: dto.branch_name
-		table_name: dto.table_name
+		table_name:  dto.table_name
 		column_name: dto.column_name
-		selector: dto.selector
-		value: dto.value
+		selector:    dto.selector
+		value:       dto.value
 	}
 	assert metric.value == i64(1)
 	assert metric.selector == 'code_blocks:v'
@@ -817,24 +848,24 @@ fn test_sidecar_index_lookup_returns_markdown_value_index_rows() {
 	seed_row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'[docs](https://docs.example.com/a)\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'markdown'
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '[docs](https://docs.example.com/a)\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'markdown'
 		timestamp: 2
 	}) or { panic(err) }
 	db.close() or { panic(err) }
@@ -842,14 +873,14 @@ fn test_sidecar_index_lookup_returns_markdown_value_index_rows() {
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-md-index', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/index-lookup?repo=team-md-index&branch=main&table=notes&index=body_link_host_idx&value=docs.example.com&limit=10'
+		url:    '/v1/index-lookup?repo=team-md-index&branch=main&table=notes&index=body_link_host_idx&value=docs.example.com&limit=10'
 		header: auth_header
 	})
 	assert response.status_code == 200
@@ -880,24 +911,24 @@ fn test_sidecar_index_lookup_prefix_returns_markdown_heading_matches() {
 	seed_row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'## Roadmap\n\nBody.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'markdown'
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '## Roadmap\n\nBody.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'markdown'
 		timestamp: 2
 	}) or { panic(err) }
 	db.close() or { panic(err) }
@@ -905,14 +936,14 @@ fn test_sidecar_index_lookup_prefix_returns_markdown_heading_matches() {
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-md-prefix', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/index-lookup-prefix?repo=team-md-prefix&branch=main&table=notes&index=body_heading_text_idx&value=Road&limit=10'
+		url:    '/v1/index-lookup-prefix?repo=team-md-prefix&branch=main&table=notes&index=body_heading_text_idx&value=Road&limit=10'
 		header: auth_header
 	})
 	assert response.status_code == 200
@@ -942,39 +973,39 @@ fn test_sidecar_markdown_query_metric_returns_metric_value() {
 	seed_row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\n[docs](https://docs.example.com/a)\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'markdown'
-			timestamp: 2
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\n[docs](https://docs.example.com/a)\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'markdown'
+		timestamp: 2
+	}) or { panic(err) }
 	db.close() or { panic(err) }
 
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-md-query-metric', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/markdown-query?repo=team-md-query-metric&branch=main&table=notes&kind=metric&column=body&selector=links'
+		url:    '/v1/markdown-query?repo=team-md-query-metric&branch=main&table=notes&kind=metric&column=body&selector=links'
 		header: auth_header
 	})
 	assert response.status_code == 200
@@ -1006,39 +1037,39 @@ fn test_sidecar_markdown_query_prefix_returns_markdown_index_rows() {
 	seed_row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'## Roadmap\n\nBody.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'markdown'
-			timestamp: 2
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '## Roadmap\n\nBody.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'markdown'
+		timestamp: 2
+	}) or { panic(err) }
 	db.close() or { panic(err) }
 
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-md-query-prefix', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/markdown-query?repo=team-md-query-prefix&branch=main&table=notes&kind=prefix&index=body_heading_text_idx&value=Road&limit=10'
+		url:    '/v1/markdown-query?repo=team-md-query-prefix&branch=main&table=notes&kind=prefix&index=body_heading_text_idx&value=Road&limit=10'
 		header: auth_header
 	})
 	assert response.status_code == 200
@@ -1066,14 +1097,14 @@ fn test_sidecar_table_spec_returns_index_selector_meta() {
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-md-spec', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/table-spec?repo=team-md-spec&branch=main&table=notes'
+		url:    '/v1/table-spec?repo=team-md-spec&branch=main&table=notes'
 		header: auth_header
 	})
 	assert response.status_code == 200
@@ -1105,14 +1136,14 @@ fn test_sidecar_query_schema_returns_selector_and_projection_metadata() {
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-query-schema', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/query-schema?repo=team-query-schema&branch=main&table=notes'
+		url:    '/v1/query-schema?repo=team-query-schema&branch=main&table=notes'
 		header: auth_header
 	})
 	assert response.status_code == 200
@@ -1216,6 +1247,78 @@ fn test_sidecar_query_schema_returns_selector_and_projection_metadata() {
 	assert dto.projection_metrics[0].aggregate == 'sum'
 }
 
+fn test_sidecar_query_schema_returns_general_fts_indexes() {
+	root_dir := os.join_path(os.vtmp_dir(), 'polly-sidecar-query-schema-general-fts-${rand.uuid_v4()}')
+	defer {
+		os.rmdir_all(root_dir) or {}
+	}
+	repo_root := sidecar_repo_root_dir(root_dir, 'team-query-schema-general-fts')
+	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	spec := sidecar_docs_general_fts_spec() or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+
+	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
+	grant_pollyhub_repo_access(root_dir, 'team-query-schema-general-fts', 'alice', .reader) or {
+		panic(err)
+	}
+	handler := PollyLinkSidecarHandler{
+		root_dir:       root_dir
+		default_branch: 'main'
+	}
+	mut auth_header := http.new_header()
+	auth_header.add(.authorization, 'Bearer secret-token')
+	response := handler.handle(http.Request{
+		method: .get
+		url:    '/v1/query-schema?repo=team-query-schema-general-fts&branch=main&table=docs'
+		header: auth_header
+	})
+	assert response.status_code == 200
+	dto := json.decode(SidecarQuerySchemaDto, response.body) or { panic(err) }
+	assert dto.table_name == 'docs'
+	assert dto.indexes.len == 2
+
+	mut content_text_fts := SidecarQuerySchemaIndexDto{}
+	mut body_fts := SidecarQuerySchemaIndexDto{}
+	for index in dto.indexes {
+		if index.name == 'content_text_fts_idx' {
+			content_text_fts = index
+		}
+		if index.name == 'body_fts_idx' {
+			body_fts = index
+		}
+	}
+
+	assert content_text_fts.name == 'content_text_fts_idx'
+	assert content_text_fts.column_name == 'content_text'
+	assert content_text_fts.value_type == 'string'
+	assert content_text_fts.is_fts
+	assert content_text_fts.fts_query_kinds == ['term', 'prefix', 'all', 'any']
+	assert content_text_fts.fts_shapes.len == 4
+	assert content_text_fts.fts_shapes[0].kind == 'term'
+	assert content_text_fts.fts_shapes[0].indexed
+	assert content_text_fts.fts_shapes[0].index_name == 'content_text_fts_idx'
+	assert content_text_fts.fts_shapes[0].planner_strategy == 'sqlite_fts5_match'
+	assert content_text_fts.fts_shapes[0].sample_explain.strategy == 'sqlite_fts5_match'
+	assert content_text_fts.filter_ops.len == 0
+
+	assert body_fts.name == 'body_fts_idx'
+	assert body_fts.column_name == 'body'
+	assert body_fts.value_type == 'string'
+	assert body_fts.is_fts
+	assert body_fts.fts_query_kinds == ['term', 'prefix', 'all', 'any']
+	assert body_fts.fts_shapes.len == 4
+	assert body_fts.fts_shapes[2].kind == 'all'
+	assert body_fts.fts_shapes[2].indexed
+	assert body_fts.fts_shapes[2].index_name == 'body_fts_idx'
+	assert body_fts.fts_shapes[2].planner_strategy == 'sqlite_fts5_match'
+	assert body_fts.fts_shapes[2].sample_explain.strategy == 'sqlite_fts5_match'
+	assert body_fts.fts_shapes[2].sample_explain.notes.any(it.contains('QueryRequest.general_fts'))
+	assert body_fts.filter_ops.len == 0
+}
+
 fn test_sidecar_query_plan_preview_returns_expected_index_strategy() {
 	root_dir := os.join_path(os.vtmp_dir(), 'polly-sidecar-query-plan-preview-${rand.uuid_v4()}')
 	defer {
@@ -1234,35 +1337,35 @@ fn test_sidecar_query_plan_preview_returns_expected_index_strategy() {
 		panic(err)
 	}
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-plan-preview'
+		url:    '/v1/query-plan-preview'
 		header: auth_header
-		data: json.encode(SidecarQueryRowsPostRequestDto{
-			repo_name: 'team-query-plan-preview'
-			branch_name: 'main'
-			table_name: 'notes'
-			filters: [
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:      'team-query-plan-preview'
+			branch_name:    'main'
+			table_name:     'notes'
+			filters:        [
 				SidecarQueryFilterDto{
 					column_name: 'body'
 					plugin_name: 'markdown'
-					selector: 'heading_text:2'
-					query_kind: 'prefix'
-					value: 'Road'
+					selector:    'heading_text:2'
+					query_kind:  'prefix'
+					value:       'Road'
 				},
 				SidecarQueryFilterDto{
 					column_name: 'title'
-					query_kind: 'eq'
-					value: 'Doc'
+					query_kind:  'eq'
+					value:       'Doc'
 				},
 			]
 			select_columns: ['title']
-			limit: 10
+			limit:          10
 		})
 	})
 	assert response.status_code == 200
@@ -1302,34 +1405,33 @@ fn test_sidecar_query_plan_preview_reports_projection_only_warning() {
 		'notes', 'body', 'markdown', 'links') or { panic(err) }) or { panic(err) }
 
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
-	grant_pollyhub_repo_access(root_dir, 'team-query-plan-preview-projection', 'alice', .reader) or {
-		panic(err)
-	}
+	grant_pollyhub_repo_access(root_dir, 'team-query-plan-preview-projection', 'alice',
+		.reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-plan-preview'
+		url:    '/v1/query-plan-preview'
 		header: auth_header
-		data: json.encode(SidecarQueryRowsPostRequestDto{
-			repo_name: 'team-query-plan-preview-projection'
-			branch_name: 'main'
-			table_name: 'notes'
-			filters: [
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:      'team-query-plan-preview-projection'
+			branch_name:    'main'
+			table_name:     'notes'
+			filters:        [
 				SidecarQueryFilterDto{
 					column_name: 'body'
 					plugin_name: 'markdown'
-					selector: 'links'
-					query_kind: 'eq'
-					value: '1'
+					selector:    'links'
+					query_kind:  'eq'
+					value:       '1'
 				},
 			]
 			select_columns: []string{}
-			limit: 10
+			limit:          10
 		})
 	})
 	assert response.status_code == 200
@@ -1340,6 +1442,60 @@ fn test_sidecar_query_plan_preview_reports_projection_only_warning() {
 	assert dto.warnings.any(it.contains('projection-only'))
 	assert dto.explain.strategy == 'table_scan'
 	assert dto.explain.warnings == dto.warnings
+}
+
+fn test_sidecar_query_plan_preview_supports_general_fts_clause() {
+	root_dir := os.join_path(os.vtmp_dir(), 'polly-sidecar-query-plan-preview-general-fts-${rand.uuid_v4()}')
+	defer {
+		os.rmdir_all(root_dir) or {}
+	}
+	repo_root := sidecar_repo_root_dir(root_dir, 'team-query-plan-preview-general-fts')
+	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	spec := sidecar_docs_general_fts_spec() or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+
+	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
+	grant_pollyhub_repo_access(root_dir, 'team-query-plan-preview-general-fts', 'alice',
+		.reader) or { panic(err) }
+	handler := PollyLinkSidecarHandler{
+		root_dir:       root_dir
+		default_branch: 'main'
+	}
+	mut auth_header := http.new_header()
+	auth_header.add(.authorization, 'Bearer secret-token')
+	response := handler.handle(http.Request{
+		method: .post
+		url:    '/v1/query-plan-preview'
+		header: auth_header
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:      'team-query-plan-preview-general-fts'
+			branch_name:    'main'
+			table_name:     'docs'
+			general_fts:    SidecarGeneralFtsClauseDto{
+				index_name: 'body_fts_idx'
+				query_kind: 'all'
+				terms:      ['search', 'gamma']
+			}
+			select_columns: ['id']
+			limit:          10
+		})
+	})
+	assert response.status_code == 200
+	dto := json.decode(SidecarQueryPlanPreviewDto, response.body) or { panic(err) }
+	assert dto.table_name == 'docs'
+	assert dto.general_fts.index_name == 'body_fts_idx'
+	assert dto.general_fts.query_kind == 'all'
+	assert dto.plan.strategy == 'sqlite_fts5_match'
+	assert dto.plan.index_name == 'body_fts_idx'
+	assert dto.warnings.len == 0
+	assert dto.notes.any(it.contains('SQLite FTS5 sidecar'))
+	assert dto.default_result_shape == 'rows'
+	assert !dto.supports_continuation_token
+	assert dto.explain.strategy == 'sqlite_fts5_match'
+	assert dto.explain.index_name == 'body_fts_idx'
 }
 
 fn test_sidecar_query_returns_plain_index_query_plan_and_projection() {
@@ -1366,13 +1522,13 @@ fn test_sidecar_query_returns_plain_index_query_plan_and_projection() {
 	seed_row.set('email', 'seed@example.com')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('seed'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('seed'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -1381,8 +1537,8 @@ fn test_sidecar_query_returns_plain_index_query_plan_and_projection() {
 	row.set('name', 'Ada')
 	row.set('email', 'ada@example.com')
 	_ = session.put_row(mut db, 'users', 'u1'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed user'
+		author:    'gwg'
+		message:   'seed user'
 		timestamp: 1
 	}) or { panic(err) }
 	db.close() or { panic(err) }
@@ -1390,14 +1546,14 @@ fn test_sidecar_query_returns_plain_index_query_plan_and_projection() {
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-query-plain', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/query-rows?repo=team-query-plain&branch=main&table=users&column=email&kind=eq&value=ada@example.com&select=name'
+		url:    '/v1/query-rows?repo=team-query-plain&branch=main&table=users&column=email&kind=eq&value=ada@example.com&select=name'
 		header: auth_header
 	})
 	assert response.status_code == 200
@@ -1431,39 +1587,39 @@ fn test_sidecar_query_returns_markdown_selector_query_plan() {
 	seed_row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'## Roadmap\n\nBody.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'markdown'
-			timestamp: 2
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '## Roadmap\n\nBody.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'markdown'
+		timestamp: 2
+	}) or { panic(err) }
 	db.close() or { panic(err) }
 
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-query-markdown', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .get
-		url: '/v1/query-rows?repo=team-query-markdown&branch=main&table=notes&column=body&plugin=markdown&selector=heading_text:2&kind=prefix&value=Road&limit=10'
+		url:    '/v1/query-rows?repo=team-query-markdown&branch=main&table=notes&column=body&plugin=markdown&selector=heading_text:2&kind=prefix&value=Road&limit=10'
 		header: auth_header
 	})
 	assert response.status_code == 200
@@ -1499,26 +1655,26 @@ fn test_sidecar_query_fts_preview_reports_all_strategy() {
 	row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\nParagraph about PollyDB merge and agent sync.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'markdown'
-			timestamp: 2
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nParagraph about PollyDB merge and agent sync.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'markdown'
+		timestamp: 2
+	}) or { panic(err) }
 	db.close() or { panic(err) }
 
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
@@ -1526,25 +1682,25 @@ fn test_sidecar_query_fts_preview_reports_all_strategy() {
 		panic(err)
 	}
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-fts-preview'
+		url:    '/v1/query-fts-preview'
 		header: auth_header
-		data: json.encode(SidecarFtsQueryRequestDto{
-			repo_name: 'team-query-fts-preview'
-			branch_name: 'main'
-			table_name: 'notes'
-			column_name: 'body'
-			scope: 'any'
-			query_kind: 'all'
-			terms: ['PollyDB', 'merge']
+		data:   json.encode(SidecarFtsQueryRequestDto{
+			repo_name:      'team-query-fts-preview'
+			branch_name:    'main'
+			table_name:     'notes'
+			column_name:    'body'
+			scope:          'any'
+			query_kind:     'all'
+			terms:          ['PollyDB', 'merge']
 			select_columns: ['title']
-			limit: 10
+			limit:          10
 		})
 	})
 	assert response.status_code == 200
@@ -1581,62 +1737,62 @@ fn test_sidecar_query_fts_returns_any_matches() {
 		row.set('body', MarkdownRef{
 			doc_root_id: 'seed-${id}'
 			source_hash: 'seed-${id}'
-			source_len: 0
+			source_len:  0
 		})
 		pairs << KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for(id.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for(id.bytes())
 			value: codec.encode(row)!
 		}
 	}
 	seed_tree := Tree.build(pairs, cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Roadmap\n\nShip agent sync.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'note-1'
-			timestamp: 2
-		}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
-		'# Metrics\n\nTrack dashboard metrics.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'note-2'
-			timestamp: 3
-		}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body',
-		'# Notes\n\nNothing relevant.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'note-3'
-			timestamp: 4
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Roadmap\n\nShip agent sync.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'note-1'
+		timestamp: 2
+	}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Metrics\n\nTrack dashboard metrics.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'note-2'
+		timestamp: 3
+	}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body', '# Notes\n\nNothing relevant.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'note-3'
+		timestamp: 4
+	}) or { panic(err) }
 	db.close() or { panic(err) }
 
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-query-fts', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-fts'
+		url:    '/v1/query-fts'
 		header: auth_header
-		data: json.encode(SidecarFtsQueryRequestDto{
-			repo_name: 'team-query-fts'
-			branch_name: 'main'
-			table_name: 'notes'
-			column_name: 'body'
-			scope: 'any'
-			query_kind: 'any'
-			terms: ['metrics', 'sync']
+		data:   json.encode(SidecarFtsQueryRequestDto{
+			repo_name:      'team-query-fts'
+			branch_name:    'main'
+			table_name:     'notes'
+			column_name:    'body'
+			scope:          'any'
+			query_kind:     'any'
+			terms:          ['metrics', 'sync']
 			select_columns: ['title']
-			limit: 10
+			limit:          10
 		})
 	})
 	assert response.status_code == 200
@@ -1655,6 +1811,181 @@ fn test_sidecar_query_fts_returns_any_matches() {
 	assert dto.hits[1].matched_terms == ['sync']
 	assert dto.rows[0].values['title'] == 'Metrics'
 	assert 'body' !in dto.rows[0].values
+}
+
+fn test_sidecar_general_query_fts_returns_matches_for_general_fts_index() {
+	root_dir := os.join_path(os.vtmp_dir(), 'polly-sidecar-general-query-fts-${rand.uuid_v4()}')
+	defer {
+		os.rmdir_all(root_dir) or {}
+	}
+	repo_root := sidecar_repo_root_dir(root_dir, 'team-general-query-fts')
+	cfg := ChunkConfig.default()
+	spec := sidecar_docs_general_fts_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	body1 := db.ingest_markdown('# Search Title\n\nVisible paragraph with gamma token.\n') or {
+		panic(err)
+	}
+	body2 := db.ingest_markdown('# Other\n\nVisible beta paragraph.\n') or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut rows := []KVPair{}
+	for id, text in {
+		'doc-1': 'alpha searchable body'
+		'doc-2': 'beta searchable body'
+	} {
+		mut row := TypedRowData.new()
+		row.set('id', id)
+		row.set('content_text', text)
+		row.set('body', if id == 'doc-1' { body1 } else { body2 })
+		rows << KVPair{
+			key:   TableView.new(Tree{}, 'docs').key_for(id.bytes())
+			value: codec.encode(row)!
+		}
+	}
+	seed_tree := Tree.build(rows, cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author:    'gwg'
+		message:   'seed docs'
+		timestamp: 1
+	}) or { panic(err) }
+	_ = db.rebuild_indexes_at_branch('main', ['docs'], cfg) or { panic(err) }
+	db.close() or { panic(err) }
+
+	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
+	grant_pollyhub_repo_access(root_dir, 'team-general-query-fts', 'alice', .reader) or {
+		panic(err)
+	}
+	handler := PollyLinkSidecarHandler{
+		root_dir:       root_dir
+		default_branch: 'main'
+	}
+	mut auth_header := http.new_header()
+	auth_header.add(.authorization, 'Bearer secret-token')
+	preview_response := handler.handle(http.Request{
+		method: .post
+		url:    '/v1/general-query-fts-preview'
+		header: auth_header
+		data:   json.encode(SidecarGeneralFtsQueryRequestDto{
+			repo_name:      'team-general-query-fts'
+			branch_name:    'main'
+			table_name:     'docs'
+			index_name:     'content_text_fts_idx'
+			query_kind:     'prefix'
+			terms:          ['alp']
+			select_columns: ['content_text']
+			limit:          10
+		})
+	})
+	assert preview_response.status_code == 200
+	preview_dto := json.decode(SidecarGeneralFtsQueryPreviewDto, preview_response.body) or {
+		panic(err)
+	}
+	assert preview_dto.plan.strategy == 'sqlite_fts5_match'
+	assert preview_dto.plan.backend == 'sqlite_fts5'
+	assert preview_dto.plan.column_name == 'content_text'
+
+	response := handler.handle(http.Request{
+		method: .post
+		url:    '/v1/general-query-fts'
+		header: auth_header
+		data:   json.encode(SidecarGeneralFtsQueryRequestDto{
+			repo_name:      'team-general-query-fts'
+			branch_name:    'main'
+			table_name:     'docs'
+			index_name:     'body_fts_idx'
+			query_kind:     'all'
+			terms:          ['search', 'gamma']
+			select_columns: ['id']
+			limit:          10
+		})
+	})
+	assert response.status_code == 200
+	dto := json.decode(SidecarGeneralFtsQueryResultDto, response.body) or { panic(err) }
+	assert dto.plan.strategy == 'sqlite_fts5_match'
+	assert dto.plan.index_name == 'body_fts_idx'
+	assert dto.rows.len == 1
+	assert dto.rows[0].primary_key == 'doc-1'
+	assert dto.hits.len == 1
+	assert dto.hits[0].primary_key == 'doc-1'
+	assert dto.hits[0].snippet.len > 0
+}
+
+fn test_sidecar_query_rows_post_supports_general_fts_clause() {
+	root_dir := os.join_path(os.vtmp_dir(), 'polly-sidecar-query-rows-general-fts-${rand.uuid_v4()}')
+	defer {
+		os.rmdir_all(root_dir) or {}
+	}
+	repo_root := sidecar_repo_root_dir(root_dir, 'team-query-rows-general-fts')
+	cfg := ChunkConfig.default()
+	spec := sidecar_docs_general_fts_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	body1 := db.ingest_markdown('# Search Title\n\nVisible paragraph with gamma token.\n') or {
+		panic(err)
+	}
+	body2 := db.ingest_markdown('# Other\n\nVisible beta paragraph.\n') or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut rows := []KVPair{}
+	for id, text in {
+		'doc-1': 'alpha searchable body'
+		'doc-2': 'beta searchable body'
+	} {
+		mut row := TypedRowData.new()
+		row.set('id', id)
+		row.set('content_text', text)
+		row.set('body', if id == 'doc-1' { body1 } else { body2 })
+		rows << KVPair{
+			key:   TableView.new(Tree{}, 'docs').key_for(id.bytes())
+			value: codec.encode(row)!
+		}
+	}
+	seed_tree := Tree.build(rows, cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author:    'gwg'
+		message:   'seed docs'
+		timestamp: 1
+	}) or { panic(err) }
+	_ = db.rebuild_indexes_at_branch('main', ['docs'], cfg) or { panic(err) }
+	db.close() or { panic(err) }
+
+	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
+	grant_pollyhub_repo_access(root_dir, 'team-query-rows-general-fts', 'alice', .reader) or {
+		panic(err)
+	}
+	handler := PollyLinkSidecarHandler{
+		root_dir:       root_dir
+		default_branch: 'main'
+	}
+	mut auth_header := http.new_header()
+	auth_header.add(.authorization, 'Bearer secret-token')
+	response := handler.handle(http.Request{
+		method: .post
+		url:    '/v1/query-rows'
+		header: auth_header
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:      'team-query-rows-general-fts'
+			branch_name:    'main'
+			table_name:     'docs'
+			general_fts:    SidecarGeneralFtsClauseDto{
+				index_name: 'body_fts_idx'
+				query_kind: 'all'
+				terms:      ['search', 'gamma']
+			}
+			select_columns: ['id']
+			limit:          10
+		})
+	})
+	assert response.status_code == 200
+	dto := json.decode(SidecarQueryRowsDto, response.body) or { panic(err) }
+	assert dto.plan.strategy == 'sqlite_fts5_match'
+	assert dto.plan.index_name == 'body_fts_idx'
+	assert dto.general_fts.index_name == 'body_fts_idx'
+	assert dto.general_fts.query_kind == 'all'
+	assert dto.rows.len == 1
+	assert dto.rows[0].primary_key == 'doc-1'
+	assert dto.general_fts_hits.len == 1
+	assert dto.general_fts_hits[0].primary_key == 'doc-1'
+	assert dto.general_fts_hits[0].snippet.len > 0
 }
 
 fn test_sidecar_query_post_supports_multiple_plain_filters() {
@@ -1681,13 +2012,13 @@ fn test_sidecar_query_post_supports_multiple_plain_filters() {
 	seed_row.set('email', 'seed@example.com')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('seed'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('seed'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -1696,8 +2027,8 @@ fn test_sidecar_query_post_supports_multiple_plain_filters() {
 	row1.set('name', 'Ada')
 	row1.set('email', 'ada@example.com')
 	_ = session.put_row(mut db, 'users', 'u1'.bytes(), row1, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed user 1'
+		author:    'gwg'
+		message:   'seed user 1'
 		timestamp: 1
 	}) or { panic(err) }
 	mut row2 := TypedRowData.new()
@@ -1705,42 +2036,44 @@ fn test_sidecar_query_post_supports_multiple_plain_filters() {
 	row2.set('name', 'Grace')
 	row2.set('email', 'grace@example.com')
 	_ = session.put_row(mut db, 'users', 'u2'.bytes(), row2, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed user 2'
+		author:    'gwg'
+		message:   'seed user 2'
 		timestamp: 2
 	}) or { panic(err) }
 	db.close() or { panic(err) }
 
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
-	grant_pollyhub_repo_access(root_dir, 'team-query-post-plain', 'alice', .reader) or { panic(err) }
+	grant_pollyhub_repo_access(root_dir, 'team-query-post-plain', 'alice', .reader) or {
+		panic(err)
+	}
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-rows'
+		url:    '/v1/query-rows'
 		header: auth_header
-		data: json.encode(SidecarQueryRowsPostRequestDto{
-			repo_name: 'team-query-post-plain'
-			branch_name: 'main'
-			table_name: 'users'
-			filters: [
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:      'team-query-post-plain'
+			branch_name:    'main'
+			table_name:     'users'
+			filters:        [
 				SidecarQueryFilterDto{
 					column_name: 'email'
-					query_kind: 'eq'
-					value: 'ada@example.com'
+					query_kind:  'eq'
+					value:       'ada@example.com'
 				},
 				SidecarQueryFilterDto{
 					column_name: 'name'
-					query_kind: 'eq'
-					value: 'Ada'
+					query_kind:  'eq'
+					value:       'Ada'
 				},
 			]
 			select_columns: ['name']
-			limit: 10
+			limit:          10
 		})
 	})
 	assert response.status_code == 200
@@ -1775,60 +2108,62 @@ fn test_sidecar_query_post_supports_mixed_selector_and_plain_filters() {
 	seed_row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'## Roadmap\n\nBody.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'markdown'
-			timestamp: 2
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '## Roadmap\n\nBody.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'markdown'
+		timestamp: 2
+	}) or { panic(err) }
 	db.close() or { panic(err) }
 
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
-	grant_pollyhub_repo_access(root_dir, 'team-query-post-mixed', 'alice', .reader) or { panic(err) }
+	grant_pollyhub_repo_access(root_dir, 'team-query-post-mixed', 'alice', .reader) or {
+		panic(err)
+	}
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-rows'
+		url:    '/v1/query-rows'
 		header: auth_header
-		data: json.encode(SidecarQueryRowsPostRequestDto{
-			repo_name: 'team-query-post-mixed'
-			branch_name: 'main'
-			table_name: 'notes'
-			filters: [
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:      'team-query-post-mixed'
+			branch_name:    'main'
+			table_name:     'notes'
+			filters:        [
 				SidecarQueryFilterDto{
 					column_name: 'body'
 					plugin_name: 'markdown'
-					selector: 'heading_text:2'
-					query_kind: 'prefix'
-					value: 'Road'
+					selector:    'heading_text:2'
+					query_kind:  'prefix'
+					value:       'Road'
 				},
 				SidecarQueryFilterDto{
 					column_name: 'title'
-					query_kind: 'eq'
-					value: 'Doc'
+					query_kind:  'eq'
+					value:       'Doc'
 				},
 			]
 			select_columns: ['title']
-			limit: 10
+			limit:          10
 		})
 	})
 	assert response.status_code == 200
@@ -1874,13 +2209,13 @@ fn test_sidecar_query_post_supports_between_filters() {
 	seed_row.set('created_at', '2026-01-01T00:00:00.000000Z')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'events').key_for('seed'.bytes())
+			key:   TableView.new(Tree{}, 'events').key_for('seed'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -1889,8 +2224,8 @@ fn test_sidecar_query_post_supports_between_filters() {
 	row1.set('title', 'One')
 	row1.set('created_at', '2026-01-01T00:00:00.000000Z')
 	_ = session.put_row(mut db, 'events', 'e1'.bytes(), row1, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert e1'
+		author:    'gwg'
+		message:   'insert e1'
 		timestamp: 1
 	}) or { panic(err) }
 	mut row2 := TypedRowData.new()
@@ -1898,8 +2233,8 @@ fn test_sidecar_query_post_supports_between_filters() {
 	row2.set('title', 'Two')
 	row2.set('created_at', '2026-01-02T00:00:00.000000Z')
 	_ = session.put_row(mut db, 'events', 'e2'.bytes(), row2, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert e2'
+		author:    'gwg'
+		message:   'insert e2'
 		timestamp: 2
 	}) or { panic(err) }
 	mut row3 := TypedRowData.new()
@@ -1907,38 +2242,40 @@ fn test_sidecar_query_post_supports_between_filters() {
 	row3.set('title', 'Three')
 	row3.set('created_at', '2026-01-03T00:00:00.000000Z')
 	_ = session.put_row(mut db, 'events', 'e3'.bytes(), row3, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert e3'
+		author:    'gwg'
+		message:   'insert e3'
 		timestamp: 3
 	}) or { panic(err) }
 	db.close() or { panic(err) }
 
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
-	grant_pollyhub_repo_access(root_dir, 'team-query-post-between', 'alice', .reader) or { panic(err) }
+	grant_pollyhub_repo_access(root_dir, 'team-query-post-between', 'alice', .reader) or {
+		panic(err)
+	}
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-rows'
+		url:    '/v1/query-rows'
 		header: auth_header
-		data: json.encode(SidecarQueryRowsPostRequestDto{
-			repo_name: 'team-query-post-between'
-			branch_name: 'main'
-			table_name: 'events'
-			filters: [
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:      'team-query-post-between'
+			branch_name:    'main'
+			table_name:     'events'
+			filters:        [
 				SidecarQueryFilterDto{
-					column_name: 'created_at'
-					query_kind: 'between'
-					value: '2026-01-02T00:00:00.000000Z'
+					column_name:  'created_at'
+					query_kind:   'between'
+					value:        '2026-01-02T00:00:00.000000Z'
 					second_value: '2026-01-03T00:00:00.000000Z'
 				},
 			]
 			select_columns: ['title']
-			limit: 10
+			limit:          10
 		})
 	})
 	assert response.status_code == 200
@@ -1978,13 +2315,13 @@ fn test_sidecar_query_rows_post_supports_primary_key_pagination() {
 	seed_row.set('email', 'seed@example.com')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('seed'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('seed'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -2000,17 +2337,19 @@ fn test_sidecar_query_rows_post_supports_primary_key_pagination() {
 		row.set('name', name)
 		row.set('email', '${name.to_lower()}@example.com')
 		_ = session.put_row(mut db, 'users', id.bytes(), row, cfg, CommitMeta{
-			author: 'gwg'
-			message: 'insert ${id}'
+			author:    'gwg'
+			message:   'insert ${id}'
 			timestamp: 1
 		}) or { panic(err) }
 	}
 	db.close() or { panic(err) }
 
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
-	grant_pollyhub_repo_access(root_dir, 'team-query-pagination', 'alice', .reader) or { panic(err) }
+	grant_pollyhub_repo_access(root_dir, 'team-query-pagination', 'alice', .reader) or {
+		panic(err)
+	}
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
@@ -2018,20 +2357,20 @@ fn test_sidecar_query_rows_post_supports_primary_key_pagination() {
 
 	first_response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-rows'
+		url:    '/v1/query-rows'
 		header: auth_header
-		data: json.encode(SidecarQueryRowsPostRequestDto{
-			repo_name: 'team-query-pagination'
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:   'team-query-pagination'
 			branch_name: 'main'
-			table_name: 'users'
-			filters: [
+			table_name:  'users'
+			filters:     [
 				SidecarQueryFilterDto{
 					column_name: 'email'
-					query_kind: 'prefix'
-					value: ''
+					query_kind:  'prefix'
+					value:       ''
 				},
 			]
-			limit: 2
+			limit:       2
 		})
 	})
 	assert first_response.status_code == 200
@@ -2046,22 +2385,22 @@ fn test_sidecar_query_rows_post_supports_primary_key_pagination() {
 
 	second_response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-rows'
+		url:    '/v1/query-rows'
 		header: auth_header
-		data: json.encode(SidecarQueryRowsPostRequestDto{
-			repo_name: 'team-query-pagination'
-			branch_name: 'main'
-			table_name: 'users'
-			filters: [
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:         'team-query-pagination'
+			branch_name:       'main'
+			table_name:        'users'
+			filters:           [
 				SidecarQueryFilterDto{
 					column_name: 'email'
-					query_kind: 'prefix'
-					value: ''
+					query_kind:  'prefix'
+					value:       ''
 				},
 			]
 			start_primary_key: '002'
 			start_index_value: 'grace@example.com'
-			limit: 2
+			limit:             2
 		})
 	})
 	assert second_response.status_code == 200
@@ -2096,13 +2435,13 @@ fn test_sidecar_query_rows_post_supports_continuation_token() {
 	seed_row.set('email', 'seed@example.com')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('seed'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('seed'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -2118,8 +2457,8 @@ fn test_sidecar_query_rows_post_supports_continuation_token() {
 		row.set('name', name)
 		row.set('email', '${name.to_lower()}@example.com')
 		_ = session.put_row(mut db, 'users', id.bytes(), row, cfg, CommitMeta{
-			author: 'gwg'
-			message: 'insert ${id}'
+			author:    'gwg'
+			message:   'insert ${id}'
 			timestamp: 1
 		}) or { panic(err) }
 	}
@@ -2128,7 +2467,7 @@ fn test_sidecar_query_rows_post_supports_continuation_token() {
 	init_pollyhub_governance(root_dir, 'alice', 'secret-token') or { panic(err) }
 	grant_pollyhub_repo_access(root_dir, 'team-query-token', 'alice', .reader) or { panic(err) }
 	handler := PollyLinkSidecarHandler{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
@@ -2136,20 +2475,20 @@ fn test_sidecar_query_rows_post_supports_continuation_token() {
 
 	first_response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-rows'
+		url:    '/v1/query-rows'
 		header: auth_header
-		data: json.encode(SidecarQueryRowsPostRequestDto{
-			repo_name: 'team-query-token'
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:   'team-query-token'
 			branch_name: 'main'
-			table_name: 'users'
-			filters: [
+			table_name:  'users'
+			filters:     [
 				SidecarQueryFilterDto{
 					column_name: 'email'
-					query_kind: 'prefix'
-					value: ''
+					query_kind:  'prefix'
+					value:       ''
 				},
 			]
-			limit: 2
+			limit:       2
 		})
 	})
 	assert first_response.status_code == 200
@@ -2161,21 +2500,21 @@ fn test_sidecar_query_rows_post_supports_continuation_token() {
 
 	second_response := handler.handle(http.Request{
 		method: .post
-		url: '/v1/query-rows'
+		url:    '/v1/query-rows'
 		header: auth_header
-		data: json.encode(SidecarQueryRowsPostRequestDto{
-			repo_name: 'team-query-token'
-			branch_name: 'main'
-			table_name: 'users'
-			filters: [
+		data:   json.encode(SidecarQueryRowsPostRequestDto{
+			repo_name:          'team-query-token'
+			branch_name:        'main'
+			table_name:         'users'
+			filters:            [
 				SidecarQueryFilterDto{
 					column_name: 'email'
-					query_kind: 'prefix'
-					value: ''
+					query_kind:  'prefix'
+					value:       ''
 				},
 			]
 			continuation_token: first_dto.next_continuation_token
-			limit: 2
+			limit:              2
 		})
 	})
 	assert second_response.status_code == 200
@@ -2186,30 +2525,30 @@ fn test_sidecar_query_rows_post_supports_continuation_token() {
 
 fn test_sidecar_query_page_struct_exposes_cursor() {
 	rows := SidecarQueryRows{
-		rows: [
+		rows:   [
 			SidecarTypedRow{
 				primary_key: '001'
-				values: {
+				values:      {
 					'name': 'Ada'
 				}
 			},
 		]
-		plan: SidecarQueryPlan{
-			strategy: 'index_exact'
-			index_name: 'email'
-			index_filter: SidecarQueryFilter{
+		plan:   SidecarQueryPlan{
+			strategy:          'index_exact'
+			index_name:        'email'
+			index_filter:      SidecarQueryFilter{
 				column_name: 'email'
-				query_kind: 'eq'
-				value: 'ada@example.com'
+				query_kind:  'eq'
+				value:       'ada@example.com'
 			}
-			post_filters: []SidecarQueryFilter{}
+			post_filters:      []SidecarQueryFilter{}
 			post_filter_count: 0
-			limit: 10
+			limit:             10
 		}
 		cursor: SidecarQueryCursor{
-			has_more: false
-			next_primary_key: ''
-			next_index_value: ''
+			has_more:                false
+			next_primary_key:        ''
+			next_index_value:        ''
 			next_continuation_token: ''
 		}
 	}
@@ -2223,36 +2562,36 @@ fn test_sidecar_query_page_struct_preserves_field_selector_meta() {
 	rows := SidecarQueryRows{
 		field_selector_meta: SidecarFieldSelectorMeta{
 			plugin_name: 'markdown'
-			selector: 'heading_text:2'
-			value_type: 'string'
-			stores_row: false
+			selector:    'heading_text:2'
+			value_type:  'string'
+			stores_row:  false
 		}
-		rows: [
+		rows:                [
 			SidecarTypedRow{
 				primary_key: 'note-1'
-				values: {
+				values:      {
 					'title': 'Roadmap'
 				}
 			},
 		]
-		plan: SidecarQueryPlan{
-			strategy: 'index_prefix'
-			index_name: 'body_heading_text_idx'
-			index_filter: SidecarQueryFilter{
+		plan:                SidecarQueryPlan{
+			strategy:          'index_prefix'
+			index_name:        'body_heading_text_idx'
+			index_filter:      SidecarQueryFilter{
 				column_name: 'body'
 				plugin_name: 'markdown'
-				selector: 'heading_text:2'
-				query_kind: 'prefix'
-				value: 'Road'
+				selector:    'heading_text:2'
+				query_kind:  'prefix'
+				value:       'Road'
 			}
-			post_filters: []SidecarQueryFilter{}
+			post_filters:      []SidecarQueryFilter{}
 			post_filter_count: 0
-			limit: 10
+			limit:             10
 		}
-		cursor: SidecarQueryCursor{
-			has_more: false
-			next_primary_key: ''
-			next_index_value: ''
+		cursor:              SidecarQueryCursor{
+			has_more:                false
+			next_primary_key:        ''
+			next_index_value:        ''
 			next_continuation_token: ''
 		}
 	}
@@ -2264,43 +2603,43 @@ fn test_sidecar_query_page_struct_preserves_field_selector_meta() {
 
 fn test_sidecar_query_page_from_dto_exposes_cursor_and_selector_meta() {
 	page := sidecar_query_page_from_dto(SidecarQueryRowsDto{
-		branch_name: 'main'
-		table_name: 'notes'
-		column_name: 'body'
-		plugin_name: 'markdown'
-		selector: 'heading_text:2'
+		branch_name:         'main'
+		table_name:          'notes'
+		column_name:         'body'
+		plugin_name:         'markdown'
+		selector:            'heading_text:2'
 		field_selector_meta: SidecarFieldSelectorMetaDto{
 			plugin_name: 'markdown'
-			selector: 'heading_text:2'
-			value_type: 'string'
-			stores_row: false
+			selector:    'heading_text:2'
+			value_type:  'string'
+			stores_row:  false
 		}
-		query_kind: 'prefix'
-		value: 'Road'
-		plan: SidecarQueryPlanDto{
-			strategy: 'index_prefix'
-			index_name: 'body_heading_text_idx'
-			index_filter: SidecarQueryFilterDto{
+		query_kind:          'prefix'
+		value:               'Road'
+		plan:                SidecarQueryPlanDto{
+			strategy:          'index_prefix'
+			index_name:        'body_heading_text_idx'
+			index_filter:      SidecarQueryFilterDto{
 				column_name: 'body'
 				plugin_name: 'markdown'
-				selector: 'heading_text:2'
-				query_kind: 'prefix'
-				value: 'Road'
+				selector:    'heading_text:2'
+				query_kind:  'prefix'
+				value:       'Road'
 			}
-			post_filters: []SidecarQueryFilterDto{}
+			post_filters:      []SidecarQueryFilterDto{}
 			post_filter_count: 0
-			limit: 10
+			limit:             10
 		}
-		cursor: SidecarQueryCursorDto{
-			has_more: true
-			next_primary_key: 'note-1'
-			next_index_value: 'Roadmap'
+		cursor:              SidecarQueryCursorDto{
+			has_more:                true
+			next_primary_key:        'note-1'
+			next_index_value:        'Roadmap'
 			next_continuation_token: 'token'
 		}
-		rows: [
+		rows:                [
 			SidecarTypedRowDto{
 				primary_key: 'note-1'
-				values: {
+				values:      {
 					'title': 'Roadmap'
 				}
 			},
@@ -2323,16 +2662,18 @@ fn test_pollyhub_branch_policy_roundtrip_and_status_projection() {
 	mut db := PersistentDatabase.init(repo_root, 'main') or { panic(err) }
 	cfg := ChunkConfig.default()
 	tree := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
 	], cfg) or { panic(err) }
 	base := db.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed'
+		author:    'gwg'
+		message:   'seed'
 		timestamp: 1
 	}) or { panic(err) }
 	db.create_branch('feature', base.branch.commit_cid) or { panic(err) }
 	db.close() or { panic(err) }
-	set_pollyhub_branch_policy(root_dir, 'team-branch', 'feature', false, true, 'manifest_depth2') or { panic(err) }
+	set_pollyhub_branch_policy(root_dir, 'team-branch', 'feature', false, true, 'manifest_depth2') or {
+		panic(err)
+	}
 	policy := find_pollyhub_branch_policy(root_dir, 'team-branch', 'feature') or { panic(err) }
 	assert policy.allow_push == false
 	assert policy.require_auto_merge == true
@@ -2359,50 +2700,62 @@ fn test_sidecar_apply_respects_branch_policy_override() {
 		os.rmdir_all(target_root) or {}
 	}
 	cfg := ChunkConfig.default()
-	mut source_repo := open_sidecar_repository(source_root, 'team-branch-policy', 'main') or { panic(err) }
+	mut source_repo := open_sidecar_repository(source_root, 'team-branch-policy', 'main') or {
+		panic(err)
+	}
 	base_tree := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
 	], cfg) or { panic(err) }
 	base_update := source_repo.commit_to_branch('main', base_tree, CommitMeta{
-		author: 'gwg'
-		message: 'base'
+		author:    'gwg'
+		message:   'base'
 		timestamp: 1
 	}) or { panic(err) }
 	source_repo.create_branch('feature', base_update.branch.commit_cid) or { panic(err) }
 	feature_tree := Tree.build([
-		KVPair{key: 'a'.bytes(), value: '1'.bytes()},
-		KVPair{key: 'b'.bytes(), value: '2'.bytes()},
+		KVPair{ key: 'a'.bytes(), value: '1'.bytes() },
+		KVPair{
+			key:   'b'.bytes()
+			value: '2'.bytes()
+		},
 	], cfg) or { panic(err) }
 	feature_offer := source_repo.commit_to_branch('feature', feature_tree, CommitMeta{
-		author: 'gwg'
-		message: 'feature-update'
+		author:    'gwg'
+		message:   'feature-update'
 		timestamp: 2
 	}) or { panic(err) }
 	feature_sync_offer := sync_offer_for_branch(mut source_repo, 'feature') or { panic(err) }
-	feature_exchange := full_sync_exchange_for_offer(mut source_repo, feature_sync_offer) or { panic(err) }
+	feature_exchange := full_sync_exchange_for_offer(mut source_repo, feature_sync_offer) or {
+		panic(err)
+	}
 	source_repo.close() or { panic(err) }
 	assert feature_offer.branch.name == 'feature'
 
-	mut target_repo := open_sidecar_repository(target_root, 'team-branch-policy', 'main') or { panic(err) }
+	mut target_repo := open_sidecar_repository(target_root, 'team-branch-policy', 'main') or {
+		panic(err)
+	}
 	target_repo.create_branch('feature', base_update.branch.commit_cid) or { panic(err) }
 	target_repo.close() or { panic(err) }
 	init_pollyhub_governance(target_root, 'alice', 'secret-token') or { panic(err) }
-	grant_pollyhub_repo_access(target_root, 'team-branch-policy', 'alice', .writer) or { panic(err) }
-	set_pollyhub_branch_policy(target_root, 'team-branch-policy', 'feature', false, false, 'manifest_depth2') or { panic(err) }
+	grant_pollyhub_repo_access(target_root, 'team-branch-policy', 'alice', .writer) or {
+		panic(err)
+	}
+	set_pollyhub_branch_policy(target_root, 'team-branch-policy', 'feature', false, false,
+		'manifest_depth2') or { panic(err) }
 
 	handler := PollyLinkSidecarHandler{
-		root_dir: target_root
+		root_dir:       target_root
 		default_branch: 'main'
 	}
 	mut auth_header := http.new_header()
 	auth_header.add(.authorization, 'Bearer secret-token')
 	rejected := handler.handle(http.Request{
 		method: .post
-		url: '/v1/sync/apply'
+		url:    '/v1/sync/apply'
 		header: auth_header
-		data: json.encode(SyncApplyRequestDto{
+		data:   json.encode(SyncApplyRequestDto{
 			repo_name: 'team-branch-policy'
-			exchange: sync_exchange_to_dto(feature_exchange)
+			exchange:  sync_exchange_to_dto(feature_exchange)
 		})
 	})
 	assert rejected.status_code == 401

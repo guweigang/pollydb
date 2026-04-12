@@ -189,21 +189,28 @@ Rules:
 - typical string selectors include `heading_text:2`, `link_host`, `image_host`, `code_block_lang`
 - typical metric selectors include `links`, `images`, `code_spans`, `code_blocks`, `headings`, `blocks`
 
-### Markdown Lightweight FTS Index
+### General FTS Index
 
-Markdown columns can also expose lightweight lexical selectors:
+Large text and Markdown columns should now use a true FTS index rather than
+treating selector expansion as the main lexical path.
 
-```text
-body_fts_any_idx:body#fts:string
-body_fts_heading_idx:body#fts:heading:string
+Examples:
+
+```v
+SchemaIndexDef.fts('content_text_fts_idx', 'content_text')!
+SchemaIndexDef.fts_markdown('body_fts_idx', 'body', .visible_text)!
+SchemaIndexDef.fts_markdown('body_code_fts_idx', 'body', .visible_text_with_code)!
 ```
 
-These selectors back the current lightweight FTS query kinds:
+General FTS currently supports these query kinds:
 
 - `term`
 - `prefix`
 - `all`
 - `any`
+
+Use Markdown selectors for structural access patterns.
+Use general FTS for lexical retrieval.
 
 ## 5. Git-Like Semantics
 
@@ -423,6 +430,7 @@ This returns the table's query-facing metadata:
 - columns and their legal filter operators
 - ordinary and derived indexes
 - field selectors exposed by plugins such as `markdown`
+- general FTS indexes and their supported `fts_shapes`
 - registered projection metrics
 
 That metadata is intended to be reused by future `vsql` planning and validation rather than replaced by a second query language.
@@ -430,6 +438,10 @@ That metadata is intended to be reused by future `vsql` planning and validation 
 `query-schema` now also includes `filter_shapes[*].sample_explain`, which gives the smallest planner-facing preview for each supported filter shape.
 For ad-hoc request-specific planning, use `POST /v1/query-plan-preview`.
 Its preferred result field is `explain`; the duplicated top-level `warnings` and `notes` remain for compatibility.
+
+For lexical retrieval, prefer a unified `general_fts` clause inside
+`POST /v1/query-plan-preview` and `POST /v1/query-rows` rather than older
+special-purpose FTS endpoints.
 
 ## 8. Working with `bool`, `enum`, `json`, and `datetime`
 

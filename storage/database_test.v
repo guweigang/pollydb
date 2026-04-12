@@ -147,6 +147,24 @@ fn database_notes_fts_indexed_spec() !TypedTableSpec {
 	])
 }
 
+fn database_docs_general_fts_spec() !TypedTableSpec {
+	table := TableDef.new('docs', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('content_text', .string_, false)!,
+		ColumnDef.new('body', .markdown_, false)!,
+	], ['id'])!
+	return TypedTableSpec.new(table, [
+		SchemaIndexDef.fts_with_options('content_text_fts_idx', 'content_text', FtsIndexOptions{
+			tokenizer:      'unicode61 remove_diacritics 2'
+			prefix_lengths: [2, 3, 4]
+		})!,
+		SchemaIndexDef.fts_markdown_with_options('body_fts_idx', 'body', .visible_text_with_code,
+			FtsIndexOptions{
+			prefix_lengths: [2, 4]
+		})!,
+	])
+}
+
 fn database_seed_tree(spec TypedTableSpec, primary_key string, name string, email string, cfg ChunkConfig) !Tree {
 	codec := TypedRowCodec.new(spec.table)
 	mut row := TypedRowData.new()
@@ -155,7 +173,7 @@ fn database_seed_tree(spec TypedTableSpec, primary_key string, name string, emai
 	row.set('email', email)
 	return Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for(primary_key.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for(primary_key.bytes())
 			value: codec.encode(row)!
 		},
 	], cfg)
@@ -165,7 +183,7 @@ fn test_persistent_database_typed_roundtrip() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-roundtrip')
 	defer {
@@ -177,8 +195,8 @@ fn test_persistent_database_typed_roundtrip() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	mut writes := TypedWriteSet.new()
@@ -188,8 +206,8 @@ fn test_persistent_database_typed_roundtrip() {
 	row.set('email', 'ada@example.com')
 	writes.put('users', '001'.bytes(), row)
 	result := db.apply_typed_write_set('main', writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 	assert result.update.branch.name == 'main'
@@ -241,20 +259,21 @@ fn test_persistent_database_register_or_update_table_adds_indexes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	spec_without_index := database_users_no_index_spec() or { panic(err) }
 	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
 	db.register_table(spec_without_index) or { panic(err) }
-	seed_tree := database_seed_tree(spec_without_index, '001', 'ada', 'ada@example.com', cfg) or {
-		panic(err)
-	}
+	seed_tree := database_seed_tree(spec_without_index, '001', 'ada', 'ada@example.com',
+		cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
-	changed := db.register_or_update_table(database_users_spec() or { panic(err) }) or { panic(err) }
+	changed := db.register_or_update_table(database_users_spec() or { panic(err) }) or {
+		panic(err)
+	}
 	assert changed
 	_ = db.rebuild_indexes_at_branch('main', ['users'], cfg) or { panic(err) }
 	db.close() or { panic(err) }
@@ -282,15 +301,15 @@ fn test_database_session_lookup_index_ordered_projected_uses_covering_reader_pat
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	spec := database_users_covering_spec() or { panic(err) }
 	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	mut writes := TypedWriteSet.new()
@@ -306,8 +325,8 @@ fn test_database_session_lookup_index_ordered_projected_uses_covering_reader_pat
 		writes.put('users', triple[0].bytes(), row)
 	}
 	_ = db.apply_typed_write_set('main', writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -328,9 +347,9 @@ fn test_persistent_database_can_begin_split_working_set() {
 		os.rmdir_all(dir) or {}
 	}
 	cfg := ChunkConfig{
-		min_size: 64
-		max_size: 128
-		mask: 0
+		min_size:                   64
+		max_size:                   128
+		mask:                       0
 		enable_partitioned_rebuild: true
 	}
 	spec := database_users_spec() or { panic(err) }
@@ -338,8 +357,8 @@ fn test_persistent_database_can_begin_split_working_set() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	mut writes := TypedWriteSet.new()
@@ -349,8 +368,8 @@ fn test_persistent_database_can_begin_split_working_set() {
 	row.set('email', 'ada@example.com')
 	writes.put('users', '001'.bytes(), row)
 	_ = db.apply_typed_write_set('main', writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 	mut split_set := db.begin_split_working_set_with_specs('main', [spec], cfg) or { panic(err) }
@@ -373,9 +392,9 @@ fn test_persistent_database_split_backed_apply_matches_mixed_apply() {
 		os.rmdir_all(dir_split) or {}
 	}
 	cfg := ChunkConfig{
-		min_size: 64
-		max_size: 128
-		mask: 0
+		min_size:                   64
+		max_size:                   128
+		mask:                       0
 		enable_partitioned_rebuild: true
 	}
 	spec := database_users_spec() or { panic(err) }
@@ -385,13 +404,13 @@ fn test_persistent_database_split_backed_apply_matches_mixed_apply() {
 	db_split.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db_mixed.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	_ = db_split.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	mut writes := TypedWriteSet.new()
@@ -406,13 +425,13 @@ fn test_persistent_database_split_backed_apply_matches_mixed_apply() {
 	writes.put('users', '001'.bytes(), row_001)
 	writes.put('users', '002'.bytes(), row_002)
 	_ = db_mixed.apply_typed_write_set('main', writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'mixed apply'
+		author:    'gwg'
+		message:   'mixed apply'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db_split.apply_typed_write_set_split_backed('main', writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'split apply'
+		author:    'gwg'
+		message:   'split apply'
 		timestamp: 1
 	}) or { panic(err) }
 	tx_mixed := db_mixed.begin_transaction('main') or { panic(err) }
@@ -439,9 +458,9 @@ fn test_persistent_database_cfg_routed_split_backed_apply_matches_mixed_apply() 
 		os.rmdir_all(dir_split) or {}
 	}
 	base_cfg := ChunkConfig{
-		min_size: 64
-		max_size: 128
-		mask: 0
+		min_size:                   64
+		max_size:                   128
+		mask:                       0
 		enable_partitioned_rebuild: true
 	}
 	split_cfg := base_cfg.with_split_backed_working_set(true)
@@ -450,15 +469,17 @@ fn test_persistent_database_cfg_routed_split_backed_apply_matches_mixed_apply() 
 	mut db_split := PersistentDatabase.init(dir_split, 'main') or { panic(err) }
 	db_mixed.register_table(spec) or { panic(err) }
 	db_split.register_table(spec) or { panic(err) }
-	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', base_cfg) or { panic(err) }
+	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', base_cfg) or {
+		panic(err)
+	}
 	_ = db_mixed.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	_ = db_split.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	mut writes := TypedWriteSet.new()
@@ -468,13 +489,13 @@ fn test_persistent_database_cfg_routed_split_backed_apply_matches_mixed_apply() 
 	row_001.set('email', 'ada@example.com')
 	writes.put('users', '001'.bytes(), row_001)
 	_ = db_mixed.apply_typed_write_set('main', writes, base_cfg, CommitMeta{
-		author: 'gwg'
-		message: 'mixed routed apply'
+		author:    'gwg'
+		message:   'mixed routed apply'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db_split.apply_typed_write_set('main', writes, split_cfg, CommitMeta{
-		author: 'gwg'
-		message: 'split routed apply'
+		author:    'gwg'
+		message:   'split routed apply'
 		timestamp: 1
 	}) or { panic(err) }
 	tx_mixed := db_mixed.begin_transaction('main') or { panic(err) }
@@ -494,10 +515,10 @@ fn test_persistent_database_split_group_commit_roundtrip() {
 		os.rmdir_all(dir) or {}
 	}
 	cfg := ChunkConfig{
-		min_size: 64
-		max_size: 128
-		mask: 0
-		enable_partitioned_rebuild: true
+		min_size:                        64
+		max_size:                        128
+		mask:                            0
+		enable_partitioned_rebuild:      true
 		enable_split_backed_working_set: true
 	}
 	spec := database_users_spec() or { panic(err) }
@@ -505,13 +526,13 @@ fn test_persistent_database_split_group_commit_roundtrip() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	mut session := db.begin_default_split_group_commit_session(GroupCommitOptions{
 		checkpoint_every: 1
-		checkpoint_mode: .data_only
+		checkpoint_mode:  .data_only
 	}, cfg) or { panic(err) }
 	mut rows := map[string]TypedRowData{}
 	mut row_001 := TypedRowData.new()
@@ -525,8 +546,8 @@ fn test_persistent_database_split_group_commit_roundtrip() {
 	row_002.set('email', 'grace@example.com')
 	rows['002'] = row_002
 	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'split group commit'
+		author:    'gwg'
+		message:   'split group commit'
 		timestamp: 1
 	}) or { panic(err) }
 	session.finish(mut db) or { panic(err) }
@@ -617,6 +638,34 @@ fn test_persistent_database_catalog_preserves_markdown_value_indexes() {
 	assert loaded.indexes[2].markdown_selector == 'heading_text:2'
 }
 
+fn test_persistent_database_catalog_preserves_general_fts_indexes() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-catalog-general-fts')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_docs_general_fts_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	db.close() or { panic(err) }
+
+	mut reopened := PersistentDatabase.open(dir, 'main') or { panic(err) }
+	defer {
+		reopened.close() or {}
+	}
+	loaded := reopened.table_spec('docs') or { panic(err) }
+	assert loaded.indexes.len == 2
+	assert loaded.indexes[0].is_fts()
+	assert loaded.indexes[0].fts_source_plugin == ''
+	assert loaded.indexes[0].fts_text_mode == FtsTextMode.plain_text.str()
+	assert loaded.indexes[0].fts_tokenizer == 'unicode61 remove_diacritics 2'
+	assert loaded.indexes[0].fts_prefix_lengths == [2, 3, 4]
+	assert loaded.indexes[1].is_fts()
+	assert loaded.indexes[1].fts_source_plugin == 'markdown'
+	assert loaded.indexes[1].fts_text_mode == FtsTextMode.visible_text_with_code.str()
+	assert loaded.indexes[1].fts_tokenizer == 'unicode61'
+	assert loaded.indexes[1].fts_prefix_lengths == [2, 4]
+}
+
 fn test_persistent_database_catalog_preserves_datetime_behaviors() {
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-catalog-datetime')
 	defer {
@@ -643,7 +692,7 @@ fn test_persistent_database_datetime_current_timestamp_and_auto_update() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-datetime-auto')
 	defer {
@@ -663,13 +712,13 @@ fn test_persistent_database_datetime_current_timestamp_and_auto_update() {
 	seed_row.set('updated_at', current_datetime_string())
 	mut seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -678,8 +727,8 @@ fn test_persistent_database_datetime_current_timestamp_and_auto_update() {
 	row.set('id', '001')
 	row.set('title', 'draft')
 	_ = session.put_row(mut db, 'events', '001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert event'
+		author:    'gwg'
+		message:   'insert event'
 		timestamp: 1
 	}) or { panic(err) }
 	inserted := session.get_row(mut db, 'events', '001'.bytes()) or { panic(err) }
@@ -692,21 +741,25 @@ fn test_persistent_database_datetime_current_timestamp_and_auto_update() {
 			created_at_text = created_at
 			_ := time.parse_rfc3339(created_at_text) or { panic(err) }
 		}
-		else { panic('expected created_at datetime string') }
+		else {
+			panic('expected created_at datetime string')
+		}
 	}
 	match updated_at {
 		string {
 			updated_at_text = updated_at
 			_ := time.parse_rfc3339(updated_at_text) or { panic(err) }
 		}
-		else { panic('expected updated_at datetime string') }
+		else {
+			panic('expected updated_at datetime string')
+		}
 	}
 	time.sleep(2 * time.millisecond)
 	mut patch := TypedRowData.new()
 	patch.set('title', 'published')
 	_ = session.put_row(mut db, 'events', '001'.bytes(), patch, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'update event'
+		author:    'gwg'
+		message:   'update event'
 		timestamp: 2
 	}) or { panic(err) }
 	updated := session.get_row(mut db, 'events', '001'.bytes()) or { panic(err) }
@@ -721,7 +774,9 @@ fn test_persistent_database_datetime_current_timestamp_and_auto_update() {
 			assert next_updated_at != updated_at_text
 			_ := time.parse_rfc3339(next_updated_at) or { panic(err) }
 		}
-		else { panic('expected updated_at datetime string after update') }
+		else {
+			panic('expected updated_at datetime string after update')
+		}
 	}
 	title := updated.data.get('title') or { panic(err) }
 	match title {
@@ -734,7 +789,7 @@ fn test_persistent_database_datetime_index_between_lookup() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-datetime-between')
 	defer {
@@ -761,33 +816,27 @@ fn test_persistent_database_datetime_index_between_lookup() {
 	row3.set('created_at', '2026-03-30T12:00:00.000000Z')
 	mut seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('001'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('001'.bytes())
 			value: codec.encode(row1)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('002'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('002'.bytes())
 			value: codec.encode(row2)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('003'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('003'.bytes())
 			value: codec.encode(row3)!
 		},
 	], cfg) or { panic(err) }
 	seed_tree = rebuild_typed_indexes_for_specs(seed_tree, [spec], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed events'
+		author:    'gwg'
+		message:   'seed events'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	rows := session.lookup_index_between(
-		mut db,
-		'events',
-		'created_at_idx',
-		'2026-03-30T10:30:00.000000Z',
-		'2026-03-30T12:00:00.000000Z',
-		10,
-	) or { panic(err) }
+	rows := session.lookup_index_between(mut db, 'events', 'created_at_idx', '2026-03-30T10:30:00.000000Z',
+		'2026-03-30T12:00:00.000000Z', 10) or { panic(err) }
 	assert rows.len == 2
 	assert rows[0].primary_key.bytestr() == '002'
 	assert rows[1].primary_key.bytestr() == '003'
@@ -797,7 +846,7 @@ fn test_persistent_database_datetime_index_after_lookup() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-datetime-after')
 	defer {
@@ -824,32 +873,27 @@ fn test_persistent_database_datetime_index_after_lookup() {
 	row3.set('created_at', '2026-03-30T12:00:00.000000Z')
 	mut seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('001'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('001'.bytes())
 			value: codec.encode(row1)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('002'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('002'.bytes())
 			value: codec.encode(row2)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('003'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('003'.bytes())
 			value: codec.encode(row3)!
 		},
 	], cfg) or { panic(err) }
 	seed_tree = rebuild_typed_indexes_for_specs(seed_tree, [spec], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed events'
+		author:    'gwg'
+		message:   'seed events'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	rows := session.lookup_index_after(
-		mut db,
-		'events',
-		'created_at_idx',
-		'2026-03-30T11:00:00.000000Z',
-		10,
-	) or { panic(err) }
+	rows := session.lookup_index_after(mut db, 'events', 'created_at_idx', '2026-03-30T11:00:00.000000Z',
+		10) or { panic(err) }
 	assert rows.len == 1
 	assert rows[0].primary_key.bytestr() == '003'
 }
@@ -858,7 +902,7 @@ fn test_persistent_database_datetime_index_before_lookup() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-datetime-before')
 	defer {
@@ -885,32 +929,27 @@ fn test_persistent_database_datetime_index_before_lookup() {
 	row3.set('created_at', '2026-03-30T12:00:00.000000Z')
 	mut seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('001'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('001'.bytes())
 			value: codec.encode(row1)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('002'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('002'.bytes())
 			value: codec.encode(row2)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('003'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('003'.bytes())
 			value: codec.encode(row3)!
 		},
 	], cfg) or { panic(err) }
 	seed_tree = rebuild_typed_indexes_for_specs(seed_tree, [spec], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed events'
+		author:    'gwg'
+		message:   'seed events'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	rows := session.lookup_index_before(
-		mut db,
-		'events',
-		'created_at_idx',
-		'2026-03-30T11:00:00.000000Z',
-		10,
-	) or { panic(err) }
+	rows := session.lookup_index_before(mut db, 'events', 'created_at_idx', '2026-03-30T11:00:00.000000Z',
+		10) or { panic(err) }
 	assert rows.len == 1
 	assert rows[0].primary_key.bytestr() == '001'
 }
@@ -919,7 +958,7 @@ fn test_persistent_database_json_path_indexes_lookup() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-json-path-index')
 	defer {
@@ -940,13 +979,13 @@ fn test_persistent_database_json_path_indexes_lookup() {
 	seed_row.set('enabled', false)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 
@@ -957,12 +996,14 @@ fn test_persistent_database_json_path_indexes_lookup() {
 	row.set('meta', '{"kind":"alpha","enabled":true}')
 	row.set('enabled', true)
 	_ = session.put_row(mut db, 'items', '001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put item'
+		author:    'gwg'
+		message:   'put item'
 		timestamp: 1
 	}) or { panic(err) }
 
-	status_rows := session.lookup_index(mut db, 'items', 'status_idx', 'active', 10) or { panic(err) }
+	status_rows := session.lookup_index(mut db, 'items', 'status_idx', 'active', 10) or {
+		panic(err)
+	}
 	assert status_rows.len == 1
 	kind_rows := session.lookup_index(mut db, 'items', 'kind_idx', 'alpha', 10) or { panic(err) }
 	assert kind_rows.len == 1
@@ -979,7 +1020,7 @@ fn test_persistent_database_nested_json_path_indexes_lookup() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-nested-json-path-index')
 	defer {
@@ -1007,13 +1048,13 @@ fn test_persistent_database_nested_json_path_indexes_lookup() {
 	seed_row.set('meta', '{"kind":{"code":"seed.zero"}}')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
 			value: TypedRowCodec.new(spec.table).encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 
@@ -1023,8 +1064,8 @@ fn test_persistent_database_nested_json_path_indexes_lookup() {
 	row1.set('status', 'active')
 	row1.set('meta', '{"kind":{"code":"alpha.one"}}')
 	_ = session.put_row(mut db, 'items', '001'.bytes(), row1, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put first item'
+		author:    'gwg'
+		message:   'put first item'
 		timestamp: 1
 	}) or { panic(err) }
 	mut row2 := TypedRowData.new()
@@ -1032,16 +1073,18 @@ fn test_persistent_database_nested_json_path_indexes_lookup() {
 	row2.set('status', 'draft')
 	row2.set('meta', '{"kind":{"code":"alpha.two"}}')
 	_ = session.put_row(mut db, 'items', '002'.bytes(), row2, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put second item'
+		author:    'gwg'
+		message:   'put second item'
 		timestamp: 2
 	}) or { panic(err) }
 
-	exact_rows := session.lookup_index(mut db, 'items', 'kind_code_idx', 'alpha.one', 10) or { panic(err) }
+	exact_rows := session.lookup_index(mut db, 'items', 'kind_code_idx', 'alpha.one',
+		10) or { panic(err) }
 	assert exact_rows.len == 1
 	assert exact_rows[0].primary_key.bytestr() == '001'
 
-	projected_rows := session.lookup_index_prefix_projected(mut db, 'items', 'kind_code_cover', 'alpha.', 10, [
+	projected_rows := session.lookup_index_prefix_projected(mut db, 'items', 'kind_code_cover',
+		'alpha.', 10, [
 		'status',
 	]) or { panic(err) }
 	assert projected_rows.len == 2
@@ -1054,7 +1097,7 @@ fn test_database_session_set_json_path_updates_json_indexes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-set-json-path')
 	defer {
@@ -1074,13 +1117,13 @@ fn test_database_session_set_json_path_updates_json_indexes() {
 	seed_row.set('enabled', false)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
 			value: TypedRowCodec.new(spec.table).encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 
@@ -1091,16 +1134,17 @@ fn test_database_session_set_json_path_updates_json_indexes() {
 	row.set('meta', '{"kind":"alpha","enabled":true}')
 	row.set('enabled', true)
 	_ = session.put_row(mut db, 'items', '001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put item'
+		author:    'gwg'
+		message:   'put item'
 		timestamp: 1
 	}) or { panic(err) }
 
 	before := session.lookup_index(mut db, 'items', 'kind_idx', 'alpha', 10) or { panic(err) }
 	assert before.len == 1
-	_ = session.set_json_path(mut db, 'items', '001'.bytes(), 'meta', 'kind', 'beta', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'set json path'
+	_ = session.set_json_path(mut db, 'items', '001'.bytes(), 'meta', 'kind', 'beta',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'set json path'
 		timestamp: 2
 	}) or { panic(err) }
 	after_old := session.lookup_index(mut db, 'items', 'kind_idx', 'alpha', 10) or { panic(err) }
@@ -1119,7 +1163,7 @@ fn test_database_session_patch_delete_and_null_json_paths() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-patch-json-path')
 	defer {
@@ -1139,13 +1183,13 @@ fn test_database_session_patch_delete_and_null_json_paths() {
 	seed_row.set('enabled', false)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
 			value: TypedRowCodec.new(spec.table).encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 
@@ -1156,45 +1200,51 @@ fn test_database_session_patch_delete_and_null_json_paths() {
 	row.set('meta', '{"kind":"alpha","enabled":true,"legacy":"old"}')
 	row.set('enabled', true)
 	_ = session.put_row(mut db, 'items', '001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put item'
+		author:    'gwg'
+		message:   'put item'
 		timestamp: 1
 	}) or { panic(err) }
 
-	_ = session.set_json_path_null(mut db, 'items', '001'.bytes(), 'meta', 'kind', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'null kind'
+	_ = session.set_json_path_null(mut db, 'items', '001'.bytes(), 'meta', 'kind', cfg,
+		CommitMeta{
+		author:    'gwg'
+		message:   'null kind'
 		timestamp: 2
 	}) or { panic(err) }
-	null_lookup := session.lookup_index(mut db, 'items', 'kind_idx', NullValue{}, 10) or { panic(err) }
+	null_lookup := session.lookup_index(mut db, 'items', 'kind_idx', NullValue{}, 10) or {
+		panic(err)
+	}
 	assert null_lookup.len == 1
 
-	_ = session.delete_json_path(mut db, 'items', '001'.bytes(), 'meta', 'legacy', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'delete legacy'
+	_ = session.delete_json_path(mut db, 'items', '001'.bytes(), 'meta', 'legacy', cfg,
+		CommitMeta{
+		author:    'gwg'
+		message:   'delete legacy'
 		timestamp: 3
 	}) or { panic(err) }
 
 	_ = session.patch_json_paths(mut db, 'items', '001'.bytes(), 'meta', [
 		JsonPathUpdate{
-			path: 'kind'
-			op: .set
+			path:  'kind'
+			op:    .set
 			value: 'gamma'
 		},
 		JsonPathUpdate{
-			path: 'enabled'
-			op: .set
+			path:  'enabled'
+			op:    .set
 			value: false
 		},
 	], cfg, CommitMeta{
-		author: 'gwg'
-		message: 'patch json'
+		author:    'gwg'
+		message:   'patch json'
 		timestamp: 4
 	}) or { panic(err) }
 
 	old_kind := session.lookup_index(mut db, 'items', 'kind_idx', 'alpha', 10) or { panic(err) }
 	new_kind := session.lookup_index(mut db, 'items', 'kind_idx', 'gamma', 10) or { panic(err) }
-	enabled_false := session.lookup_index(mut db, 'items', 'enabled_idx', false, 10) or { panic(err) }
+	enabled_false := session.lookup_index(mut db, 'items', 'enabled_idx', false, 10) or {
+		panic(err)
+	}
 	assert old_kind.len == 0
 	assert new_kind.len == 1
 	assert enabled_false.len == 1
@@ -1207,7 +1257,9 @@ fn test_database_session_patch_delete_and_null_json_paths() {
 			assert meta.contains('"enabled":false')
 			assert !meta.contains('"legacy"')
 		}
-		else { panic('expected patched json payload') }
+		else {
+			panic('expected patched json payload')
+		}
 	}
 }
 
@@ -1215,7 +1267,7 @@ fn test_persistent_database_commit_typed_working_set() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-working-set')
 	defer {
@@ -1225,10 +1277,12 @@ fn test_persistent_database_commit_typed_working_set() {
 	spec := database_users_spec() or { panic(err) }
 	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
 	db.register_table(spec) or { panic(err) }
-	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
+	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or {
+		panic(err)
+	}
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	defer {
@@ -1244,8 +1298,8 @@ fn test_persistent_database_commit_typed_working_set() {
 	_ = set.apply_write_set(writes, cfg) or { panic(err) }
 	assert set.has_changes()
 	update := db.commit_typed_working_set(mut set, CommitMeta{
-		author: 'gwg'
-		message: 'commit working set'
+		author:    'gwg'
+		message:   'commit working set'
 		timestamp: 2
 	}) or { panic(err) }
 	assert update.update.branch.name == 'main'
@@ -1265,7 +1319,7 @@ fn test_persistent_database_session_roundtrip() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-session')
 	defer {
@@ -1278,10 +1332,12 @@ fn test_persistent_database_session_roundtrip() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
+	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or {
+		panic(err)
+	}
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -1300,8 +1356,8 @@ fn test_persistent_database_session_roundtrip() {
 	assert status.tables.len == 1
 	assert status.tables[0].row_changes.len == 1
 	_ = tx_session.commit(mut db, CommitMeta{
-		author: 'gwg'
-		message: 'session commit'
+		author:    'gwg'
+		message:   'session commit'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -1319,7 +1375,7 @@ fn test_persistent_database_session_put_rows_roundtrip() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-session-put-rows')
 	defer {
@@ -1332,10 +1388,12 @@ fn test_persistent_database_session_put_rows_roundtrip() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
+	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or {
+		panic(err)
+	}
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -1352,8 +1410,8 @@ fn test_persistent_database_session_put_rows_roundtrip() {
 	row3.set('email', 'linus@example.com')
 	rows['003'] = row3
 	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'bulk session put rows'
+		author:    'gwg'
+		message:   'bulk session put rows'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -1374,7 +1432,7 @@ fn test_persistent_database_markdown_ref_helpers_roundtrip() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-markdown-session')
 	defer {
@@ -1394,19 +1452,19 @@ fn test_persistent_database_markdown_ref_helpers_roundtrip() {
 	seed.set('body', MarkdownRef{
 		doc_root_id: 'doc:seed'
 		source_hash: 'src:seed'
-		source_len: 12
+		source_len:  12
 		ast_version: 1
 		parse_flags: u32(0)
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -1417,17 +1475,20 @@ fn test_persistent_database_markdown_ref_helpers_roundtrip() {
 	updated := MarkdownRef{
 		doc_root_id: 'doc:next'
 		source_hash: 'src:next'
-		source_len: 48
+		source_len:  48
 		ast_version: 1
 		parse_flags: u32(3)
 	}
-	_ = session.put_markdown_ref(mut db, 'notes', 'note-1'.bytes(), 'body', updated, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'update markdown ref'
+	_ = session.put_markdown_ref(mut db, 'notes', 'note-1'.bytes(), 'body', updated, cfg,
+		CommitMeta{
+		author:    'gwg'
+		message:   'update markdown ref'
 		timestamp: 2
 	}) or { panic(err) }
 
-	reloaded := session.get_markdown_ref(mut db, 'notes', 'note-1'.bytes(), 'body') or { panic(err) }
+	reloaded := session.get_markdown_ref(mut db, 'notes', 'note-1'.bytes(), 'body') or {
+		panic(err)
+	}
 	assert reloaded.doc_root_id == 'doc:next'
 	assert reloaded.source_hash == 'src:next'
 	assert reloaded.source_len == 48
@@ -1437,7 +1498,7 @@ fn test_persistent_database_put_markdown_persists_source_and_ref() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-markdown-ingest')
 	defer {
@@ -1457,27 +1518,27 @@ fn test_persistent_database_put_markdown_persists_source_and_ref() {
 	seed.set('body', MarkdownRef{
 		doc_root_id: 'doc:seed'
 		source_hash: 'src:seed'
-		source_len: 4
+		source_len:  4
 		ast_version: 1
 		parse_flags: u32(0)
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
 	raw := '# Hello\n\nThis is **markdown**.\n'
 	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', raw, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'store markdown'
+		author:    'gwg'
+		message:   'store markdown'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -1508,12 +1569,14 @@ fn test_external_field_storage_helpers_roundtrip_markdown() {
 }
 
 fn test_aggregate_projection_def_exposes_field_projection_metadata() {
-	def := AggregateProjectionDef.count_field_selector('count(notes.body.links)', 'notes', 'body',
-		'markdown', 'links') or { panic(err) }
+	def := AggregateProjectionDef.count_field_selector('count(notes.body.links)', 'notes',
+		'body', 'markdown', 'links') or { panic(err) }
 	assert def.is_field_projection_selector()
 	assert def.field_projection_plugin() == 'markdown'
 	assert def.field_projection_selector() == 'links'
-	selector_ref := def.field_projection_selector_ref() or { panic('expected field projection selector ref') }
+	selector_ref := def.field_projection_selector_ref() or {
+		panic('expected field projection selector ref')
+	}
 	assert selector_ref.plugin_name == 'markdown'
 	assert selector_ref.selector == 'links'
 	selector_meta := def.field_projection_meta() or { panic('expected field projection meta') }
@@ -1548,7 +1611,7 @@ fn test_persistent_database_diff_markdown_refs_reports_structural_changes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-markdown-diff')
 	defer {
@@ -1575,7 +1638,7 @@ fn test_persistent_database_markdown_selector_indexes_lookup_after_commit() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-markdown-selector-indexes-lookup')
 	defer {
@@ -1595,31 +1658,30 @@ fn test_persistent_database_markdown_selector_indexes_lookup_after_commit() {
 	row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\n[docs](https://example.com)\n\n## Details\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert markdown'
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\n[docs](https://example.com)\n\n## Details\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'insert markdown'
 		timestamp: 2
 	}) or { panic(err) }
 
-	link_rows := session.lookup_index(mut db, 'notes', 'body_link_count_idx', i64(1), 10) or {
-		panic(err)
-	}
+	link_rows := session.lookup_index(mut db, 'notes', 'body_link_count_idx', i64(1),
+		10) or { panic(err) }
 	assert link_rows.len == 1
 	assert link_rows[0].primary_key.bytestr() == 'note-1'
 
@@ -1638,7 +1700,7 @@ fn test_transaction_session_markdown_selector_indexes_are_live_before_commit() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-markdown-selector-indexes-transaction-live')
 	defer {
@@ -1658,24 +1720,24 @@ fn test_transaction_session_markdown_selector_indexes_are_live_before_commit() {
 	row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.begin_default_session() or { panic(err) }
 	mut tx := session.begin_working_set(mut db) or { panic(err) }
-	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\n[docs](https://example.com)\n\n## Details\n', cfg) or { panic(err) }
+	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\n[docs](https://example.com)\n\n## Details\n',
+		cfg) or { panic(err) }
 
 	link_rows := tx.lookup_index('notes', 'body_link_count_idx', i64(1), 10) or { panic(err) }
 	assert link_rows.len == 1
@@ -1686,9 +1748,8 @@ fn test_transaction_session_markdown_selector_indexes_are_live_before_commit() {
 	}
 	assert before_rows.len == 1
 
-	between_rows := tx.lookup_index_between('notes', 'body_h2_count_cover', i64(1), i64(1), 10) or {
-		panic(err)
-	}
+	between_rows := tx.lookup_index_between('notes', 'body_h2_count_cover', i64(1), i64(1),
+		10) or { panic(err) }
 	assert between_rows.len == 1
 }
 
@@ -1696,7 +1757,7 @@ fn test_transaction_session_lookup_index_prefix() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-tx-index-prefix')
 	defer {
@@ -1708,11 +1769,13 @@ fn test_transaction_session_lookup_index_prefix() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
+	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or {
+		panic(err)
+	}
 	seed_tree = rebuild_typed_indexes_for_specs(seed_tree, [spec], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 
@@ -1733,7 +1796,7 @@ fn test_persistent_database_lookup_index_before_reverse() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-index-before-reverse')
 	defer {
@@ -1760,33 +1823,28 @@ fn test_persistent_database_lookup_index_before_reverse() {
 	row3.set('created_at', '2026-03-30T12:00:00.000000Z')
 	mut seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('001'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('001'.bytes())
 			value: codec.encode(row1)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('002'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('002'.bytes())
 			value: codec.encode(row2)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('003'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('003'.bytes())
 			value: codec.encode(row3)!
 		},
 	], cfg) or { panic(err) }
 	seed_tree = rebuild_typed_indexes_for_specs(seed_tree, [spec], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	rows := session.lookup_index_before_reverse(
-		mut db,
-		'events',
-		'created_at_idx',
-		'2026-03-30T12:00:00.000000Z',
-		10,
-	) or { panic(err) }
+	rows := session.lookup_index_before_reverse(mut db, 'events', 'created_at_idx', '2026-03-30T12:00:00.000000Z',
+		10) or { panic(err) }
 	assert rows.len == 2
 	assert rows[0].primary_key.bytestr() == '002'
 	assert rows[1].primary_key.bytestr() == '001'
@@ -1801,7 +1859,7 @@ fn test_transaction_session_markdown_selector_index_cursor_supports_iteration() 
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-markdown-selector-index-cursor')
 	defer {
@@ -1821,7 +1879,7 @@ fn test_transaction_session_markdown_selector_index_cursor_supports_iteration() 
 	row1.set('body', MarkdownRef{
 		doc_root_id: 'seed-1'
 		source_hash: 'seed-1'
-		source_len: 0
+		source_len:  0
 	})
 	mut row2 := TypedRowData.new()
 	row2.set('id', 'note-2')
@@ -1829,30 +1887,30 @@ fn test_transaction_session_markdown_selector_index_cursor_supports_iteration() 
 	row2.set('body', MarkdownRef{
 		doc_root_id: 'seed-2'
 		source_hash: 'seed-2'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row1)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-2'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-2'.bytes())
 			value: codec.encode(row2)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.begin_default_session() or { panic(err) }
 	mut tx := session.begin_working_set(mut db) or { panic(err) }
-	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\n[one](https://example.com/1)\n', cfg) or { panic(err) }
-	_ = tx.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
-		'# Intro\n\n[two](https://example.com/2)\n', cfg) or { panic(err) }
+	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\n[one](https://example.com/1)\n',
+		cfg) or { panic(err) }
+	_ = tx.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Intro\n\n[two](https://example.com/2)\n',
+		cfg) or { panic(err) }
 
 	mut cursor := tx.index_cursor('notes', 'body_link_count_idx', i64(1), []u8{}, 10) or {
 		panic(err)
@@ -1867,15 +1925,14 @@ fn test_transaction_session_markdown_selector_index_cursor_supports_iteration() 
 	mut seeked := tx.index_cursor('notes', 'body_link_count_idx', i64(1), []u8{}, 10) or {
 		panic(err)
 	}
-	seek_key := TypedValueEncoder.encode_index_value(i64(1), ColumnDef.new('markdown_metric', .i64_,
-		false) or { panic(err) }) or { panic(err) }
+	seek_key := TypedValueEncoder.encode_index_value(i64(1), ColumnDef.new('markdown_metric',
+		.i64_, false) or { panic(err) }) or { panic(err) }
 	seeked.seek(seek_key, 'note-2'.bytes()) or { panic(err) }
 	current := seeked.current() or { panic(err) }
 	assert current.primary_key.bytestr() == 'note-2'
 
-	mut collected_cursor := tx.index_cursor('notes', 'body_link_count_idx', i64(1), []u8{}, 10) or {
-		panic(err)
-	}
+	mut collected_cursor := tx.index_cursor('notes', 'body_link_count_idx', i64(1), []u8{},
+		10) or { panic(err) }
 	collected := collected_cursor.collect(10) or { panic(err) }
 	assert collected.len == 2
 }
@@ -1884,7 +1941,7 @@ fn test_persistent_database_markdown_value_indexes_lookup_and_prefix_after_commi
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-markdown-value-indexes-lookup')
 	defer {
@@ -1904,37 +1961,34 @@ fn test_persistent_database_markdown_value_indexes_lookup_and_prefix_after_commi
 	row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'## Roadmap\n\n[docs](https://docs.example.com/a)\n\n```v\nprintln("ok")\n```\n',
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '## Roadmap\n\n[docs](https://docs.example.com/a)\n\n```v\nprintln("ok")\n```\n',
 		cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert markdown'
+		author:    'gwg'
+		message:   'insert markdown'
 		timestamp: 2
 	}) or { panic(err) }
 
-	host_rows := session.lookup_index(mut db, 'notes', 'body_link_host_idx', 'docs.example.com', 10) or {
-		panic(err)
-	}
+	host_rows := session.lookup_index(mut db, 'notes', 'body_link_host_idx', 'docs.example.com',
+		10) or { panic(err) }
 	assert host_rows.len == 1
 	assert host_rows[0].primary_key.bytestr() == 'note-1'
 
-	heading_rows := session.lookup_index_prefix(mut db, 'notes', 'body_heading_text_idx', 'Road', 10) or {
-		panic(err)
-	}
+	heading_rows := session.lookup_index_prefix(mut db, 'notes', 'body_heading_text_idx',
+		'Road', 10) or { panic(err) }
 	assert heading_rows.len == 1
 
 	lang_rows := session.lookup_index(mut db, 'notes', 'body_code_lang_cover', 'v', 10) or {
@@ -1952,7 +2006,7 @@ fn test_transaction_session_markdown_value_index_cursor_supports_iteration() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-markdown-value-index-cursor')
 	defer {
@@ -1972,7 +2026,7 @@ fn test_transaction_session_markdown_value_index_cursor_supports_iteration() {
 	row1.set('body', MarkdownRef{
 		doc_root_id: 'seed-1'
 		source_hash: 'seed-1'
-		source_len: 0
+		source_len:  0
 	})
 	mut row2 := TypedRowData.new()
 	row2.set('id', 'note-2')
@@ -1980,34 +2034,33 @@ fn test_transaction_session_markdown_value_index_cursor_supports_iteration() {
 	row2.set('body', MarkdownRef{
 		doc_root_id: 'seed-2'
 		source_hash: 'seed-2'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row1)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-2'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-2'.bytes())
 			value: codec.encode(row2)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.begin_default_session() or { panic(err) }
 	mut tx := session.begin_working_set(mut db) or { panic(err) }
-	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'[one](https://docs.example.com/1)\n', cfg) or { panic(err) }
-	_ = tx.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
-		'[two](https://docs.example.com/2)\n', cfg) or { panic(err) }
+	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '[one](https://docs.example.com/1)\n',
+		cfg) or { panic(err) }
+	_ = tx.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '[two](https://docs.example.com/2)\n',
+		cfg) or { panic(err) }
 
-	mut cursor := tx.index_cursor('notes', 'body_link_host_idx', 'docs.example.com', []u8{}, 10) or {
-		panic(err)
-	}
+	mut cursor := tx.index_cursor('notes', 'body_link_host_idx', 'docs.example.com', []u8{},
+		10) or { panic(err) }
 	assert (cursor.peek() or { panic(err) }).primary_key.bytestr() == 'note-1'
 	assert (cursor.next() or { panic(err) }).primary_key.bytestr() == 'note-1'
 	assert (cursor.next() or { panic(err) }).primary_key.bytestr() == 'note-2'
@@ -2017,7 +2070,7 @@ fn test_persistent_database_preview_markdown_merge_refs_returns_merged_source() 
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-preview-markdown-merge-refs')
 	defer {
@@ -2045,7 +2098,7 @@ fn test_persistent_database_merge_markdown_refs_returns_new_ref() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-markdown-refs')
 	defer {
@@ -2071,7 +2124,7 @@ fn test_persistent_database_merge_auto_resolves_distinct_row_columns_with_markdo
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-markdown-row-columns')
 	defer {
@@ -2092,13 +2145,13 @@ fn test_persistent_database_merge_auto_resolves_distinct_row_columns_with_markdo
 	seed.set('body', initial_body)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_update := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
@@ -2109,16 +2162,16 @@ fn test_persistent_database_merge_auto_resolves_distinct_row_columns_with_markdo
 	main_row.set('title', 'Main Title')
 	main_row.set('body', initial_body)
 	_ = main_session.put_row(mut db, 'notes', 'note-1'.bytes(), main_row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main title update'
+		author:    'gwg'
+		message:   'main title update'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Seed\n\nFeature body update.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature body update'
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Seed\n\nFeature body update.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'feature body update'
 		timestamp: 3
 	}) or { panic(err) }
 
@@ -2131,7 +2184,9 @@ fn test_persistent_database_merge_auto_resolves_distinct_row_columns_with_markdo
 		string { assert title == 'Main Title' }
 		else { panic('expected merged title string') }
 	}
-	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or { panic(err) }
+	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or {
+		panic(err)
+	}
 	merged_markdown := db.load_markdown(merged_ref) or { panic(err) }
 	assert merged_markdown.contains('Feature body update.')
 }
@@ -2140,7 +2195,7 @@ fn test_persistent_database_merge_auto_resolves_markdown_field_disjoint_top_leve
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-markdown-field-top-level')
 	defer {
@@ -2154,44 +2209,48 @@ fn test_persistent_database_merge_auto_resolves_markdown_field_disjoint_top_leve
 	}
 	db.register_table(spec) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
-	initial_body := db.ingest_markdown('# Title\n\nFirst paragraph.\n\nSecond paragraph.\n') or { panic(err) }
+	initial_body := db.ingest_markdown('# Title\n\nFirst paragraph.\n\nSecond paragraph.\n') or {
+		panic(err)
+	}
 	mut seed := TypedRowData.new()
 	seed.set('id', 'note-1')
 	seed.set('title', 'Original')
 	seed.set('body', initial_body)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_update := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Title\n\nFirst paragraph updated on main.\n\nSecond paragraph.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main markdown update'
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nFirst paragraph updated on main.\n\nSecond paragraph.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'main markdown update'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Title\n\nFirst paragraph.\n\nSecond paragraph updated on feature.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature markdown update'
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nFirst paragraph.\n\nSecond paragraph updated on feature.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'feature markdown update'
 		timestamp: 3
 	}) or { panic(err) }
 
 	mut merge_session := main_session.begin_working_set(mut db) or { panic(err) }
 	result := merge_session.merge_from(mut db, 'feature', [], cfg) or { panic(err) }
 	assert result.resolution.resolved_keys.len == 1
-	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or { panic(err) }
+	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or {
+		panic(err)
+	}
 	merged_markdown := db.load_markdown(merged_ref) or { panic(err) }
 	assert merged_markdown.contains('First paragraph updated on main.')
 	assert merged_markdown.contains('Second paragraph updated on feature.')
@@ -2201,7 +2260,7 @@ fn test_persistent_database_merge_auto_resolves_markdown_nested_blockquote_list_
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-markdown-nested-blockquote-list')
 	defer {
@@ -2223,36 +2282,38 @@ fn test_persistent_database_merge_auto_resolves_markdown_nested_blockquote_list_
 	seed.set('body', initial_body)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_update := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed markdown'
+		author:    'gwg'
+		message:   'seed markdown'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'> intro updated on main\n>\n> - alpha\n> - beta\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main nested markdown update'
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '> intro updated on main\n>\n> - alpha\n> - beta\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'main nested markdown update'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'> intro\n>\n> - alpha\n> - beta updated on feature\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature nested markdown update'
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '> intro\n>\n> - alpha\n> - beta updated on feature\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'feature nested markdown update'
 		timestamp: 3
 	}) or { panic(err) }
 
 	mut merge_session := main_session.begin_working_set(mut db) or { panic(err) }
 	_ = merge_session.merge_from(mut db, 'feature', [], cfg) or { panic(err) }
-	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or { panic(err) }
+	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or {
+		panic(err)
+	}
 	merged_markdown := db.load_markdown(merged_ref) or { panic(err) }
 	assert merged_markdown.contains('intro updated on main')
 	assert merged_markdown.contains('beta updated on feature')
@@ -2262,7 +2323,7 @@ fn test_persistent_database_merge_auto_resolves_markdown_multiblock_list_item_ch
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-markdown-multiblock-list-item')
 	defer {
@@ -2284,36 +2345,38 @@ fn test_persistent_database_merge_auto_resolves_markdown_multiblock_list_item_ch
 	seed.set('body', initial_body)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_update := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed markdown'
+		author:    'gwg'
+		message:   'seed markdown'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'- item intro updated on main\n\n  ```v\n  println("base")\n  ```\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main list item paragraph update'
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- item intro updated on main\n\n  ```v\n  println("base")\n  ```\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'main list item paragraph update'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'- item intro\n\n  ```v\n  println("feature")\n  ```\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature list item code update'
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- item intro\n\n  ```v\n  println("feature")\n  ```\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'feature list item code update'
 		timestamp: 3
 	}) or { panic(err) }
 
 	mut merge_session := main_session.begin_working_set(mut db) or { panic(err) }
 	_ = merge_session.merge_from(mut db, 'feature', [], cfg) or { panic(err) }
-	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or { panic(err) }
+	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or {
+		panic(err)
+	}
 	merged_markdown := db.load_markdown(merged_ref) or { panic(err) }
 	assert merged_markdown.contains('item intro updated on main')
 	assert merged_markdown.contains('println("feature")')
@@ -2323,7 +2386,7 @@ fn test_persistent_database_merge_auto_resolves_markdown_reorder_plus_edit() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-markdown-reorder-plus-edit')
 	defer {
@@ -2345,36 +2408,38 @@ fn test_persistent_database_merge_auto_resolves_markdown_reorder_plus_edit() {
 	seed.set('body', initial_body)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_update := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed markdown'
+		author:    'gwg'
+		message:   'seed markdown'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Title\n\nBeta paragraph.\n\nAlpha paragraph.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main reorder'
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nBeta paragraph.\n\nAlpha paragraph.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'main reorder'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Title\n\nAlpha paragraph updated on feature.\n\nBeta paragraph.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature edit'
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nAlpha paragraph updated on feature.\n\nBeta paragraph.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'feature edit'
 		timestamp: 3
 	}) or { panic(err) }
 
 	mut merge_session := main_session.begin_working_set(mut db) or { panic(err) }
 	_ = merge_session.merge_from(mut db, 'feature', [], cfg) or { panic(err) }
-	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or { panic(err) }
+	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or {
+		panic(err)
+	}
 	merged_markdown := db.load_markdown(merged_ref) or { panic(err) }
 	assert merged_markdown.contains('Beta paragraph.')
 	assert merged_markdown.contains('Alpha paragraph updated on feature.')
@@ -2387,7 +2452,7 @@ fn test_persistent_database_merge_auto_resolves_markdown_list_reorder_plus_edit(
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-markdown-list-reorder-plus-edit')
 	defer {
@@ -2409,36 +2474,38 @@ fn test_persistent_database_merge_auto_resolves_markdown_list_reorder_plus_edit(
 	seed.set('body', initial_body)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_update := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed markdown'
+		author:    'gwg'
+		message:   'seed markdown'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'- beta\n- alpha\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main list reorder'
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- beta\n- alpha\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'main list reorder'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'- alpha updated on feature\n- beta\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature list edit'
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- alpha updated on feature\n- beta\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'feature list edit'
 		timestamp: 3
 	}) or { panic(err) }
 
 	mut merge_session := main_session.begin_working_set(mut db) or { panic(err) }
 	_ = merge_session.merge_from(mut db, 'feature', [], cfg) or { panic(err) }
-	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or { panic(err) }
+	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or {
+		panic(err)
+	}
 	merged_markdown := db.load_markdown(merged_ref) or { panic(err) }
 	assert merged_markdown.contains('- beta')
 	assert merged_markdown.contains('- alpha updated on feature')
@@ -2451,7 +2518,7 @@ fn test_persistent_database_merge_auto_resolves_markdown_repeated_block_reorder_
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-markdown-repeated-blocks')
 	defer {
@@ -2473,36 +2540,38 @@ fn test_persistent_database_merge_auto_resolves_markdown_repeated_block_reorder_
 	seed.set('body', initial_body)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_update := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed markdown'
+		author:    'gwg'
+		message:   'seed markdown'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Title\n\nRepeat.\n\nRepeat.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main noop normalize'
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nRepeat.\n\nRepeat.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'main noop normalize'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Title\n\nRepeat updated on feature.\n\nRepeat.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature repeated edit'
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nRepeat updated on feature.\n\nRepeat.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'feature repeated edit'
 		timestamp: 3
 	}) or { panic(err) }
 
 	mut merge_session := main_session.begin_working_set(mut db) or { panic(err) }
 	_ = merge_session.merge_from(mut db, 'feature', [], cfg) or { panic(err) }
-	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or { panic(err) }
+	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or {
+		panic(err)
+	}
 	merged_markdown := db.load_markdown(merged_ref) or { panic(err) }
 	assert merged_markdown.contains('Repeat updated on feature.')
 }
@@ -2511,7 +2580,7 @@ fn test_persistent_database_merge_auto_resolves_markdown_repeated_list_item_reor
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-markdown-repeated-list-items')
 	defer {
@@ -2533,36 +2602,38 @@ fn test_persistent_database_merge_auto_resolves_markdown_repeated_list_item_reor
 	seed.set('body', initial_body)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_update := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed markdown'
+		author:    'gwg'
+		message:   'seed markdown'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'- repeat\n- repeat\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main noop normalize'
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- repeat\n- repeat\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'main noop normalize'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'- repeat updated on feature\n- repeat\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature repeated list edit'
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- repeat updated on feature\n- repeat\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'feature repeated list edit'
 		timestamp: 3
 	}) or { panic(err) }
 
 	mut merge_session := main_session.begin_working_set(mut db) or { panic(err) }
 	_ = merge_session.merge_from(mut db, 'feature', [], cfg) or { panic(err) }
-	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or { panic(err) }
+	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or {
+		panic(err)
+	}
 	merged_markdown := db.load_markdown(merged_ref) or { panic(err) }
 	assert merged_markdown.contains('- repeat updated on feature')
 }
@@ -2571,7 +2642,7 @@ fn test_persistent_database_merge_auto_resolves_markdown_repeated_blocks_by_head
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-markdown-repeated-heading-context')
 	defer {
@@ -2593,36 +2664,38 @@ fn test_persistent_database_merge_auto_resolves_markdown_repeated_blocks_by_head
 	seed.set('body', initial_body)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_update := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed markdown'
+		author:    'gwg'
+		message:   'seed markdown'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# B\n\nRepeat.\n\n# A\n\nRepeat.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main section reorder'
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# B\n\nRepeat.\n\n# A\n\nRepeat.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'main section reorder'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# A\n\nRepeat.\n\n# B\n\nRepeat updated under B.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature context edit'
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# A\n\nRepeat.\n\n# B\n\nRepeat updated under B.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'feature context edit'
 		timestamp: 3
 	}) or { panic(err) }
 
 	mut merge_session := main_session.begin_working_set(mut db) or { panic(err) }
 	_ = merge_session.merge_from(mut db, 'feature', [], cfg) or { panic(err) }
-	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or { panic(err) }
+	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or {
+		panic(err)
+	}
 	merged_markdown := db.load_markdown(merged_ref) or { panic(err) }
 	b_idx := merged_markdown.index('# B') or { panic(err) }
 	updated_idx := merged_markdown.index('Repeat updated under B.') or { panic(err) }
@@ -2694,7 +2767,7 @@ fn test_database_status_report_distinguishes_data_only_durability() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-status-data-only')
 	defer {
@@ -2709,8 +2782,8 @@ fn test_database_status_report_distinguishes_data_only_durability() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -2719,8 +2792,8 @@ fn test_database_status_report_distinguishes_data_only_durability() {
 	row.set('name', 'grace')
 	row.set('email', 'grace@example.com')
 	_ = session.put_row(mut db, 'users', '002'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put row'
+		author:    'gwg'
+		message:   'put row'
 		timestamp: 2
 	}) or { panic(err) }
 	db.checkpoint_mode(.data_only) or { panic(err) }
@@ -2747,7 +2820,7 @@ fn test_database_refresh_index_snapshots_async_for() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-async-refresh')
 	defer {
@@ -2759,8 +2832,8 @@ fn test_database_refresh_index_snapshots_async_for() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -2769,8 +2842,8 @@ fn test_database_refresh_index_snapshots_async_for() {
 	row.set('name', 'grace')
 	row.set('email', 'grace@example.com')
 	_ = session.put_row(mut db, 'users', '002'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put row'
+		author:    'gwg'
+		message:   'put row'
 		timestamp: 2
 	}) or { panic(err) }
 	db.checkpoint_mode(.data_only) or { panic(err) }
@@ -2808,7 +2881,7 @@ fn test_snapshot_read_scheduler_queries_multiple_commit_versions_in_parallel() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-snapshot-read-scheduler')
 	defer {
@@ -2823,8 +2896,8 @@ fn test_snapshot_read_scheduler_queries_multiple_commit_versions_in_parallel() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	db.checkpoint() or { panic(err) }
@@ -2836,8 +2909,8 @@ fn test_snapshot_read_scheduler_queries_multiple_commit_versions_in_parallel() {
 	updated.set('name', 'grace')
 	updated.set('email', 'grace@example.com')
 	_ = session.put_row(mut db, 'users', '001'.bytes(), updated, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'update row'
+		author:    'gwg'
+		message:   'update row'
 		timestamp: 2
 	}) or { panic(err) }
 	db.checkpoint() or { panic(err) }
@@ -2864,7 +2937,7 @@ fn test_snapshot_read_scheduler_scans_multiple_commit_versions_in_parallel() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-snapshot-scan-scheduler')
 	defer {
@@ -2879,8 +2952,8 @@ fn test_snapshot_read_scheduler_scans_multiple_commit_versions_in_parallel() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	db.checkpoint() or { panic(err) }
@@ -2892,8 +2965,8 @@ fn test_snapshot_read_scheduler_scans_multiple_commit_versions_in_parallel() {
 	row.set('name', 'grace')
 	row.set('email', 'grace@example.com')
 	_ = session.put_row(mut db, 'users', '002'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'add grace'
+		author:    'gwg'
+		message:   'add grace'
 		timestamp: 2
 	}) or { panic(err) }
 	db.checkpoint() or { panic(err) }
@@ -2915,7 +2988,7 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_async() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-snapshot-prefix-scheduler')
 	defer {
@@ -2930,8 +3003,8 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_async() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -2941,8 +3014,8 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_async() {
 	row1.set('name', 'ada')
 	row1.set('email', 'ada@example.com')
 	_ = session.put_row(mut db, 'users', '001'.bytes(), row1, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'add ada'
+		author:    'gwg'
+		message:   'add ada'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -2951,8 +3024,8 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_async() {
 	row2.set('name', 'alan')
 	row2.set('email', 'alan@example.com')
 	_ = session.put_row(mut db, 'users', '002'.bytes(), row2, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'add alan'
+		author:    'gwg'
+		message:   'add alan'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -2961,15 +3034,16 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_async() {
 	row3.set('name', 'grace')
 	row3.set('email', 'grace@example.com')
 	_ = session.put_row(mut db, 'users', '003'.bytes(), row3, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'add grace'
+		author:    'gwg'
+		message:   'add grace'
 		timestamp: 3
 	}) or { panic(err) }
 	db.checkpoint() or { panic(err) }
 	head := db.branch('main') or { panic(err) }
 
 	scheduler := db.snapshot_read_scheduler()
-	mut h := scheduler.lookup_index_prefix_async(head.commit_cid, 'users', 'email', 'al', 10)
+	mut h := scheduler.lookup_index_prefix_async(head.commit_cid, 'users', 'email', 'al',
+		10)
 	result := h.wait() or { panic(err) }
 	assert result.rows.len == 1
 	assert result.rows[0].primary_key.bytestr() == '002'
@@ -2984,7 +3058,7 @@ fn test_snapshot_read_scheduler_scans_table_from_primary_key() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-snapshot-scan-from')
 	defer {
@@ -2999,8 +3073,8 @@ fn test_snapshot_read_scheduler_scans_table_from_primary_key() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -3017,8 +3091,8 @@ fn test_snapshot_read_scheduler_scans_table_from_primary_key() {
 		row.set('name', name)
 		row.set('email', '${name}@example.com')
 		_ = session.put_row(mut db, 'users', id.bytes(), row, cfg, CommitMeta{
-			author: 'gwg'
-			message: 'add ${id}'
+			author:    'gwg'
+			message:   'add ${id}'
 			timestamp: 1
 		}) or { panic(err) }
 	}
@@ -3026,7 +3100,8 @@ fn test_snapshot_read_scheduler_scans_table_from_primary_key() {
 	head := db.branch('main') or { panic(err) }
 
 	scheduler := db.snapshot_read_scheduler()
-	mut h := scheduler.scan_table_from_async(head.commit_cid, 'users', '002'.bytes(), 10)
+	mut h := scheduler.scan_table_from_async(head.commit_cid, 'users', '002'.bytes(),
+		10)
 	result := h.wait() or { panic(err) }
 	assert result.rows.len == 2
 	assert result.rows[0].primary_key.bytestr() == '002'
@@ -3037,7 +3112,7 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_from_primary_key() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-snapshot-prefix-from')
 	defer {
@@ -3052,8 +3127,8 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_from_primary_key() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -3071,8 +3146,8 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_from_primary_key() {
 		row.set('name', name)
 		row.set('email', email)
 		_ = session.put_row(mut db, 'users', id.bytes(), row, cfg, CommitMeta{
-			author: 'gwg'
-			message: 'add ${id}'
+			author:    'gwg'
+			message:   'add ${id}'
 			timestamp: 1
 		}) or { panic(err) }
 	}
@@ -3080,7 +3155,8 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_from_primary_key() {
 	head := db.branch('main') or { panic(err) }
 
 	scheduler := db.snapshot_read_scheduler()
-	mut h := scheduler.lookup_index_prefix_from_async(head.commit_cid, 'users', 'email', 'al', '002'.bytes(), 10)
+	mut h := scheduler.lookup_index_prefix_from_async(head.commit_cid, 'users', 'email',
+		'al', '002'.bytes(), 10)
 	result := h.wait() or { panic(err) }
 	assert result.rows.len == 1
 	assert result.rows[0].primary_key.bytestr() == '002'
@@ -3090,7 +3166,7 @@ fn test_database_preview_merge_reports_root_hash_merge_shape() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-preview')
 	defer {
@@ -3105,8 +3181,8 @@ fn test_database_preview_merge_reports_root_hash_merge_shape() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	seed := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed.branch.commit_cid) or { panic(err) }
@@ -3117,8 +3193,8 @@ fn test_database_preview_merge_reports_root_hash_merge_shape() {
 	main_row.set('name', 'main')
 	main_row.set('email', 'main@example.com')
 	_ = main_session.put_row(mut db, 'users', '002'.bytes(), main_row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main update'
+		author:    'gwg'
+		message:   'main update'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -3128,8 +3204,8 @@ fn test_database_preview_merge_reports_root_hash_merge_shape() {
 	feature_row.set('name', 'feature')
 	feature_row.set('email', 'feature@example.com')
 	_ = feature_session.put_row(mut db, 'users', '003'.bytes(), feature_row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature update'
+		author:    'gwg'
+		message:   'feature update'
 		timestamp: 3
 	}) or { panic(err) }
 
@@ -3147,7 +3223,7 @@ fn test_database_merge_report_groups_changes_by_table() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-report')
 	defer {
@@ -3162,8 +3238,8 @@ fn test_database_merge_report_groups_changes_by_table() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	seed := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed.branch.commit_cid) or { panic(err) }
@@ -3174,8 +3250,8 @@ fn test_database_merge_report_groups_changes_by_table() {
 	main_row.set('name', 'main')
 	main_row.set('email', 'main@example.com')
 	_ = main_session.put_row(mut db, 'users', '002'.bytes(), main_row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main update'
+		author:    'gwg'
+		message:   'main update'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -3185,8 +3261,8 @@ fn test_database_merge_report_groups_changes_by_table() {
 	feature_row.set('name', 'feature')
 	feature_row.set('email', 'feature@example.com')
 	_ = feature_session.put_row(mut db, 'users', '003'.bytes(), feature_row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature update'
+		author:    'gwg'
+		message:   'feature update'
 		timestamp: 3
 	}) or { panic(err) }
 
@@ -3201,7 +3277,7 @@ fn test_database_merge_report_decodes_conflicting_rows() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-report-conflict-preview')
 	defer {
@@ -3216,8 +3292,8 @@ fn test_database_merge_report_decodes_conflicting_rows() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	seed := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed.branch.commit_cid) or { panic(err) }
@@ -3228,8 +3304,8 @@ fn test_database_merge_report_decodes_conflicting_rows() {
 	main_row.set('name', 'main')
 	main_row.set('email', 'main@example.com')
 	_ = main_session.put_row(mut db, 'users', '001'.bytes(), main_row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main conflict'
+		author:    'gwg'
+		message:   'main conflict'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -3239,8 +3315,8 @@ fn test_database_merge_report_decodes_conflicting_rows() {
 	feature_row.set('name', 'feature')
 	feature_row.set('email', 'feature@example.com')
 	_ = feature_session.put_row(mut db, 'users', '001'.bytes(), feature_row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature conflict'
+		author:    'gwg'
+		message:   'feature conflict'
 		timestamp: 3
 	}) or { panic(err) }
 
@@ -3257,7 +3333,7 @@ fn test_database_merge_report_includes_markdown_diff_summary_for_conflicts() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-merge-report-markdown-conflict')
 	defer {
@@ -3278,30 +3354,30 @@ fn test_database_merge_report_includes_markdown_diff_summary_for_conflicts() {
 	seed.set('body', base_ref)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_update := db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed markdown'
+		author:    'gwg'
+		message:   'seed markdown'
 		timestamp: 1
 	}) or { panic(err) }
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Title\n\nMain paragraph.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'main markdown conflict'
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nMain paragraph.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'main markdown conflict'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Title\n\nFeature paragraph.\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature markdown conflict'
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nFeature paragraph.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'feature markdown conflict'
 		timestamp: 3
 	}) or { panic(err) }
 
@@ -3318,7 +3394,7 @@ fn test_database_replays_checkpoint_journal_on_open() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-journal-replay')
 	defer {
@@ -3330,8 +3406,8 @@ fn test_database_replays_checkpoint_journal_on_open() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -3340,8 +3416,8 @@ fn test_database_replays_checkpoint_journal_on_open() {
 	row.set('name', 'grace')
 	row.set('email', 'grace@example.com')
 	_ = session.put_row(mut db, 'users', '002'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put row'
+		author:    'gwg'
+		message:   'put row'
 		timestamp: 2
 	}) or { panic(err) }
 	db.checkpoint_mode(.data_only) or { panic(err) }
@@ -3366,7 +3442,7 @@ fn test_database_replays_multiple_checkpoint_journal_segments_on_open() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-journal-multi-segment')
 	defer {
@@ -3378,8 +3454,8 @@ fn test_database_replays_multiple_checkpoint_journal_segments_on_open() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -3390,8 +3466,8 @@ fn test_database_replays_multiple_checkpoint_journal_segments_on_open() {
 		row.set('name', 'user-${id}')
 		row.set('email', 'user-${id}@example.com')
 		_ = session.put_row(mut db, 'users', id.bytes(), row, cfg, CommitMeta{
-			author: 'gwg'
-			message: 'put row ${id}'
+			author:    'gwg'
+			message:   'put row ${id}'
 			timestamp: idx + 2
 		}) or { panic(err) }
 		db.checkpoint_mode(.data_only) or { panic(err) }
@@ -3419,7 +3495,7 @@ fn test_database_session_row_helpers() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-row-helpers')
 	defer {
@@ -3432,10 +3508,12 @@ fn test_database_session_row_helpers() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
+	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or {
+		panic(err)
+	}
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -3445,8 +3523,8 @@ fn test_database_session_row_helpers() {
 	row.set('name', 'ken')
 	row.set('email', 'ken@example.com')
 	_ = session.put_row(mut db, 'users', '004'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put row'
+		author:    'gwg'
+		message:   'put row'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -3466,8 +3544,8 @@ fn test_database_session_row_helpers() {
 	assert index_rows[0].primary_key.bytestr() == '004'
 
 	_ = session.delete_row(mut db, 'users', '004'.bytes(), cfg, CommitMeta{
-		author: 'gwg'
-		message: 'delete row'
+		author:    'gwg'
+		message:   'delete row'
 		timestamp: 3
 	}) or { panic(err) }
 	_ = session.get_row(mut db, 'users', '004'.bytes()) or {
@@ -3481,7 +3559,7 @@ fn test_database_session_table_reader_fast_path() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-table-reader')
 	defer {
@@ -3496,8 +3574,8 @@ fn test_database_session_table_reader_fast_path() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -3518,7 +3596,7 @@ fn test_database_session_index_reader_fast_path() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-index-reader')
 	defer {
@@ -3533,8 +3611,8 @@ fn test_database_session_index_reader_fast_path() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -3543,8 +3621,8 @@ fn test_database_session_index_reader_fast_path() {
 	row.set('name', 'grace')
 	row.set('email', 'grace@example.com')
 	_ = session.put_row(mut db, 'users', '002'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put row'
+		author:    'gwg'
+		message:   'put row'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -3563,7 +3641,7 @@ fn test_database_session_lookup_index_prefix() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-index-prefix')
 	defer {
@@ -3578,8 +3656,8 @@ fn test_database_session_lookup_index_prefix() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	mut writes := TypedWriteSet.new()
@@ -3594,8 +3672,8 @@ fn test_database_session_lookup_index_prefix() {
 	grace.set('email', 'grace@example.com')
 	writes.put('users', '003'.bytes(), grace)
 	_ = db.apply_typed_write_set('main', writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -3614,7 +3692,7 @@ fn test_database_session_lookup_index_prefix_projected() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-index-prefix-projected')
 	defer {
@@ -3627,11 +3705,13 @@ fn test_database_session_lookup_index_prefix_projected() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'alice@example.com', cfg) or { panic(err) }
+	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'alice@example.com', cfg) or {
+		panic(err)
+	}
 	seed_tree = rebuild_typed_indexes_for_specs(seed_tree, [spec], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	mut writes := TypedWriteSet.new()
@@ -3641,15 +3721,14 @@ fn test_database_session_lookup_index_prefix_projected() {
 	alan.set('email', 'albert@example.com')
 	writes.put('users', '002'.bytes(), alan)
 	_ = db.apply_typed_write_set('main', writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.begin_session(SessionOptions.for_branch('main')) or { panic(err) }
-	rows := session.lookup_index_prefix_projected(mut db, 'users', 'email', 'al', 10, ['email']) or {
-		panic(err)
-	}
+	rows := session.lookup_index_prefix_projected(mut db, 'users', 'email', 'al', 10,
+		['email']) or { panic(err) }
 	assert rows.len > 0
 	assert rows[0].data.has('email')
 	assert !rows[0].data.has('name')
@@ -3660,7 +3739,7 @@ fn test_database_session_query_uses_plain_index_and_projection() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-plain-index')
 	defer {
@@ -3675,8 +3754,8 @@ fn test_database_session_query_uses_plain_index_and_projection() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -3685,15 +3764,15 @@ fn test_database_session_query_uses_plain_index_and_projection() {
 	row.set('name', 'ada')
 	row.set('email', 'ada@example.com')
 	_ = session.put_row(mut db, 'users', '001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert user'
+		author:    'gwg'
+		message:   'insert user'
 		timestamp: 1
 	}) or { panic(err) }
 	result := session.query_rows(mut db, QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.eq('email', 'ada@example.com')]
+		table_name:     'users'
+		filters:        [QueryFilter.eq('email', 'ada@example.com')]
 		select_columns: ['name']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 
 	assert result.plan.strategy == 'index_exact'
@@ -3717,7 +3796,7 @@ fn test_database_session_query_order_by_index_supports_continuation() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-order-continuation')
 	defer {
@@ -3732,8 +3811,8 @@ fn test_database_session_query_order_by_index_supports_continuation() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -3750,19 +3829,19 @@ fn test_database_session_query_order_by_index_supports_continuation() {
 		rows[seed[0]] = row
 	}
 	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 
 	first_page := session.query_page(mut db, QueryRequest{
-		table_name: 'users'
-		order_by: QueryOrder{
+		table_name:     'users'
+		order_by:       QueryOrder{
 			column_name: 'email'
-			direction: .asc
+			direction:   .asc
 		}
 		select_columns: ['name']
-		limit: 2
+		limit:          2
 	}) or { panic(err) }
 
 	assert first_page.plan.strategy == 'index_order_asc_projected'
@@ -3773,13 +3852,13 @@ fn test_database_session_query_order_by_index_supports_continuation() {
 	assert first_page.cursor.next_continuation_token.len > 0
 
 	second_page := session.query_page(mut db, QueryRequest{
-		table_name: 'users'
-		order_by: QueryOrder{
+		table_name:         'users'
+		order_by:           QueryOrder{
 			column_name: 'email'
-			direction: .asc
+			direction:   .asc
 		}
-		select_columns: ['name']
-		limit: 2
+		select_columns:     ['name']
+		limit:              2
 		continuation_token: first_page.cursor.next_continuation_token
 	}) or { panic(err) }
 
@@ -3792,7 +3871,7 @@ fn test_database_session_query_order_by_desc_top_n() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-order-desc-topn')
 	defer {
@@ -3807,8 +3886,8 @@ fn test_database_session_query_order_by_desc_top_n() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -3825,19 +3904,19 @@ fn test_database_session_query_order_by_desc_top_n() {
 		rows[seed[0]] = row
 	}
 	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 
 	page := session.query_page(mut db, QueryRequest{
-		table_name: 'users'
-		order_by: QueryOrder{
+		table_name:     'users'
+		order_by:       QueryOrder{
 			column_name: 'email'
-			direction: .desc
+			direction:   .desc
 		}
 		select_columns: ['name']
-		limit: 2
+		limit:          2
 	}) or { panic(err) }
 
 	assert page.plan.strategy == 'index_order_desc_projected'
@@ -3851,7 +3930,7 @@ fn test_database_session_query_before_desc_top_n() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-before-desc-topn')
 	defer {
@@ -3866,8 +3945,8 @@ fn test_database_session_query_before_desc_top_n() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -3884,20 +3963,20 @@ fn test_database_session_query_before_desc_top_n() {
 		rows[seed[0]] = row
 	}
 	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 
 	page := session.query_page(mut db, QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.before('email', 'd')]
-		order_by: QueryOrder{
+		table_name:     'users'
+		filters:        [QueryFilter.before('email', 'd')]
+		order_by:       QueryOrder{
 			column_name: 'email'
-			direction: .desc
+			direction:   .desc
 		}
 		select_columns: ['name']
-		limit: 2
+		limit:          2
 	}) or { panic(err) }
 
 	assert page.plan.strategy == 'index_before_order_desc_projected'
@@ -3911,7 +3990,7 @@ fn test_database_session_query_after_desc_top_n() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-after-desc-topn')
 	defer {
@@ -3926,8 +4005,8 @@ fn test_database_session_query_after_desc_top_n() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -3944,20 +4023,20 @@ fn test_database_session_query_after_desc_top_n() {
 		rows[seed[0]] = row
 	}
 	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 
 	page := session.query_page(mut db, QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.after('email', 'a')]
-		order_by: QueryOrder{
+		table_name:     'users'
+		filters:        [QueryFilter.after('email', 'a')]
+		order_by:       QueryOrder{
 			column_name: 'email'
-			direction: .desc
+			direction:   .desc
 		}
 		select_columns: ['name']
-		limit: 2
+		limit:          2
 	}) or { panic(err) }
 
 	assert page.plan.strategy == 'index_after_order_desc_projected'
@@ -3970,7 +4049,7 @@ fn test_database_session_query_between_desc_top_n() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-between-desc-topn')
 	defer {
@@ -3985,8 +4064,8 @@ fn test_database_session_query_between_desc_top_n() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -4003,20 +4082,20 @@ fn test_database_session_query_between_desc_top_n() {
 		rows[seed[0]] = row
 	}
 	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 
 	page := session.query_page(mut db, QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.between('email', 'a', 'd')]
-		order_by: QueryOrder{
+		table_name:     'users'
+		filters:        [QueryFilter.between('email', 'a', 'd')]
+		order_by:       QueryOrder{
 			column_name: 'email'
-			direction: .desc
+			direction:   .desc
 		}
 		select_columns: ['name']
-		limit: 2
+		limit:          2
 	}) or { panic(err) }
 
 	assert page.plan.strategy == 'index_between_order_desc_projected'
@@ -4029,7 +4108,7 @@ fn test_database_session_lookup_index_prefix_reverse() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-prefix-reverse')
 	defer {
@@ -4044,8 +4123,8 @@ fn test_database_session_lookup_index_prefix_reverse() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -4063,14 +4142,13 @@ fn test_database_session_lookup_index_prefix_reverse() {
 		rows[seed[0]] = row
 	}
 	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 
-	reverse_rows := session.lookup_index_prefix_reverse(mut db, 'users', 'email', 'a', 3) or {
-		panic(err)
-	}
+	reverse_rows := session.lookup_index_prefix_reverse(mut db, 'users', 'email', 'a',
+		3) or { panic(err) }
 
 	assert reverse_rows.len == 3
 	assert reverse_rows[0].primary_key.bytestr() == '001'
@@ -4082,7 +4160,7 @@ fn test_database_session_query_prefix_desc_top_n() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-prefix-desc-topn')
 	defer {
@@ -4097,8 +4175,8 @@ fn test_database_session_query_prefix_desc_top_n() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -4116,20 +4194,20 @@ fn test_database_session_query_prefix_desc_top_n() {
 		rows[seed[0]] = row
 	}
 	_ = session.put_rows(mut db, 'users', rows, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed users'
+		author:    'gwg'
+		message:   'seed users'
 		timestamp: 1
 	}) or { panic(err) }
 
 	page := session.query_page(mut db, QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.prefix('email', 'a')]
-		order_by: QueryOrder{
+		table_name:     'users'
+		filters:        [QueryFilter.prefix('email', 'a')]
+		order_by:       QueryOrder{
 			column_name: 'email'
-			direction: .desc
+			direction:   .desc
 		}
 		select_columns: ['name']
-		limit: 2
+		limit:          2
 	}) or { panic(err) }
 
 	assert page.plan.strategy == 'index_prefix_order_desc_projected'
@@ -4143,7 +4221,7 @@ fn test_database_session_query_uses_markdown_selector_prefix_index() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-markdown-selector')
 	defer {
@@ -4163,7 +4241,7 @@ fn test_database_session_query_uses_markdown_selector_prefix_index() {
 	row1.set('body', MarkdownRef{
 		doc_root_id: 'seed-1'
 		source_hash: 'seed-1'
-		source_len: 0
+		source_len:  0
 	})
 	mut row2 := TypedRowData.new()
 	row2.set('id', 'note-2')
@@ -4171,42 +4249,44 @@ fn test_database_session_query_uses_markdown_selector_prefix_index() {
 	row2.set('body', MarkdownRef{
 		doc_root_id: 'seed-2'
 		source_hash: 'seed-2'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row1)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-2'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-2'.bytes())
 			value: codec.encode(row2)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'## Roadmap\n\n[docs](https://docs.example.com/a)\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'write roadmap'
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '## Roadmap\n\n[docs](https://docs.example.com/a)\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write roadmap'
 		timestamp: 2
 	}) or { panic(err) }
 	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '## Changelog\n\nNothing yet.\n',
 		cfg, CommitMeta{
-		author: 'gwg'
-		message: 'write changelog'
+		author:    'gwg'
+		message:   'write changelog'
 		timestamp: 3
 	}) or { panic(err) }
 
 	result := session.query_rows(mut db, QueryRequest{
 		table_name: 'notes'
-		filters: [QueryFilter.field_prefix('body', 'markdown', 'heading_text:2', 'Road')]
-		limit: 10
+		filters:    [
+			QueryFilter.field_prefix('body', 'markdown', 'heading_text:2', 'Road'),
+		]
+		limit:      10
 	}) or { panic(err) }
 
 	assert result.plan.strategy == 'index_prefix'
@@ -4219,7 +4299,7 @@ fn test_database_session_lookup_markdown_fts_value_indexes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-markdown-fts-indexes')
 	defer {
@@ -4239,38 +4319,35 @@ fn test_database_session_lookup_markdown_fts_value_indexes() {
 	row.set('body', MarkdownRef{
 		doc_root_id: 'seed-1'
 		source_hash: 'seed-1'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n', cfg,
-		CommitMeta{
-			author: 'gwg'
-			message: 'write body'
-			timestamp: 2
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write body'
+		timestamp: 2
+	}) or { panic(err) }
 
-	heading_rows := session.lookup_index(mut db, 'notes', 'body_fts_heading_idx', 'roadmap', 10) or {
-		panic(err)
-	}
+	heading_rows := session.lookup_index(mut db, 'notes', 'body_fts_heading_idx', 'roadmap',
+		10) or { panic(err) }
 	assert heading_rows.len == 1
 	assert heading_rows[0].primary_key.bytestr() == 'note-1'
 
-	prefix_rows := session.lookup_index_prefix(mut db, 'notes', 'body_fts_any_idx', 'agen', 10) or {
-		panic(err)
-	}
+	prefix_rows := session.lookup_index_prefix(mut db, 'notes', 'body_fts_any_idx', 'agen',
+		10) or { panic(err) }
 	assert prefix_rows.len == 1
 	assert prefix_rows[0].primary_key.bytestr() == 'note-1'
 }
@@ -4279,7 +4356,7 @@ fn test_database_session_query_page_uses_markdown_fts_selector_index() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-page-markdown-fts')
 	defer {
@@ -4299,7 +4376,7 @@ fn test_database_session_query_page_uses_markdown_fts_selector_index() {
 	note_1.set('body', MarkdownRef{
 		doc_root_id: 'seed-1'
 		source_hash: 'seed-1'
-		source_len: 0
+		source_len:  0
 	})
 	mut note_2 := TypedRowData.new()
 	note_2.set('id', 'note-2')
@@ -4307,44 +4384,43 @@ fn test_database_session_query_page_uses_markdown_fts_selector_index() {
 	note_2.set('body', MarkdownRef{
 		doc_root_id: 'seed-2'
 		source_hash: 'seed-2'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('note-1'.bytes())
 			value: codec.encode(note_1)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('note-2'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('note-2'.bytes())
 			value: codec.encode(note_2)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n', cfg,
-		CommitMeta{
-			author: 'gwg'
-			message: 'write roadmap'
-			timestamp: 2
-		}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
-		'# Notes\n\nDiscuss metrics only.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'write notes'
-			timestamp: 3
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write roadmap'
+		timestamp: 2
+	}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Notes\n\nDiscuss metrics only.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write notes'
+		timestamp: 3
+	}) or { panic(err) }
 
 	page := session.query_page(mut db, QueryRequest{
-		table_name: 'notes'
-		filters: [QueryFilter.field_prefix('body', 'markdown', 'fts', 'agen')]
+		table_name:     'notes'
+		filters:        [QueryFilter.field_prefix('body', 'markdown', 'fts', 'agen')]
 		select_columns: ['title']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 
 	assert page.plan.strategy == 'index_prefix'
@@ -4361,7 +4437,7 @@ fn test_database_session_put_row_rebuilds_markdown_selector_indexes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-put-row-markdown-selector-indexes')
 	defer {
@@ -4381,43 +4457,42 @@ fn test_database_session_put_row_rebuilds_markdown_selector_indexes() {
 	seed.set('body', MarkdownRef{
 		doc_root_id: 'seed-1'
 		source_hash: 'seed-1'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
 	body_column := spec.table.column('body') or { panic(err) }
-	stored := ingest_external_field_value(mut db, body_column,
-		'# Intro\n\nInspect the patch.\n\n## Roadmap\n\nShip agent sync.\n') or { panic(err) }
+	stored := ingest_external_field_value(mut db, body_column, '# Intro\n\nInspect the patch.\n\n## Roadmap\n\nShip agent sync.\n') or {
+		panic(err)
+	}
 	mut updated := TypedRowData.new()
 	updated.set('id', 'note-1')
 	updated.set('title', 'Roadmap')
 	updated.set('body', stored)
 	_ = session.put_row(mut db, 'notes', 'note-1'.bytes(), updated, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'rewrite note row'
+		author:    'gwg'
+		message:   'rewrite note row'
 		timestamp: 2
 	}) or { panic(err) }
 
-	prefix_rows := session.lookup_index_prefix(mut db, 'notes', 'body_fts_any_idx', 'insp', 10) or {
-		panic(err)
-	}
+	prefix_rows := session.lookup_index_prefix(mut db, 'notes', 'body_fts_any_idx', 'insp',
+		10) or { panic(err) }
 	assert prefix_rows.len == 1
 	assert prefix_rows[0].primary_key.bytestr() == 'note-1'
 
-	heading_rows := session.lookup_index(mut db, 'notes', 'body_fts_heading_idx', 'roadmap', 10) or {
-		panic(err)
-	}
+	heading_rows := session.lookup_index(mut db, 'notes', 'body_fts_heading_idx', 'roadmap',
+		10) or { panic(err) }
 	assert heading_rows.len == 1
 	assert heading_rows[0].primary_key.bytestr() == 'note-1'
 }
@@ -4426,7 +4501,7 @@ fn test_database_session_query_fts_all_intersects_exact_term_indexes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-fts-all')
 	defer {
@@ -4452,59 +4527,59 @@ fn test_database_session_query_fts_all_intersects_exact_term_indexes() {
 		row.set('body', MarkdownRef{
 			doc_root_id: 'seed-${id}'
 			source_hash: 'seed-${id}'
-			source_len: 0
+			source_len:  0
 		})
 		rows << KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
 			value: codec.encode(row)!
 		}
 	}
 	seed_tree := Tree.build(rows, cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\nParagraph about PollyDB merge and agent sync.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'write note-1'
-			timestamp: 2
-		}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
-		'# Intro\n\nParagraph about PollyDB only.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'write note-2'
-			timestamp: 3
-		}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body',
-		'# Intro\n\nParagraph about merge only.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'write note-3'
-			timestamp: 4
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nParagraph about PollyDB merge and agent sync.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write note-1'
+		timestamp: 2
+	}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Intro\n\nParagraph about PollyDB only.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write note-2'
+		timestamp: 3
+	}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body', '# Intro\n\nParagraph about merge only.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write note-3'
+		timestamp: 4
+	}) or { panic(err) }
 
 	preview := session.preview_fts_query_details(FtsQuery{
-		table_name: 'notes'
-		column_name: 'body'
-		kind: .all
-		terms: ['PollyDB', 'merge']
+		table_name:     'notes'
+		column_name:    'body'
+		kind:           .all
+		terms:          ['PollyDB', 'merge']
 		select_columns: ['title']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 	assert preview.plan.strategy == 'fts_index_all'
 	assert preview.plan.index_name == 'body_fts_any_idx'
 	assert preview.notes.len == 1
 
 	result := session.query_fts(mut db, FtsQuery{
-		table_name: 'notes'
-		column_name: 'body'
-		kind: .all
-		terms: ['PollyDB', 'merge']
+		table_name:     'notes'
+		column_name:    'body'
+		kind:           .all
+		terms:          ['PollyDB', 'merge']
 		select_columns: ['title']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 	assert result.plan.strategy == 'fts_index_all'
 	assert result.rows.len == 1
@@ -4517,7 +4592,7 @@ fn test_database_session_query_fts_any_unions_exact_term_indexes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-fts-any')
 	defer {
@@ -4543,47 +4618,47 @@ fn test_database_session_query_fts_any_unions_exact_term_indexes() {
 		row.set('body', MarkdownRef{
 			doc_root_id: 'seed-${id}'
 			source_hash: 'seed-${id}'
-			source_len: 0
+			source_len:  0
 		})
 		rows << KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
 			value: codec.encode(row)!
 		}
 	}
 	seed_tree := Tree.build(rows, cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Roadmap\n\nShip agent sync.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'write note-1'
-			timestamp: 2
-		}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
-		'# Metrics\n\nTrack dashboard metrics.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'write note-2'
-			timestamp: 3
-		}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body',
-		'# Notes\n\nNothing relevant.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'write note-3'
-			timestamp: 4
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Roadmap\n\nShip agent sync.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write note-1'
+		timestamp: 2
+	}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Metrics\n\nTrack dashboard metrics.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write note-2'
+		timestamp: 3
+	}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body', '# Notes\n\nNothing relevant.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write note-3'
+		timestamp: 4
+	}) or { panic(err) }
 
 	result := session.query_fts(mut db, FtsQuery{
-		table_name: 'notes'
-		column_name: 'body'
-		kind: .any
-		terms: ['metrics', 'sync']
+		table_name:     'notes'
+		column_name:    'body'
+		kind:           .any
+		terms:          ['metrics', 'sync']
 		select_columns: ['title']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 	assert result.plan.strategy == 'fts_index_any'
 	assert result.plan.index_name == 'body_fts_any_idx'
@@ -4605,7 +4680,7 @@ fn test_database_session_query_fts_falls_back_to_scan_without_fts_index() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-fts-scan')
 	defer {
@@ -4630,63 +4705,268 @@ fn test_database_session_query_fts_falls_back_to_scan_without_fts_index() {
 		row.set('body', MarkdownRef{
 			doc_root_id: 'seed-${id}'
 			source_hash: 'seed-${id}'
-			source_len: 0
+			source_len:  0
 		})
 		rows << KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
 			value: codec.encode(row)!
 		}
 	}
 	seed_tree := Tree.build(rows, cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Roadmap\n\nShip agent sync.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'write note-1'
-			timestamp: 2
-		}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
-		'# Notes\n\nDiscuss metrics.\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'write note-2'
-			timestamp: 3
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Roadmap\n\nShip agent sync.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write note-1'
+		timestamp: 2
+	}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Notes\n\nDiscuss metrics.\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'write note-2'
+		timestamp: 3
+	}) or { panic(err) }
 
 	preview := session.preview_fts_query_details(FtsQuery{
-		table_name: 'notes'
+		table_name:  'notes'
 		column_name: 'body'
-		scope: .heading
-		kind: .any
-		terms: ['roadmap', 'notes']
-		limit: 10
+		scope:       .heading
+		kind:        .any
+		terms:       ['roadmap', 'notes']
+		limit:       10
 	}) or { panic(err) }
 	assert preview.plan.strategy == 'fts_scan_any'
 	assert preview.warnings.len == 1
 	assert preview.warnings[0].contains('table scan')
 
 	result := session.query_fts(mut db, FtsQuery{
-		table_name: 'notes'
+		table_name:  'notes'
 		column_name: 'body'
-		scope: .heading
-		kind: .any
-		terms: ['roadmap', 'notes']
-		limit: 10
+		scope:       .heading
+		kind:        .any
+		terms:       ['roadmap', 'notes']
+		limit:       10
 	}) or { panic(err) }
 	assert result.plan.strategy == 'fts_scan_any'
 	assert result.rows.len == 2
+}
+
+fn test_database_session_query_general_fts_term_and_prefix() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask:     0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-general-fts-term')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_docs_general_fts_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	row1_body := db.ingest_markdown('# Search\n\nVisible alpha paragraph.\n') or { panic(err) }
+	row2_body := db.ingest_markdown('# Search\n\nVisible beta paragraph.\n') or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut rows := []KVPair{}
+	mut row1 := TypedRowData.new()
+	row1.set('id', 'doc-1')
+	row1.set('content_text', 'alpha searchable body')
+	row1.set('body', row1_body)
+	rows << KVPair{
+		key:   TableView.new(Tree{}, spec.table.name).key_for('doc-1'.bytes())
+		value: codec.encode(row1)!
+	}
+	mut row2 := TypedRowData.new()
+	row2.set('id', 'doc-2')
+	row2.set('content_text', 'beta searchable text')
+	row2.set('body', row2_body)
+	rows << KVPair{
+		key:   TableView.new(Tree{}, spec.table.name).key_for('doc-2'.bytes())
+		value: codec.encode(row2)!
+	}
+	seed_tree := Tree.build(rows, cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author:    'gwg'
+		message:   'seed docs'
+		timestamp: 1
+	}) or { panic(err) }
+	_ = db.rebuild_indexes_at_branch('main', ['docs'], cfg) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	preview := session.preview_general_fts_query(GeneralFtsQuery{
+		table_name:     'docs'
+		index_name:     'content_text_fts_idx'
+		kind:           .term
+		terms:          ['alpha']
+		select_columns: ['content_text']
+		limit:          10
+	}) or { panic(err) }
+	assert preview.strategy == 'sqlite_fts5_match'
+	assert preview.backend == 'sqlite_fts5'
+
+	term_result := session.query_general_fts(mut db, GeneralFtsQuery{
+		table_name:     'docs'
+		index_name:     'content_text_fts_idx'
+		kind:           .term
+		terms:          ['alpha']
+		select_columns: ['content_text']
+		limit:          10
+	}) or { panic(err) }
+	assert term_result.rows.len == 1
+	assert term_result.rows[0].primary_key.bytestr() == 'doc-1'
+	content_text := term_result.rows[0].data.get('content_text') or { panic(err) }
+	assert content_text == ColumnValue('alpha searchable body')
+
+	prefix_result := session.query_general_fts(mut db, GeneralFtsQuery{
+		table_name:     'docs'
+		index_name:     'content_text_fts_idx'
+		kind:           .prefix
+		terms:          ['bet']
+		select_columns: ['content_text']
+		limit:          10
+	}) or { panic(err) }
+	assert prefix_result.rows.len == 1
+	assert prefix_result.rows[0].primary_key.bytestr() == 'doc-2'
+}
+
+fn test_database_session_query_general_fts_all_matches_markdown_visible_text() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask:     0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-general-fts-markdown')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_docs_general_fts_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	body1 := db.ingest_markdown('# Search Title\n\nVisible paragraph with gamma token.\n\n```v\nhelper code\n```\n') or {
+		panic(err)
+	}
+	body2 := db.ingest_markdown('# Other\n\nVisible paragraph only.\n') or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut rows := []KVPair{}
+	for id, text in {
+		'doc-1': 'alpha'
+		'doc-2': 'beta'
+	} {
+		mut row := TypedRowData.new()
+		row.set('id', id)
+		row.set('content_text', text)
+		row.set('body', if id == 'doc-1' { body1 } else { body2 })
+		rows << KVPair{
+			key:   TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
+			value: codec.encode(row)!
+		}
+	}
+	seed_tree := Tree.build(rows, cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author:    'gwg'
+		message:   'seed docs'
+		timestamp: 1
+	}) or { panic(err) }
+	_ = db.rebuild_indexes_at_branch('main', ['docs'], cfg) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	result := session.query_general_fts(mut db, GeneralFtsQuery{
+		table_name:     'docs'
+		index_name:     'body_fts_idx'
+		kind:           .all
+		terms:          ['search', 'gamma']
+		select_columns: ['id']
+		limit:          10
+	}) or { panic(err) }
+	assert result.plan.column_name == 'body'
+	assert result.rows.len == 1
+	assert result.rows[0].primary_key.bytestr() == 'doc-1'
+	assert result.hits.len == 1
+	assert result.hits[0].score <= 0
+	assert result.hits[0].snippet.len > 0
+}
+
+fn test_database_session_query_page_supports_general_fts_clause() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask:     0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-page-general-fts')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_docs_general_fts_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	body1 := db.ingest_markdown('# Search Title\n\nVisible paragraph with gamma token.\n') or {
+		panic(err)
+	}
+	body2 := db.ingest_markdown('# Other\n\nVisible beta paragraph.\n') or { panic(err) }
+	codec := TypedRowCodec.new(spec.table)
+	mut rows := []KVPair{}
+	for id, text in {
+		'doc-1': 'alpha searchable body'
+		'doc-2': 'beta searchable body'
+	} {
+		mut row := TypedRowData.new()
+		row.set('id', id)
+		row.set('content_text', text)
+		row.set('body', if id == 'doc-1' { body1 } else { body2 })
+		rows << KVPair{
+			key:   TableView.new(Tree{}, spec.table.name).key_for(id.bytes())
+			value: codec.encode(row)!
+		}
+	}
+	seed_tree := Tree.build(rows, cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
+		author:    'gwg'
+		message:   'seed docs'
+		timestamp: 1
+	}) or { panic(err) }
+	_ = db.rebuild_indexes_at_branch('main', ['docs'], cfg) or { panic(err) }
+
+	session := db.open_session('main') or { panic(err) }
+	page := session.query_page(mut db, QueryRequest{
+		table_name:     'docs'
+		general_fts:    QueryGeneralFtsClause{
+			index_name: 'body_fts_idx'
+			kind:       .all
+			terms:      ['search', 'gamma']
+		}
+		select_columns: ['id']
+		limit:          10
+	}) or { panic(err) }
+	assert page.plan.strategy == 'sqlite_fts5_match'
+	assert page.plan.index_name == 'body_fts_idx'
+	assert !page.cursor.has_more
+	assert page.rows.len == 1
+	assert page.rows[0].primary_key.bytestr() == 'doc-1'
+	assert page.general_fts_hits.len == 1
+	assert page.general_fts_hits[0].primary_key.bytestr() == 'doc-1'
+	assert page.general_fts_hits[0].snippet.len > 0
 }
 
 fn test_transaction_session_query_uses_index_and_post_filters() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-transaction-post-filter')
 	defer {
@@ -4701,8 +4981,8 @@ fn test_transaction_session_query_uses_index_and_post_filters() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
@@ -4715,8 +4995,9 @@ fn test_transaction_session_query_uses_index_and_post_filters() {
 
 	result := tx.query_rows(QueryRequest{
 		table_name: 'users'
-		filters: [QueryFilter.eq('email', 'grace@example.com'), QueryFilter.eq('name', 'grace')]
-		limit: 10
+		filters:    [QueryFilter.eq('email', 'grace@example.com'),
+			QueryFilter.eq('name', 'grace')]
+		limit:      10
 	}) or { panic(err) }
 
 	assert result.plan.strategy == 'index_exact'
@@ -4735,7 +5016,7 @@ fn test_database_session_query_supports_between_on_datetime_index() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-between-datetime')
 	defer {
@@ -4755,13 +5036,13 @@ fn test_database_session_query_supports_between_on_datetime_index() {
 	seed_row.set('created_at', '2026-01-01T00:00:00.000000Z')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'events').key_for('seed'.bytes())
+			key:   TableView.new(Tree{}, 'events').key_for('seed'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -4770,8 +5051,8 @@ fn test_database_session_query_supports_between_on_datetime_index() {
 	row1.set('title', 'One')
 	row1.set('created_at', '2026-01-01T00:00:00.000000Z')
 	_ = session.put_row(mut db, 'events', 'e1'.bytes(), row1, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert e1'
+		author:    'gwg'
+		message:   'insert e1'
 		timestamp: 1
 	}) or { panic(err) }
 	mut row2 := TypedRowData.new()
@@ -4779,8 +5060,8 @@ fn test_database_session_query_supports_between_on_datetime_index() {
 	row2.set('title', 'Two')
 	row2.set('created_at', '2026-01-02T00:00:00.000000Z')
 	_ = session.put_row(mut db, 'events', 'e2'.bytes(), row2, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert e2'
+		author:    'gwg'
+		message:   'insert e2'
 		timestamp: 2
 	}) or { panic(err) }
 	mut row3 := TypedRowData.new()
@@ -4788,16 +5069,17 @@ fn test_database_session_query_supports_between_on_datetime_index() {
 	row3.set('title', 'Three')
 	row3.set('created_at', '2026-01-03T00:00:00.000000Z')
 	_ = session.put_row(mut db, 'events', 'e3'.bytes(), row3, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert e3'
+		author:    'gwg'
+		message:   'insert e3'
 		timestamp: 3
 	}) or { panic(err) }
 
 	result := session.query_rows(mut db, QueryRequest{
 		table_name: 'events'
-		filters: [QueryFilter.between('created_at', '2026-01-02T00:00:00.000000Z',
-			'2026-01-03T00:00:00.000000Z')]
-		limit: 10
+		filters:    [
+			QueryFilter.between('created_at', '2026-01-02T00:00:00.000000Z', '2026-01-03T00:00:00.000000Z'),
+		]
+		limit:      10
 	}) or { panic(err) }
 
 	assert result.plan.strategy == 'index_between'
@@ -4815,7 +5097,7 @@ fn test_database_session_query_supports_after_on_markdown_metric_index() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-after-markdown-metric')
 	defer {
@@ -4835,7 +5117,7 @@ fn test_database_session_query_supports_after_on_markdown_metric_index() {
 	seed_row.set('body', MarkdownRef{
 		doc_root_id: 'seed-1'
 		source_hash: 'seed-1'
-		source_len: 0
+		source_len:  0
 	})
 	mut seed_row2 := TypedRowData.new()
 	seed_row2.set('id', 'note-2')
@@ -4843,41 +5125,41 @@ fn test_database_session_query_supports_after_on_markdown_metric_index() {
 	seed_row2.set('body', MarkdownRef{
 		doc_root_id: 'seed-2'
 		source_hash: 'seed-2'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(seed_row)!
 		},
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-2'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-2'.bytes())
 			value: codec.encode(seed_row2)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed notes'
+		author:    'gwg'
+		message:   'seed notes'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\n[a](https://a.example)\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'note 1 markdown'
-			timestamp: 2
-		}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
-		'# Intro\n\n[a](https://a.example)\n\n[b](https://b.example)\n', cfg, CommitMeta{
-			author: 'gwg'
-			message: 'note 2 markdown'
-			timestamp: 3
-		}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\n[a](https://a.example)\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'note 1 markdown'
+		timestamp: 2
+	}) or { panic(err) }
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Intro\n\n[a](https://a.example)\n\n[b](https://b.example)\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'note 2 markdown'
+		timestamp: 3
+	}) or { panic(err) }
 
 	result := session.query_rows(mut db, QueryRequest{
 		table_name: 'notes'
-		filters: [QueryFilter.field_after('body', 'markdown', 'links', i64(1))]
-		limit: 10
+		filters:    [QueryFilter.field_after('body', 'markdown', 'links', i64(1))]
+		limit:      10
 	}) or { panic(err) }
 
 	assert result.plan.strategy == 'index_after'
@@ -4894,7 +5176,7 @@ fn test_database_session_query_rows_supports_primary_key_pagination() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-pagination')
 	defer {
@@ -4909,8 +5191,8 @@ fn test_database_session_query_rows_supports_primary_key_pagination() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -4926,16 +5208,16 @@ fn test_database_session_query_rows_supports_primary_key_pagination() {
 		row.set('name', name)
 		row.set('email', '${name.to_lower()}@example.com')
 		_ = session.put_row(mut db, 'users', id.bytes(), row, cfg, CommitMeta{
-			author: 'gwg'
-			message: 'insert ${id}'
+			author:    'gwg'
+			message:   'insert ${id}'
 			timestamp: 1
 		}) or { panic(err) }
 	}
 
 	first_page := session.query_rows(mut db, QueryRequest{
 		table_name: 'users'
-		filters: [QueryFilter.prefix('email', '')]
-		limit: 2
+		filters:    [QueryFilter.prefix('email', '')]
+		limit:      2
 	}) or { panic(err) }
 	assert first_page.rows.len == 2
 	assert first_page.cursor.has_more
@@ -4955,12 +5237,12 @@ fn test_database_session_query_rows_supports_primary_key_pagination() {
 	assert first_page.rows[1].primary_key.bytestr() == '002'
 
 	second_page := session.query_rows(mut db, QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.prefix('email', '')]
-		start_primary_key: first_page.next_primary_key
-		start_index_value: first_page.next_index_value
+		table_name:            'users'
+		filters:               [QueryFilter.prefix('email', '')]
+		start_primary_key:     first_page.next_primary_key
+		start_index_value:     first_page.next_index_value
 		has_start_index_value: true
-		limit: 2
+		limit:                 2
 	}) or { panic(err) }
 	assert second_page.rows.len == 1
 	assert !second_page.cursor.has_more
@@ -4972,7 +5254,7 @@ fn test_database_session_query_page_returns_indexed_cursor_page() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-page')
 	defer {
@@ -4987,8 +5269,8 @@ fn test_database_session_query_page_returns_indexed_cursor_page() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -4997,15 +5279,15 @@ fn test_database_session_query_page_returns_indexed_cursor_page() {
 	row.set('name', 'Ada')
 	row.set('email', 'ada@example.com')
 	_ = session.put_row(mut db, 'users', '001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert user'
+		author:    'gwg'
+		message:   'insert user'
 		timestamp: 1
 	}) or { panic(err) }
 
 	page := session.query_page(mut db, QueryRequest{
 		table_name: 'users'
-		filters: [QueryFilter.eq('email', 'ada@example.com')]
-		limit: 10
+		filters:    [QueryFilter.eq('email', 'ada@example.com')]
+		limit:      10
 	}) or { panic(err) }
 	assert page.rows.len == 1
 	assert page.plan.index_name == 'email'
@@ -5017,7 +5299,7 @@ fn test_database_session_query_page_uses_plain_index_and_projection() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-page-plain-index')
 	defer {
@@ -5032,8 +5314,8 @@ fn test_database_session_query_page_uses_plain_index_and_projection() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -5042,15 +5324,15 @@ fn test_database_session_query_page_uses_plain_index_and_projection() {
 	row.set('name', 'ada')
 	row.set('email', 'ada@example.com')
 	_ = session.put_row(mut db, 'users', '001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert user'
+		author:    'gwg'
+		message:   'insert user'
 		timestamp: 1
 	}) or { panic(err) }
 	page := session.query_page(mut db, QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.eq('email', 'ada@example.com')]
+		table_name:     'users'
+		filters:        [QueryFilter.eq('email', 'ada@example.com')]
 		select_columns: ['name']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 
 	assert page.plan.strategy == 'index_exact'
@@ -5074,7 +5356,7 @@ fn test_database_session_query_page_marks_covering_projection_pushdown() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-page-covering-projected')
 	defer {
@@ -5089,8 +5371,8 @@ fn test_database_session_query_page_marks_covering_projection_pushdown() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -5099,16 +5381,16 @@ fn test_database_session_query_page_marks_covering_projection_pushdown() {
 	row.set('name', 'ada')
 	row.set('email', 'ada@example.com')
 	_ = session.put_row(mut db, 'users', '001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert user'
+		author:    'gwg'
+		message:   'insert user'
 		timestamp: 1
 	}) or { panic(err) }
 
 	page := session.query_page(mut db, QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.eq('email', 'ada@example.com')]
+		table_name:     'users'
+		filters:        [QueryFilter.eq('email', 'ada@example.com')]
 		select_columns: ['email']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 
 	assert page.plan.strategy == 'index_exact_projected'
@@ -5117,10 +5399,10 @@ fn test_database_session_query_page_marks_covering_projection_pushdown() {
 	assert !page.rows[0].data.has('name')
 
 	preview := db.preview_query_plan_details(QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.eq('email', 'ada@example.com')]
+		table_name:     'users'
+		filters:        [QueryFilter.eq('email', 'ada@example.com')]
 		select_columns: ['email']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 	assert preview.plan.strategy == 'index_exact_projected'
 	assert preview.notes.any(it.contains('covering index'))
@@ -5130,7 +5412,7 @@ fn test_database_session_query_page_supports_primary_key_pagination() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-page-pagination')
 	defer {
@@ -5145,8 +5427,8 @@ fn test_database_session_query_page_supports_primary_key_pagination() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '000', 'seed', 'seed@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
@@ -5162,16 +5444,16 @@ fn test_database_session_query_page_supports_primary_key_pagination() {
 		row.set('name', name)
 		row.set('email', '${name.to_lower()}@example.com')
 		_ = session.put_row(mut db, 'users', id.bytes(), row, cfg, CommitMeta{
-			author: 'gwg'
-			message: 'insert ${id}'
+			author:    'gwg'
+			message:   'insert ${id}'
 			timestamp: 1
 		}) or { panic(err) }
 	}
 
 	first_page := session.query_page(mut db, QueryRequest{
 		table_name: 'users'
-		filters: [QueryFilter.prefix('email', '')]
-		limit: 2
+		filters:    [QueryFilter.prefix('email', '')]
+		limit:      2
 	}) or { panic(err) }
 	assert first_page.rows.len == 2
 	assert first_page.cursor.has_more
@@ -5183,10 +5465,10 @@ fn test_database_session_query_page_supports_primary_key_pagination() {
 	assert first_page.cursor.next_continuation_token.len > 0
 
 	second_page := session.query_page(mut db, QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.prefix('email', '')]
+		table_name:         'users'
+		filters:            [QueryFilter.prefix('email', '')]
 		continuation_token: first_page.cursor.next_continuation_token
-		limit: 2
+		limit:              2
 	}) or { panic(err) }
 	assert second_page.rows.len == 1
 	assert !second_page.cursor.has_more
@@ -5312,6 +5594,62 @@ fn test_database_table_query_schema_exposes_selectors_and_projection_metrics() {
 	assert schema.projection_metrics[0].selector == 'links'
 	assert schema.projection_metrics[0].value_type == .i64_
 	assert schema.projection_metrics[0].aggregate == .sum
+}
+
+fn test_database_table_query_schema_exposes_general_fts_indexes() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-schema-general-fts')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_docs_general_fts_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+
+	schema := db.table_query_schema('docs') or { panic(err) }
+	assert schema.table_name == 'docs'
+	assert schema.indexes.len == 2
+
+	mut content_text_fts := QueryIndexCapability{}
+	mut body_fts := QueryIndexCapability{}
+	for index in schema.indexes {
+		if index.name == 'content_text_fts_idx' {
+			content_text_fts = index
+		}
+		if index.name == 'body_fts_idx' {
+			body_fts = index
+		}
+	}
+
+	assert content_text_fts.name == 'content_text_fts_idx'
+	assert content_text_fts.column_name == 'content_text'
+	assert content_text_fts.value_type == .string_
+	assert content_text_fts.is_fts
+	assert content_text_fts.fts_query_kinds == [.term, .prefix, .all, .any]
+	assert content_text_fts.fts_shapes.len == 4
+	assert content_text_fts.fts_shapes[0].kind == .term
+	assert content_text_fts.fts_shapes[0].indexed
+	assert content_text_fts.fts_shapes[0].index_name == 'content_text_fts_idx'
+	assert content_text_fts.fts_shapes[0].planner_strategy == 'sqlite_fts5_match'
+	assert content_text_fts.fts_shapes[0].sample_explain.strategy == 'sqlite_fts5_match'
+	assert !content_text_fts.fts_shapes[0].sample_explain.supports_continuation_token
+	assert content_text_fts.filter_ops.len == 0
+
+	assert body_fts.name == 'body_fts_idx'
+	assert body_fts.column_name == 'body'
+	assert body_fts.value_type == .string_
+	assert body_fts.is_fts
+	assert body_fts.fts_query_kinds == [.term, .prefix, .all, .any]
+	assert body_fts.fts_shapes.len == 4
+	assert body_fts.fts_shapes[2].kind == .all
+	assert body_fts.fts_shapes[2].indexed
+	assert body_fts.fts_shapes[2].index_name == 'body_fts_idx'
+	assert body_fts.fts_shapes[2].planner_strategy == 'sqlite_fts5_match'
+	assert body_fts.fts_shapes[2].sample_explain.strategy == 'sqlite_fts5_match'
+	assert body_fts.fts_shapes[2].sample_explain.notes.any(it.contains('QueryRequest.general_fts'))
+	assert body_fts.filter_ops.len == 0
 }
 
 fn test_database_table_query_schema_marks_reverse_top_n_capability_for_before_filters() {
@@ -5483,8 +5821,8 @@ fn test_database_preview_query_plan_details_marks_reverse_top_n_for_before_index
 
 	preview := db.preview_query_plan_details(QueryRequest{
 		table_name: 'users'
-		filters: [QueryFilter.before('email', 'm')]
-		limit: 10
+		filters:    [QueryFilter.before('email', 'm')]
+		limit:      10
 	}) or { panic(err) }
 
 	assert preview.plan.strategy == 'index_before'
@@ -5508,13 +5846,13 @@ fn test_database_preview_query_plan_details_marks_ordered_index_strategy() {
 	db.register_table(spec) or { panic(err) }
 
 	preview := db.preview_query_plan_details(QueryRequest{
-		table_name: 'users'
-		order_by: QueryOrder{
+		table_name:     'users'
+		order_by:       QueryOrder{
 			column_name: 'email'
-			direction: .desc
+			direction:   .desc
 		}
 		select_columns: ['name']
-		limit: 5
+		limit:          5
 	}) or { panic(err) }
 
 	assert preview.plan.strategy == 'index_order_desc_projected'
@@ -5538,14 +5876,14 @@ fn test_database_preview_query_plan_details_marks_before_desc_order_as_reverse_t
 	db.register_table(spec) or { panic(err) }
 
 	preview := db.preview_query_plan_details(QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.before('email', 'm')]
-		order_by: QueryOrder{
+		table_name:     'users'
+		filters:        [QueryFilter.before('email', 'm')]
+		order_by:       QueryOrder{
 			column_name: 'email'
-			direction: .desc
+			direction:   .desc
 		}
 		select_columns: ['name']
-		limit: 5
+		limit:          5
 	}) or { panic(err) }
 
 	assert preview.plan.strategy == 'index_before_order_desc_projected'
@@ -5568,14 +5906,14 @@ fn test_database_preview_query_plan_details_marks_prefix_desc_order_as_reverse_t
 	db.register_table(spec) or { panic(err) }
 
 	preview := db.preview_query_plan_details(QueryRequest{
-		table_name: 'users'
-		filters: [QueryFilter.prefix('email', 'a')]
-		order_by: QueryOrder{
+		table_name:     'users'
+		filters:        [QueryFilter.prefix('email', 'a')]
+		order_by:       QueryOrder{
 			column_name: 'email'
-			direction: .desc
+			direction:   .desc
 		}
 		select_columns: ['name']
-		limit: 5
+		limit:          5
 	}) or { panic(err) }
 
 	assert preview.plan.strategy == 'index_prefix_order_desc_projected'
@@ -5600,13 +5938,13 @@ fn test_database_preview_query_plan_returns_expected_index_strategy() {
 	db.register_table(spec) or { panic(err) }
 
 	plan := db.preview_query_plan(QueryRequest{
-		table_name: 'notes'
-		filters: [
-			QueryFilter.field_prefix('body', 'markdown', 'heading_text:2', 'Road')
-			QueryFilter.eq('title', 'Doc')
+		table_name:     'notes'
+		filters:        [
+			QueryFilter.field_prefix('body', 'markdown', 'heading_text:2', 'Road'),
+			QueryFilter.eq('title', 'Doc'),
 		]
 		select_columns: ['title']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 
 	assert plan.strategy == 'index_prefix'
@@ -5632,13 +5970,13 @@ fn test_database_preview_query_plan_details_reports_notes_for_indexed_markdown_q
 	db.register_table(spec) or { panic(err) }
 
 	preview := db.preview_query_plan_details(QueryRequest{
-		table_name: 'notes'
-		filters: [
-			QueryFilter.field_prefix('body', 'markdown', 'heading_text:2', 'Road')
-			QueryFilter.eq('title', 'Doc')
+		table_name:     'notes'
+		filters:        [
+			QueryFilter.field_prefix('body', 'markdown', 'heading_text:2', 'Road'),
+			QueryFilter.eq('title', 'Doc'),
 		]
 		select_columns: ['title']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 
 	assert preview.plan.strategy == 'index_prefix'
@@ -5667,10 +6005,10 @@ fn test_database_preview_query_plan_details_reports_projection_only_warning() {
 
 	preview := db.preview_query_plan_details(QueryRequest{
 		table_name: 'notes'
-		filters: [
-			QueryFilter.field_eq('body', 'markdown', 'links', i64(1))
+		filters:    [
+			QueryFilter.field_eq('body', 'markdown', 'links', i64(1)),
 		]
-		limit: 10
+		limit:      10
 	}) or { panic(err) }
 
 	assert preview.plan.strategy == 'table_scan'
@@ -5679,6 +6017,40 @@ fn test_database_preview_query_plan_details_reports_projection_only_warning() {
 	assert preview.warnings.any(it.contains('projection-only'))
 	assert preview.sample_explain().strategy == 'table_scan'
 	assert preview.sample_explain().warnings == preview.warnings
+}
+
+fn test_database_preview_query_plan_details_supports_general_fts_clause() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-query-plan-preview-general-fts')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_docs_general_fts_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+
+	preview := db.preview_query_plan_details(QueryRequest{
+		table_name:     'docs'
+		general_fts:    QueryGeneralFtsClause{
+			index_name: 'body_fts_idx'
+			kind:       .all
+			terms:      ['search', 'gamma']
+		}
+		select_columns: ['id']
+		limit:          10
+	}) or { panic(err) }
+
+	assert preview.plan.strategy == 'sqlite_fts5_match'
+	assert preview.plan.index_name == 'body_fts_idx'
+	assert preview.warnings.len == 0
+	assert preview.notes.len >= 1
+	assert preview.notes.any(it.contains('SQLite FTS5 sidecar'))
+	assert preview.default_result_shape == 'rows'
+	assert !preview.supports_continuation_token
+	assert preview.sample_explain().strategy == 'sqlite_fts5_match'
+	assert preview.sample_explain().index_name == 'body_fts_idx'
 }
 
 fn test_database_lower_query_request_maps_plain_and_field_selector_predicates() {
@@ -5694,13 +6066,13 @@ fn test_database_lower_query_request_maps_plain_and_field_selector_predicates() 
 	db.register_table(spec) or { panic(err) }
 
 	request := db.lower_query_request(QueryLoweringRequest{
-		table_name: 'notes'
-		predicates: [
-			QueryPredicateSpec.field_prefix('body', 'markdown', 'heading_text:2', 'Road')
-			QueryPredicateSpec.column_eq('title', 'Doc')
+		table_name:     'notes'
+		predicates:     [
+			QueryPredicateSpec.field_prefix('body', 'markdown', 'heading_text:2', 'Road'),
+			QueryPredicateSpec.column_eq('title', 'Doc'),
 		]
 		select_columns: ['title']
-		limit: 10
+		limit:          10
 	}) or { panic(err) }
 
 	assert request.table_name == 'notes'
@@ -5732,10 +6104,11 @@ fn test_database_lower_query_request_rejects_unsupported_field_selector_op() {
 	if _ := db.lower_query_request(QueryLoweringRequest{
 		table_name: 'notes'
 		predicates: [
-			QueryPredicateSpec.field_prefix('body', 'markdown', 'links', 'docs')
+			QueryPredicateSpec.field_prefix('body', 'markdown', 'links', 'docs'),
 		]
-		limit: 10
-	}) {
+		limit:      10
+	})
+	{
 		panic('expected unsupported field selector op to fail')
 	} else {
 		assert err.msg().contains('value type mismatch') || err.msg().contains('is not supported')
@@ -5757,10 +6130,11 @@ fn test_database_lower_query_request_rejects_unknown_field_selector() {
 	if _ := db.lower_query_request(QueryLoweringRequest{
 		table_name: 'notes'
 		predicates: [
-			QueryPredicateSpec.field_eq('body', 'markdown', 'missing_selector', 'x')
+			QueryPredicateSpec.field_eq('body', 'markdown', 'missing_selector', 'x'),
 		]
-		limit: 10
-	}) {
+		limit:      10
+	})
+	{
 		panic('expected unknown field selector to fail')
 	} else {
 		assert err.msg().contains('field selector not found')
@@ -5801,13 +6175,14 @@ fn test_database_lower_normalized_query_request_supports_field_selector_prefix()
 	db.register_table(spec) or { panic(err) }
 
 	request := db.lower_normalized_query_request(QueryNormalizedLoweringRequest{
-		table_name: 'notes'
-		predicates: [
-			NormalizedQueryPredicate.field_prefix('body', 'markdown', 'heading_text:2', 'Road')
-			NormalizedQueryPredicate.column_eq('title', 'Doc')
+		table_name:     'notes'
+		predicates:     [
+			NormalizedQueryPredicate.field_prefix('body', 'markdown', 'heading_text:2',
+				'Road'),
+			NormalizedQueryPredicate.column_eq('title', 'Doc'),
 		]
 		select_columns: ['title']
-		limit: 5
+		limit:          5
 	}) or { panic(err) }
 
 	assert request.table_name == 'notes'
@@ -5842,13 +6217,14 @@ fn test_database_lower_sql_filter_request_supports_sql_style_fragments() {
 	db.register_table(spec) or { panic(err) }
 
 	request := db.lower_sql_filter_request(SqlFilterLoweringRequest{
-		table_name: 'notes'
-		filters: [
-			SqlFilterFragment.field_like_prefix('body', 'markdown', 'heading_text:2', 'Road')
-			SqlFilterFragment.column_eq('title', 'Doc')
+		table_name:     'notes'
+		filters:        [
+			SqlFilterFragment.field_like_prefix('body', 'markdown', 'heading_text:2',
+				'Road'),
+			SqlFilterFragment.column_eq('title', 'Doc'),
 		]
 		select_columns: ['title']
-		limit: 7
+		limit:          7
 	}) or { panic(err) }
 
 	assert request.table_name == 'notes'
@@ -5866,14 +6242,15 @@ fn test_sql_predicate_adapter_exposes_supported_sql_subset() {
 
 fn test_sql_predicate_adapter_rejects_incomplete_field_selector_target() {
 	if _ := adapt_sql_predicate_fragment(SqlPredicateAdapterInput{
-		target: QueryPredicateTarget{
+		target:     QueryPredicateTarget{
 			column_name: 'body'
 			plugin_name: 'markdown'
 		}
-		kind: .eq
-		value: 'Road'
+		kind:       .eq
+		value:      'Road'
 		source_sql: "markdown_selector(body, 'heading_text:2') = 'Road'"
-	}) {
+	})
+	{
 		panic('expected incomplete field selector target to fail')
 	} else {
 		assert err.msg().contains('plugin_name and selector')
@@ -5884,7 +6261,7 @@ fn test_database_session_lookup_json_path_index_prefix_projected() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-json-prefix-projected')
 	defer {
@@ -5904,13 +6281,13 @@ fn test_database_session_lookup_json_path_index_prefix_projected() {
 	seed_row.set('enabled', false)
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
 			value: TypedRowCodec.new(spec.table).encode(seed_row) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.begin_session(SessionOptions.for_branch('main')) or { panic(err) }
@@ -5920,8 +6297,8 @@ fn test_database_session_lookup_json_path_index_prefix_projected() {
 	row1.set('meta', '{"kind":"alpha.one","enabled":false}')
 	row1.set('enabled', false)
 	_ = session.put_row(mut db, 'items', '001'.bytes(), row1, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put first item'
+		author:    'gwg'
+		message:   'put first item'
 		timestamp: 1
 	}) or { panic(err) }
 	mut row2 := TypedRowData.new()
@@ -5930,11 +6307,12 @@ fn test_database_session_lookup_json_path_index_prefix_projected() {
 	row2.set('meta', '{"kind":"alpha.two","enabled":true}')
 	row2.set('enabled', true)
 	_ = session.put_row(mut db, 'items', '002'.bytes(), row2, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put second item'
+		author:    'gwg'
+		message:   'put second item'
 		timestamp: 2
 	}) or { panic(err) }
-	rows := session.lookup_index_prefix_projected(mut db, 'items', 'kind_cover', 'alpha.', 10, [
+	rows := session.lookup_index_prefix_projected(mut db, 'items', 'kind_cover', 'alpha.',
+		10, [
 		'status',
 	]) or { panic(err) }
 	assert rows.len == 2
@@ -5947,7 +6325,7 @@ fn test_database_session_count_rows_and_sum_i64_column() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-count-sum')
 	defer {
@@ -5966,13 +6344,13 @@ fn test_database_session_count_rows_and_sum_i64_column() {
 	seed.set('name', 'zero')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
+			key:   TableView.new(Tree{}, spec.table.name).key_for('000'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 0
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
@@ -5981,8 +6359,8 @@ fn test_database_session_count_rows_and_sum_i64_column() {
 		row.set('id', i64(idx))
 		row.set('name', 'user-${idx}')
 		_ = session.put_row(mut db, 'metrics', '${idx:03}'.bytes(), row, cfg, CommitMeta{
-			author: 'gwg'
-			message: 'seed row ${idx}'
+			author:    'gwg'
+			message:   'seed row ${idx}'
 			timestamp: idx
 		}) or { panic(err) }
 	}
@@ -5995,7 +6373,7 @@ fn test_database_session_sum_i64_column_tracks_incremental_updates() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-sum-incremental')
 	defer {
@@ -6013,14 +6391,14 @@ fn test_database_session_sum_i64_column_tracks_incremental_updates() {
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'metrics').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'metrics').key_for('001'.bytes())
 			value: codec.encode(row1) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_tree = rebuild_typed_aggregates_for_specs(seed_tree, [spec], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed 1'
+		author:    'gwg'
+		message:   'seed 1'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session()!
@@ -6030,8 +6408,8 @@ fn test_database_session_sum_i64_column_tracks_incremental_updates() {
 	row2.set('id', i64(5))
 	row2.set('name', 'five')
 	_ = session.put_row(mut db, 'metrics', '005'.bytes(), row2, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'put 5'
+		author:    'gwg'
+		message:   'put 5'
 		timestamp: 2
 	}) or { panic(err) }
 	assert session.sum_i64_column(mut db, 'metrics', 'id') or { panic(err) } == i64(6)
@@ -6040,8 +6418,8 @@ fn test_database_session_sum_i64_column_tracks_incremental_updates() {
 	updated.set('id', i64(9))
 	updated.set('name', 'nine')
 	_ = session.put_row(mut db, 'metrics', '005'.bytes(), updated, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'update 5->9'
+		author:    'gwg'
+		message:   'update 5->9'
 		timestamp: 3
 	}) or { panic(err) }
 	assert session.sum_i64_column(mut db, 'metrics', 'id') or { panic(err) } == i64(10)
@@ -6051,7 +6429,7 @@ fn test_database_session_sum_i64_column_range_uses_declared_aggregate_buckets() 
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-sum-range-buckets')
 	defer {
@@ -6069,14 +6447,14 @@ fn test_database_session_sum_i64_column_range_uses_declared_aggregate_buckets() 
 	seed_row.set('name', 'one')
 	mut seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'metrics').key_for('a1'.bytes())
+			key:   TableView.new(Tree{}, 'metrics').key_for('a1'.bytes())
 			value: codec.encode(seed_row) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
 	seed_tree = rebuild_typed_aggregates_for_specs(seed_tree, [spec], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed range'
+		author:    'gwg'
+		message:   'seed range'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session()!
@@ -6090,8 +6468,8 @@ fn test_database_session_sum_i64_column_range_uses_declared_aggregate_buckets() 
 		row.set('id', raw[1].i64())
 		row.set('name', raw[2])
 		_ = session.put_row(mut db, 'metrics', raw[0].bytes(), row, cfg, CommitMeta{
-			author: 'gwg'
-			message: 'put ${idx + 1}'
+			author:    'gwg'
+			message:   'put ${idx + 1}'
 			timestamp: idx + 2
 		}) or { panic(err) }
 	}
@@ -6104,7 +6482,7 @@ fn test_database_session_covering_index_lookup_roundtrip() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-covering-index')
 	defer {
@@ -6117,11 +6495,13 @@ fn test_database_session_covering_index_lookup_roundtrip() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
+	mut seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or {
+		panic(err)
+	}
 	seed_tree = rebuild_typed_indexes_for_specs(seed_tree, [spec], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -6140,7 +6520,7 @@ fn test_persistent_database_default_session() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-default-session')
 	defer {
@@ -6152,8 +6532,8 @@ fn test_persistent_database_default_session() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	db.close() or { panic(err) }
@@ -6176,7 +6556,7 @@ fn test_persistent_database_checkpoint_persists_catalog_and_repo() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-checkpoint')
 	defer {
@@ -6188,8 +6568,8 @@ fn test_persistent_database_checkpoint_persists_catalog_and_repo() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	db.checkpoint() or { panic(err) }
@@ -6205,7 +6585,7 @@ fn test_persistent_database_checkpoint_info_and_recovery_status() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-status')
 	defer {
@@ -6220,8 +6600,8 @@ fn test_persistent_database_checkpoint_info_and_recovery_status() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	db.checkpoint() or { panic(err) }
@@ -6277,7 +6657,7 @@ fn test_database_session_cursors() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-cursors')
 	defer {
@@ -6292,8 +6672,8 @@ fn test_database_session_cursors() {
 	db.register_table(spec) or { panic(err) }
 	seed_tree := database_seed_tree(spec, '001', 'ada', 'ada@example.com', cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed branch'
+		author:    'gwg'
+		message:   'seed branch'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
@@ -6303,8 +6683,8 @@ fn test_database_session_cursors() {
 	row.set('name', 'grace')
 	row.set('email', 'grace@example.com')
 	_ = session.put_row(mut db, 'users', '002'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'add grace'
+		author:    'gwg'
+		message:   'add grace'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -6317,9 +6697,8 @@ fn test_database_session_cursors() {
 	assert collected.len == 1
 	assert collected[0].primary_key.bytestr() == '002'
 
-	mut index_cursor := session.index_cursor(mut db, 'users', 'email', 'grace@example.com', []u8{}, 0) or {
-		panic(err)
-	}
+	mut index_cursor := session.index_cursor(mut db, 'users', 'email', 'grace@example.com',
+		[]u8{}, 0) or { panic(err) }
 	index_row := index_cursor.peek() or { panic(err) }
 	assert index_row.primary_key.bytestr() == '002'
 	email := index_row.row.data.get('email') or { panic(err) }
@@ -6351,7 +6730,7 @@ fn test_register_aggregate_projection_binds_virtual_root_to_commit() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-binding')
 	defer {
@@ -6364,9 +6743,8 @@ fn test_register_aggregate_projection_binds_virtual_root_to_commit() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)', 'metrics', 'id') or { panic(err) }) or {
-		panic(err)
-	}
+	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)',
+		'metrics', 'id') or { panic(err) }) or { panic(err) }
 	assert db.projector_names() == ['sum(metrics.id)']
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_row := TypedRowData.new()
@@ -6374,13 +6752,13 @@ fn test_register_aggregate_projection_binds_virtual_root_to_commit() {
 	seed_row.set('name', 'seed')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'metrics').key_for('m-000'.bytes())
+			key:   TableView.new(Tree{}, 'metrics').key_for('m-000'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed metrics branch'
+		author:    'gwg'
+		message:   'seed metrics branch'
 		timestamp: 0
 	}) or { panic(err) }
 
@@ -6389,8 +6767,8 @@ fn test_register_aggregate_projection_binds_virtual_root_to_commit() {
 	row.set('id', i64(7))
 	row.set('name', 'sample')
 	_ = session.put_row(mut db, 'metrics', 'm-001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert metric row'
+		author:    'gwg'
+		message:   'insert metric row'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -6426,7 +6804,7 @@ fn test_refresh_aggregate_projections_marks_virtual_root_fresh() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-refresh')
 	defer {
@@ -6439,22 +6817,21 @@ fn test_refresh_aggregate_projections_marks_virtual_root_fresh() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)', 'metrics', 'id') or { panic(err) }) or {
-		panic(err)
-	}
+	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)',
+		'metrics', 'id') or { panic(err) }) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_row := TypedRowData.new()
 	seed_row.set('id', i64(2))
 	seed_row.set('name', 'seed')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'metrics').key_for('m-000'.bytes())
+			key:   TableView.new(Tree{}, 'metrics').key_for('m-000'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed metrics branch'
+		author:    'gwg'
+		message:   'seed metrics branch'
 		timestamp: 0
 	}) or { panic(err) }
 
@@ -6463,14 +6840,14 @@ fn test_refresh_aggregate_projections_marks_virtual_root_fresh() {
 	row.set('id', i64(7))
 	row.set('name', 'sample')
 	_ = session.put_row(mut db, 'metrics', 'm-001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert metric row'
+		author:    'gwg'
+		message:   'insert metric row'
 		timestamp: 1
 	}) or { panic(err) }
 
 	refreshed := db.refresh_aggregate_projections('main', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'refresh aggregate projector'
+		author:    'gwg'
+		message:   'refresh aggregate projector'
 		timestamp: 2
 	}) or { panic(err) }
 	assert refreshed.virtual_roots.len == 1
@@ -6478,9 +6855,8 @@ fn test_refresh_aggregate_projections_marks_virtual_root_fresh() {
 	assert refreshed.virtual_roots[0].source_data_root_cid == refreshed.root_cid
 	assert refreshed.virtual_roots[0].root_cid.len > 0
 
-	item := Tree.lookup_in_byte_store(refreshed.virtual_roots[0].root_cid, 'aggregate:sum(metrics.id)'.bytes(), mut db.engine.repository.node_store) or {
-		panic(err)
-	}
+	item := Tree.lookup_in_byte_store(refreshed.virtual_roots[0].root_cid, 'aggregate:sum(metrics.id)'.bytes(), mut
+		db.engine.repository.node_store) or { panic(err) }
 	value := TypedValueEncoder.decode_value(item.value, .i64_) or { panic(err) }
 	match value {
 		i64 { assert value == i64(9) }
@@ -6496,7 +6872,7 @@ fn test_refresh_aggregate_projections_counts_markdown_structures() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-markdown-structures')
 	defer {
@@ -6509,10 +6885,10 @@ fn test_refresh_aggregate_projections_counts_markdown_structures() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.count_markdown_blocks('count(notes.body.blocks)', 'notes',
-		'body') or { panic(err) }) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.count_markdown_links('count(notes.body.links)', 'notes',
-		'body') or { panic(err) }) or { panic(err) }
+	db.register_aggregate_projection(AggregateProjectionDef.count_markdown_blocks('count(notes.body.blocks)',
+		'notes', 'body') or { panic(err) }) or { panic(err) }
+	db.register_aggregate_projection(AggregateProjectionDef.count_markdown_links('count(notes.body.links)',
+		'notes', 'body') or { panic(err) }) or { panic(err) }
 	db.register_aggregate_projection(AggregateProjectionDef.count_markdown_heading_level('count(notes.body.h2)',
 		'notes', 'body', 2) or { panic(err) }) or { panic(err) }
 
@@ -6523,29 +6899,30 @@ fn test_refresh_aggregate_projections_counts_markdown_structures() {
 	row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed note branch'
+		author:    'gwg'
+		message:   'seed note branch'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nSee [docs](https://example.com/docs).\n\n## Details\n\n```v\nprintln(\"ok\")\n```\n', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed note markdown'
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nSee [docs](https://example.com/docs).\n\n## Details\n\n```v\nprintln("ok")\n```\n',
+		cfg, CommitMeta{
+		author:    'gwg'
+		message:   'seed note markdown'
 		timestamp: 2
 	}) or { panic(err) }
 
 	refreshed := db.refresh_aggregate_projections('main', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'refresh markdown aggregate projectors'
+		author:    'gwg'
+		message:   'refresh markdown aggregate projectors'
 		timestamp: 3
 	}) or { panic(err) }
 	assert refreshed.virtual_roots.len == 3
@@ -6554,30 +6931,24 @@ fn test_refresh_aggregate_projections_counts_markdown_structures() {
 		roots[virtual_root.name] = virtual_root.root_cid
 	}
 
-	block_item := Tree.lookup_in_byte_store(roots['count(notes.body.blocks)'],
-		'aggregate:count(notes.body.blocks)'.bytes(), mut db.engine.repository.node_store) or {
-		panic(err)
-	}
+	block_item := Tree.lookup_in_byte_store(roots['count(notes.body.blocks)'], 'aggregate:count(notes.body.blocks)'.bytes(), mut
+		db.engine.repository.node_store) or { panic(err) }
 	block_value := TypedValueEncoder.decode_value(block_item.value, .i64_) or { panic(err) }
 	match block_value {
 		i64 { assert block_value == i64(4) }
 		else { panic('expected markdown block count') }
 	}
 
-	link_item := Tree.lookup_in_byte_store(roots['count(notes.body.h2)'],
-		'aggregate:count(notes.body.h2)'.bytes(), mut db.engine.repository.node_store) or {
-		panic(err)
-	}
+	link_item := Tree.lookup_in_byte_store(roots['count(notes.body.h2)'], 'aggregate:count(notes.body.h2)'.bytes(), mut
+		db.engine.repository.node_store) or { panic(err) }
 	link_value := TypedValueEncoder.decode_value(link_item.value, .i64_) or { panic(err) }
 	match link_value {
 		i64 { assert link_value == i64(1) }
 		else { panic('expected markdown heading count') }
 	}
 
-	heading_item := Tree.lookup_in_byte_store(roots['count(notes.body.links)'],
-		'aggregate:count(notes.body.links)'.bytes(), mut db.engine.repository.node_store) or {
-		panic(err)
-	}
+	heading_item := Tree.lookup_in_byte_store(roots['count(notes.body.links)'], 'aggregate:count(notes.body.links)'.bytes(), mut
+		db.engine.repository.node_store) or { panic(err) }
 	heading_value := TypedValueEncoder.decode_value(heading_item.value, .i64_) or { panic(err) }
 	match heading_value {
 		i64 { assert heading_value == i64(1) }
@@ -6589,7 +6960,7 @@ fn test_refresh_aggregate_projections_persists_markdown_selector_metadata() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-markdown-metadata')
 	defer {
@@ -6602,8 +6973,8 @@ fn test_refresh_aggregate_projections_persists_markdown_selector_metadata() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection((AggregateProjectionDef.count_markdown_code_blocks_with_lang(
-		'count(notes.body.code.v)', 'notes', 'body', 'v') or { panic(err) }).with_cost_hint(.low).with_priority(250)) or {
+	db.register_aggregate_projection((AggregateProjectionDef.count_markdown_code_blocks_with_lang('count(notes.body.code.v)',
+		'notes', 'body', 'v') or { panic(err) }).with_cost_hint(.low).with_priority(250)) or {
 		panic(err)
 	}
 
@@ -6633,7 +7004,8 @@ fn test_refresh_aggregate_projections_rejects_markdown_selector_on_non_markdown_
 	}
 	db.register_table(spec) or { panic(err) }
 	if _ := db.register_aggregate_projection(AggregateProjectionDef.count_markdown_links('count(items.meta.links)',
-		'items', 'meta') or { panic(err) }) {
+		'items', 'meta') or { panic(err) })
+	{
 		panic('expected non-markdown markdown projector registration to fail')
 	} else {
 		assert err.msg().contains('requires markdown column')
@@ -6644,7 +7016,7 @@ fn test_projection_value_at_branch_reads_markdown_projector_value() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-markdown-read')
 	defer {
@@ -6657,8 +7029,8 @@ fn test_projection_value_at_branch_reads_markdown_projector_value() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.count_markdown_code_blocks_with_lang(
-		'count(notes.body.code.v)', 'notes', 'body', 'v') or { panic(err) }) or { panic(err) }
+	db.register_aggregate_projection(AggregateProjectionDef.count_markdown_code_blocks_with_lang('count(notes.body.code.v)',
+		'notes', 'body', 'v') or { panic(err) }) or { panic(err) }
 
 	codec := TypedRowCodec.new(spec.table)
 	mut row := TypedRowData.new()
@@ -6667,30 +7039,29 @@ fn test_projection_value_at_branch_reads_markdown_projector_value() {
 	row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed note branch'
+		author:    'gwg'
+		message:   'seed note branch'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'```v\nprintln("a")\n```\n\n```sql\nselect 1;\n```\n\n```v\nprintln("b")\n```\n',
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '```v\nprintln("a")\n```\n\n```sql\nselect 1;\n```\n\n```v\nprintln("b")\n```\n',
 		cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed note markdown'
+		author:    'gwg'
+		message:   'seed note markdown'
 		timestamp: 2
 	}) or { panic(err) }
 	_ = db.refresh_aggregate_projections('main', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'refresh markdown aggregate projector'
+		author:    'gwg'
+		message:   'refresh markdown aggregate projector'
 		timestamp: 3
 	}) or { panic(err) }
 
@@ -6706,7 +7077,7 @@ fn test_markdown_projection_i64_computes_ad_hoc_selector_counts() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-markdown-adhoc')
 	defer {
@@ -6727,25 +7098,24 @@ fn test_markdown_projection_i64_computes_ad_hoc_selector_counts() {
 	row.set('body', MarkdownRef{
 		doc_root_id: 'seed'
 		source_hash: 'seed'
-		source_len: 0
+		source_len:  0
 	})
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
+			key:   TableView.new(Tree{}, 'notes').key_for('note-1'.bytes())
 			value: codec.encode(row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed note branch'
+		author:    'gwg'
+		message:   'seed note branch'
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
-		'# Intro\n\nPara with `x` and [docs](https://example.com).\n\n![alt](https://example.com/a.png)\n',
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nPara with `x` and [docs](https://example.com).\n\n![alt](https://example.com/a.png)\n',
 		cfg, CommitMeta{
-		author: 'gwg'
-		message: 'seed note markdown'
+		author:    'gwg'
+		message:   'seed note markdown'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -6759,7 +7129,7 @@ fn test_projector_stale_reason_new_data_root_after_refresh() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-new-data-root')
 	defer {
@@ -6772,27 +7142,26 @@ fn test_projector_stale_reason_new_data_root_after_refresh() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)', 'metrics', 'id') or { panic(err) }) or {
-		panic(err)
-	}
+	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)',
+		'metrics', 'id') or { panic(err) }) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_row := TypedRowData.new()
 	seed_row.set('id', i64(2))
 	seed_row.set('name', 'seed')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'metrics').key_for('m-000'.bytes())
+			key:   TableView.new(Tree{}, 'metrics').key_for('m-000'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed metrics branch'
+		author:    'gwg'
+		message:   'seed metrics branch'
 		timestamp: 0
 	}) or { panic(err) }
 	_ = db.refresh_aggregate_projections('main', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'refresh aggregate projector'
+		author:    'gwg'
+		message:   'refresh aggregate projector'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -6801,8 +7170,8 @@ fn test_projector_stale_reason_new_data_root_after_refresh() {
 	row.set('id', i64(7))
 	row.set('name', 'sample')
 	_ = session.put_row(mut db, 'metrics', 'm-001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert metric row'
+		author:    'gwg'
+		message:   'insert metric row'
 		timestamp: 2
 	}) or { panic(err) }
 
@@ -6826,7 +7195,7 @@ fn test_refresh_aggregate_projections_async_for_marks_virtual_root_fresh() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-async-refresh')
 	defer {
@@ -6839,22 +7208,21 @@ fn test_refresh_aggregate_projections_async_for_marks_virtual_root_fresh() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)', 'metrics', 'id') or { panic(err) }) or {
-		panic(err)
-	}
+	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)',
+		'metrics', 'id') or { panic(err) }) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_row := TypedRowData.new()
 	seed_row.set('id', i64(3))
 	seed_row.set('name', 'seed')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'metrics').key_for('m-000'.bytes())
+			key:   TableView.new(Tree{}, 'metrics').key_for('m-000'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed metrics branch'
+		author:    'gwg'
+		message:   'seed metrics branch'
 		timestamp: 0
 	}) or { panic(err) }
 
@@ -6863,8 +7231,8 @@ fn test_refresh_aggregate_projections_async_for_marks_virtual_root_fresh() {
 	row.set('id', i64(5))
 	row.set('name', 'sample')
 	_ = session.put_row(mut db, 'metrics', 'm-001'.bytes(), row, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'insert metric row'
+		author:    'gwg'
+		message:   'insert metric row'
 		timestamp: 1
 	}) or { panic(err) }
 
@@ -6885,7 +7253,7 @@ fn test_refresh_aggregate_projections_limited_keeps_remaining_stale() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-limited-refresh')
 	defer {
@@ -6898,12 +7266,10 @@ fn test_refresh_aggregate_projections_limited_keeps_remaining_stale() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).a', 'items', 'meta', 'amount') or { panic(err) }) or {
-		panic(err)
-	}
-	db.register_aggregate_projection(AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).b', 'items', 'meta', 'amount') or { panic(err) }) or {
-		panic(err)
-	}
+	db.register_aggregate_projection(AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).a',
+		'items', 'meta', 'amount') or { panic(err) }) or { panic(err) }
+	db.register_aggregate_projection(AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).b',
+		'items', 'meta', 'amount') or { panic(err) }) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_row := TypedRowData.new()
 	seed_row.set('id', '001')
@@ -6912,19 +7278,19 @@ fn test_refresh_aggregate_projections_limited_keeps_remaining_stale() {
 	seed_row.set('meta', '{"amount":4,"kind":"seed"}')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'items').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'items').key_for('001'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed items branch'
+		author:    'gwg'
+		message:   'seed items branch'
 		timestamp: 0
 	}) or { panic(err) }
 
 	refreshed := db.refresh_aggregate_projections_limited('main', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'limited refresh aggregate projectors'
+		author:    'gwg'
+		message:   'limited refresh aggregate projectors'
 		timestamp: 1
 	}, 1) or { panic(err) }
 	assert refreshed.virtual_roots.len == 2
@@ -6947,7 +7313,7 @@ fn test_refresh_aggregate_projections_limited_prefers_higher_priority() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-priority-refresh')
 	defer {
@@ -6960,16 +7326,10 @@ fn test_refresh_aggregate_projections_limited_prefers_higher_priority() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection((AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).low', 'items', 'meta', 'amount') or {
-		panic(err)
-	}).with_priority(10)) or {
-		panic(err)
-	}
-	db.register_aggregate_projection((AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).high', 'items', 'meta', 'amount') or {
-		panic(err)
-	}).with_priority(500)) or {
-		panic(err)
-	}
+	db.register_aggregate_projection((AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).low',
+		'items', 'meta', 'amount') or { panic(err) }).with_priority(10)) or { panic(err) }
+	db.register_aggregate_projection((AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).high',
+		'items', 'meta', 'amount') or { panic(err) }).with_priority(500)) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_row := TypedRowData.new()
 	seed_row.set('id', '001')
@@ -6978,19 +7338,19 @@ fn test_refresh_aggregate_projections_limited_prefers_higher_priority() {
 	seed_row.set('meta', '{"amount":4,"kind":"seed"}')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'items').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'items').key_for('001'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed items branch'
+		author:    'gwg'
+		message:   'seed items branch'
 		timestamp: 0
 	}) or { panic(err) }
 
 	refreshed := db.refresh_aggregate_projections_limited('main', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'priority refresh aggregate projectors'
+		author:    'gwg'
+		message:   'priority refresh aggregate projectors'
 		timestamp: 1
 	}, 1) or { panic(err) }
 	assert refreshed.virtual_roots.len == 2
@@ -7015,7 +7375,7 @@ fn test_refresh_aggregate_projections_limited_prefers_lower_cost_at_same_priorit
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-aggregate-projector-cost-refresh')
 	defer {
@@ -7028,14 +7388,12 @@ fn test_refresh_aggregate_projections_limited_prefers_lower_cost_at_same_priorit
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection((AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).slow', 'items', 'meta', 'amount') or {
-		panic(err)
-	}).with_priority(200).with_cost_hint(.high)) or {
+	db.register_aggregate_projection((AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).slow',
+		'items', 'meta', 'amount') or { panic(err) }).with_priority(200).with_cost_hint(.high)) or {
 		panic(err)
 	}
-	db.register_aggregate_projection((AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).fast', 'items', 'meta', 'amount') or {
-		panic(err)
-	}).with_priority(200).with_cost_hint(.low)) or {
+	db.register_aggregate_projection((AggregateProjectionDef.sum_json_i64('sum(items.meta.amount).fast',
+		'items', 'meta', 'amount') or { panic(err) }).with_priority(200).with_cost_hint(.low)) or {
 		panic(err)
 	}
 	codec := TypedRowCodec.new(spec.table)
@@ -7046,19 +7404,19 @@ fn test_refresh_aggregate_projections_limited_prefers_lower_cost_at_same_priorit
 	seed_row.set('meta', '{"amount":4,"kind":"seed"}')
 	seed_tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'items').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'items').key_for('001'.bytes())
 			value: codec.encode(seed_row)!
 		},
 	], cfg) or { panic(err) }
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
-		author: 'gwg'
-		message: 'seed items branch'
+		author:    'gwg'
+		message:   'seed items branch'
 		timestamp: 0
 	}) or { panic(err) }
 
 	refreshed := db.refresh_aggregate_projections_limited('main', cfg, CommitMeta{
-		author: 'gwg'
-		message: 'cost refresh aggregate projectors'
+		author:    'gwg'
+		message:   'cost refresh aggregate projectors'
 		timestamp: 1
 	}, 1) or { panic(err) }
 	assert refreshed.virtual_roots.len == 2

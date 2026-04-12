@@ -8,6 +8,11 @@ pub:
 	sessions int
 	entries  int
 	skipped  int
+	processed_sessions int
+	total_sessions int
+	paused_for_resume bool
+	resume_session_id string
+	resume_path string
 	read_ms  i64
 	build_ms i64
 	apply_ms i64
@@ -53,6 +58,11 @@ pub:
 	total_ms i64
 }
 
+pub struct SyncOptions {
+pub:
+	batch_sessions int
+}
+
 pub struct SyncProgress {
 pub:
 	total_sessions    int
@@ -60,6 +70,8 @@ pub:
 	imported_sessions int
 	imported_entries  int
 	skipped_sessions  int
+	checkpoint_count  int
+	batch_sessions    int
 	session_id        string
 	session_title     string
 	phase             string
