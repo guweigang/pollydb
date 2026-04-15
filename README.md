@@ -27,6 +27,8 @@ If you are orienting to the current PollyDB surface, start here:
 - schema and storage API: [docs/storage_api.md](/Users/guweigang/Source/pollytree/docs/storage_api.md)
 - general FTS usage: [docs/general_fts_usage.md](/Users/guweigang/Source/pollytree/docs/general_fts_usage.md)
 - planner/query capability introspection: [docs/query_planner_introspection.md](/Users/guweigang/Source/pollytree/docs/query_planner_introspection.md)
+- memory reflector roadmap: [docs/memory_reflector_roadmap.md](/Users/guweigang/Source/pollytree/docs/memory_reflector_roadmap.md)
+- memory schema capabilities: [docs/memory_schema_capabilities.md](/Users/guweigang/Source/pollytree/docs/memory_schema_capabilities.md)
 - CLI-first walkthrough: [docs/tutorial.md](/Users/guweigang/Source/pollytree/docs/tutorial.md)
 
 The current recommended query model is:

@@ -49,6 +49,23 @@ pub:
 	prefix_lengths []int
 }
 
+pub struct ReflectionOptions {
+pub:
+	enabled                 bool = true
+	embedding_index         string
+	reflection_kind         string = 'summary'
+	replay_anchor           bool   = true
+	link_evidence_blocks    bool   = true
+	link_semantic_neighbors bool   = true
+}
+
+pub struct MemoryCapabilityDef {
+pub:
+	table_name  string
+	column_name string
+	options     ReflectionOptions
+}
+
 pub struct SchemaView {
 pub:
 	table TableView
@@ -57,16 +74,19 @@ pub:
 
 pub struct SchemaIndexDef {
 pub:
-	name               string
-	column             string
-	json_field         string
-	markdown_selector  string
-	fts_source_plugin  string
-	fts_text_mode      string
-	fts_tokenizer      string
-	fts_prefix_lengths []int
-	json_field_type    ColumnType
-	stores_row         bool
+	name                    string
+	column                  string
+	json_field              string
+	markdown_selector       string
+	fts_source_plugin       string
+	fts_text_mode           string
+	fts_tokenizer           string
+	fts_prefix_lengths      []int
+	embedding_source_plugin string
+	embedding_scope         string
+	embedding_profile       string
+	json_field_type         ColumnType
+	stores_row              bool
 }
 
 pub struct IndexedSchemaView {
@@ -325,16 +345,19 @@ pub fn SchemaIndexDef.new(name string, column string) !SchemaIndexDef {
 		return error('schema index column cannot be empty')
 	}
 	return SchemaIndexDef{
-		name:               name
-		column:             column
-		json_field:         ''
-		markdown_selector:  ''
-		fts_source_plugin:  ''
-		fts_text_mode:      ''
-		fts_tokenizer:      ''
-		fts_prefix_lengths: []int{}
-		json_field_type:    .string_
-		stores_row:         false
+		name:                    name
+		column:                  column
+		json_field:              ''
+		markdown_selector:       ''
+		fts_source_plugin:       ''
+		fts_text_mode:           ''
+		fts_tokenizer:           ''
+		fts_prefix_lengths:      []int{}
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       ''
+		json_field_type:         .string_
+		stores_row:              false
 	}
 }
 
@@ -346,16 +369,19 @@ pub fn SchemaIndexDef.covering(name string, column string) !SchemaIndexDef {
 		return error('schema index column cannot be empty')
 	}
 	return SchemaIndexDef{
-		name:               name
-		column:             column
-		json_field:         ''
-		markdown_selector:  ''
-		fts_source_plugin:  ''
-		fts_text_mode:      ''
-		fts_tokenizer:      ''
-		fts_prefix_lengths: []int{}
-		json_field_type:    .string_
-		stores_row:         true
+		name:                    name
+		column:                  column
+		json_field:              ''
+		markdown_selector:       ''
+		fts_source_plugin:       ''
+		fts_text_mode:           ''
+		fts_tokenizer:           ''
+		fts_prefix_lengths:      []int{}
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       ''
+		json_field_type:         .string_
+		stores_row:              true
 	}
 }
 
@@ -374,16 +400,19 @@ pub fn SchemaIndexDef.json_path(name string, column string, json_field string, j
 		else { return error('schema index json field type must be bool, i64, or string') }
 	}
 	return SchemaIndexDef{
-		name:               name
-		column:             column
-		json_field:         json_field
-		markdown_selector:  ''
-		fts_source_plugin:  ''
-		fts_text_mode:      ''
-		fts_tokenizer:      ''
-		fts_prefix_lengths: []int{}
-		json_field_type:    json_field_type
-		stores_row:         false
+		name:                    name
+		column:                  column
+		json_field:              json_field
+		markdown_selector:       ''
+		fts_source_plugin:       ''
+		fts_text_mode:           ''
+		fts_tokenizer:           ''
+		fts_prefix_lengths:      []int{}
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       ''
+		json_field_type:         json_field_type
+		stores_row:              false
 	}
 }
 
@@ -402,16 +431,19 @@ pub fn SchemaIndexDef.json_path_covering(name string, column string, json_field 
 		else { return error('schema index json field type must be bool, i64, or string') }
 	}
 	return SchemaIndexDef{
-		name:               name
-		column:             column
-		json_field:         json_field
-		markdown_selector:  ''
-		fts_source_plugin:  ''
-		fts_text_mode:      ''
-		fts_tokenizer:      ''
-		fts_prefix_lengths: []int{}
-		json_field_type:    json_field_type
-		stores_row:         true
+		name:                    name
+		column:                  column
+		json_field:              json_field
+		markdown_selector:       ''
+		fts_source_plugin:       ''
+		fts_text_mode:           ''
+		fts_tokenizer:           ''
+		fts_prefix_lengths:      []int{}
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       ''
+		json_field_type:         json_field_type
+		stores_row:              true
 	}
 }
 
@@ -424,16 +456,19 @@ pub fn SchemaIndexDef.markdown_metric(name string, column string, selector strin
 	}
 	validate_markdown_index_selector(selector, .i64_)!
 	return SchemaIndexDef{
-		name:               name
-		column:             column
-		json_field:         ''
-		markdown_selector:  selector
-		fts_source_plugin:  ''
-		fts_text_mode:      ''
-		fts_tokenizer:      ''
-		fts_prefix_lengths: []int{}
-		json_field_type:    .i64_
-		stores_row:         false
+		name:                    name
+		column:                  column
+		json_field:              ''
+		markdown_selector:       selector
+		fts_source_plugin:       ''
+		fts_text_mode:           ''
+		fts_tokenizer:           ''
+		fts_prefix_lengths:      []int{}
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       ''
+		json_field_type:         .i64_
+		stores_row:              false
 	}
 }
 
@@ -446,16 +481,19 @@ pub fn SchemaIndexDef.markdown_metric_covering(name string, column string, selec
 	}
 	validate_markdown_index_selector(selector, .i64_)!
 	return SchemaIndexDef{
-		name:               name
-		column:             column
-		json_field:         ''
-		markdown_selector:  selector
-		fts_source_plugin:  ''
-		fts_text_mode:      ''
-		fts_tokenizer:      ''
-		fts_prefix_lengths: []int{}
-		json_field_type:    .i64_
-		stores_row:         true
+		name:                    name
+		column:                  column
+		json_field:              ''
+		markdown_selector:       selector
+		fts_source_plugin:       ''
+		fts_text_mode:           ''
+		fts_tokenizer:           ''
+		fts_prefix_lengths:      []int{}
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       ''
+		json_field_type:         .i64_
+		stores_row:              true
 	}
 }
 
@@ -468,16 +506,19 @@ pub fn SchemaIndexDef.markdown_value(name string, column string, selector string
 	}
 	validate_markdown_index_selector(selector, .string_)!
 	return SchemaIndexDef{
-		name:               name
-		column:             column
-		json_field:         ''
-		markdown_selector:  selector
-		fts_source_plugin:  ''
-		fts_text_mode:      ''
-		fts_tokenizer:      ''
-		fts_prefix_lengths: []int{}
-		json_field_type:    .string_
-		stores_row:         false
+		name:                    name
+		column:                  column
+		json_field:              ''
+		markdown_selector:       selector
+		fts_source_plugin:       ''
+		fts_text_mode:           ''
+		fts_tokenizer:           ''
+		fts_prefix_lengths:      []int{}
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       ''
+		json_field_type:         .string_
+		stores_row:              false
 	}
 }
 
@@ -490,16 +531,19 @@ pub fn SchemaIndexDef.markdown_value_covering(name string, column string, select
 	}
 	validate_markdown_index_selector(selector, .string_)!
 	return SchemaIndexDef{
-		name:               name
-		column:             column
-		json_field:         ''
-		markdown_selector:  selector
-		fts_source_plugin:  ''
-		fts_text_mode:      ''
-		fts_tokenizer:      ''
-		fts_prefix_lengths: []int{}
-		json_field_type:    .string_
-		stores_row:         true
+		name:                    name
+		column:                  column
+		json_field:              ''
+		markdown_selector:       selector
+		fts_source_plugin:       ''
+		fts_text_mode:           ''
+		fts_tokenizer:           ''
+		fts_prefix_lengths:      []int{}
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       ''
+		json_field_type:         .string_
+		stores_row:              true
 	}
 }
 
@@ -524,16 +568,19 @@ pub fn SchemaIndexDef.fts_text_with_options(name string, column string, options 
 		return error('schema index column cannot be empty')
 	}
 	return SchemaIndexDef{
-		name:               name
-		column:             column
-		json_field:         ''
-		markdown_selector:  ''
-		fts_source_plugin:  ''
-		fts_text_mode:      FtsTextMode.plain_text.str()
-		fts_tokenizer:      normalized_fts_tokenizer(options)
-		fts_prefix_lengths: normalized_fts_prefix_lengths(options.prefix_lengths)
-		json_field_type:    .string_
-		stores_row:         false
+		name:                    name
+		column:                  column
+		json_field:              ''
+		markdown_selector:       ''
+		fts_source_plugin:       ''
+		fts_text_mode:           FtsTextMode.plain_text.str()
+		fts_tokenizer:           normalized_fts_tokenizer(options)
+		fts_prefix_lengths:      normalized_fts_prefix_lengths(options.prefix_lengths)
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       ''
+		json_field_type:         .string_
+		stores_row:              false
 	}
 }
 
@@ -556,16 +603,97 @@ pub fn SchemaIndexDef.fts_markdown_with_options(name string, column string, mode
 		}
 	}
 	return SchemaIndexDef{
-		name:               name
-		column:             column
-		json_field:         ''
-		markdown_selector:  ''
-		fts_source_plugin:  'markdown'
-		fts_text_mode:      mode.str()
-		fts_tokenizer:      normalized_fts_tokenizer(options)
-		fts_prefix_lengths: normalized_fts_prefix_lengths(options.prefix_lengths)
-		json_field_type:    .string_
-		stores_row:         false
+		name:                    name
+		column:                  column
+		json_field:              ''
+		markdown_selector:       ''
+		fts_source_plugin:       'markdown'
+		fts_text_mode:           mode.str()
+		fts_tokenizer:           normalized_fts_tokenizer(options)
+		fts_prefix_lengths:      normalized_fts_prefix_lengths(options.prefix_lengths)
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       ''
+		json_field_type:         .string_
+		stores_row:              false
+	}
+}
+
+pub fn SchemaIndexDef.embedding_text(name string, column string, profile string) !SchemaIndexDef {
+	if name.len == 0 {
+		return error('schema index name cannot be empty')
+	}
+	if column.len == 0 {
+		return error('schema index column cannot be empty')
+	}
+	if profile.trim_space().len == 0 {
+		return error('embedding index profile cannot be empty')
+	}
+	return SchemaIndexDef{
+		name:                    name
+		column:                  column
+		json_field:              ''
+		markdown_selector:       ''
+		fts_source_plugin:       ''
+		fts_text_mode:           ''
+		fts_tokenizer:           ''
+		fts_prefix_lengths:      []int{}
+		embedding_source_plugin: ''
+		embedding_scope:         ''
+		embedding_profile:       profile.trim_space()
+		json_field_type:         .string_
+		stores_row:              false
+	}
+}
+
+pub fn SchemaIndexDef.embedding_markdown(name string, column string, scope MarkdownEmbeddingScope, profile string) !SchemaIndexDef {
+	if name.len == 0 {
+		return error('schema index name cannot be empty')
+	}
+	if column.len == 0 {
+		return error('schema index column cannot be empty')
+	}
+	if profile.trim_space().len == 0 {
+		return error('embedding index profile cannot be empty')
+	}
+	return SchemaIndexDef{
+		name:                    name
+		column:                  column
+		json_field:              ''
+		markdown_selector:       ''
+		fts_source_plugin:       ''
+		fts_text_mode:           ''
+		fts_tokenizer:           ''
+		fts_prefix_lengths:      []int{}
+		embedding_source_plugin: 'markdown'
+		embedding_scope:         scope.str()
+		embedding_profile:       profile.trim_space()
+		json_field_type:         .string_
+		stores_row:              false
+	}
+}
+
+pub fn MemoryCapabilityDef.reflective_field(table_name string, column_name string, options ReflectionOptions) !MemoryCapabilityDef {
+	if table_name.len == 0 {
+		return error('memory capability table name cannot be empty')
+	}
+	if column_name.len == 0 {
+		return error('memory capability column name cannot be empty')
+	}
+	if options.reflection_kind.trim_space().len == 0 {
+		return error('memory capability reflection kind cannot be empty')
+	}
+	return MemoryCapabilityDef{
+		table_name:  table_name
+		column_name: column_name
+		options:     ReflectionOptions{
+			enabled:                 options.enabled
+			embedding_index:         options.embedding_index.trim_space()
+			reflection_kind:         options.reflection_kind.trim_space()
+			replay_anchor:           options.replay_anchor
+			link_evidence_blocks:    options.link_evidence_blocks
+			link_semantic_neighbors: options.link_semantic_neighbors
+		}
 	}
 }
 
@@ -613,6 +741,10 @@ pub fn (index SchemaIndexDef) is_markdown_selector() bool {
 
 pub fn (index SchemaIndexDef) is_fts() bool {
 	return index.fts_text_mode.len > 0
+}
+
+pub fn (index SchemaIndexDef) is_embedding() bool {
+	return index.embedding_profile.len > 0
 }
 
 pub fn (index SchemaIndexDef) is_field_selector() bool {
@@ -665,6 +797,12 @@ pub fn (index SchemaIndexDef) target_label() string {
 	if index.is_fts() {
 		return '${index.column}#fts'
 	}
+	if index.is_embedding() {
+		if index.embedding_source_plugin == 'markdown' {
+			return '${index.column}#embedding(${index.embedding_scope},${index.embedding_profile})'
+		}
+		return '${index.column}#embedding(${index.embedding_profile})'
+	}
 	if index.json_field.len == 0 {
 		selector := index.field_selector()
 		if selector.len == 0 {
@@ -678,6 +816,9 @@ pub fn (index SchemaIndexDef) target_label() string {
 pub fn (index SchemaIndexDef) value_column(table TableDef) !ColumnDef {
 	if index.is_fts() {
 		return ColumnDef.new('fts_text', .string_, false)
+	}
+	if index.is_embedding() {
+		return ColumnDef.new('embedding_target', .string_, false)
 	}
 	if index.is_field_selector() {
 		return ColumnDef.new('field_index', index.json_field_type, false)
@@ -697,7 +838,8 @@ pub fn IndexedSchemaView.new(schema SchemaView, indexes []SchemaIndexDef) !Index
 		if !schema.codec.has_column(index.column) {
 			return error('schema index column not in codec: ${index.column}')
 		}
-		if index.is_json_path() || index.is_field_selector() || index.is_fts() {
+		if index.is_json_path() || index.is_field_selector() || index.is_fts()
+			|| index.is_embedding() {
 			return error('schema json-path indexes are only supported by typed tables')
 		}
 		names[index.name] = true
@@ -916,6 +1058,43 @@ pub fn validate_fts_index(column ColumnDef, index SchemaIndexDef) ! {
 		}
 		else {
 			return error('fts index requires string or markdown column: ${index.column}')
+		}
+	}
+}
+
+pub fn validate_embedding_index(column ColumnDef, index SchemaIndexDef) ! {
+	if !index.is_embedding() {
+		return
+	}
+	if index.stores_row {
+		return error('embedding indexes cannot be covering indexes: ${index.name}')
+	}
+	if index.json_field.len > 0 || index.markdown_selector.len > 0 || index.is_fts() {
+		return error('embedding indexes cannot also be json-path, field-selector, or fts indexes: ${index.name}')
+	}
+	if index.embedding_profile.trim_space().len == 0 {
+		return error('embedding index profile cannot be empty: ${index.name}')
+	}
+	match column.typ {
+		.string_ {
+			if index.embedding_source_plugin.len > 0 {
+				return error('string embedding index cannot use field source plugin: ${index.name}')
+			}
+			if index.embedding_scope.len > 0 {
+				return error('string embedding index does not support scopes: ${index.name}')
+			}
+		}
+		.markdown_ {
+			if index.embedding_source_plugin != 'markdown' {
+				return error('markdown embedding index requires markdown source plugin: ${index.name}')
+			}
+			if index.embedding_scope !in [MarkdownEmbeddingScope.block.str(),
+				MarkdownEmbeddingScope.path.str()] {
+				return error('markdown embedding index requires block or path scope: ${index.name}')
+			}
+		}
+		else {
+			return error('embedding index requires string or markdown column: ${index.column}')
 		}
 	}
 }

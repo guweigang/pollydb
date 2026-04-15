@@ -324,6 +324,54 @@ fn test_schema_index_def_exposes_fts_metadata_for_markdown_columns() {
 	validate_fts_index(table.column('body') or { panic(err) }, index) or { panic(err) }
 }
 
+fn test_schema_index_def_exposes_embedding_metadata_for_text_and_markdown() {
+	text_index := SchemaIndexDef.embedding_text('summary_vec_idx', 'summary', 'bge-small') or {
+		panic(err)
+	}
+	markdown_index := SchemaIndexDef.embedding_markdown('body_path_vec_idx', 'body', .path,
+		'bge-small') or { panic(err) }
+	table := TableDef.new('docs', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('summary', .string_, false)!,
+		ColumnDef.new('body', .markdown_, false)!,
+	], ['id']) or { panic(err) }
+
+	assert text_index.is_embedding()
+	assert !text_index.is_fts()
+	assert text_index.embedding_source_plugin == ''
+	assert text_index.embedding_scope == ''
+	assert text_index.embedding_profile == 'bge-small'
+	assert text_index.target_label() == 'summary#embedding(bge-small)'
+	validate_embedding_index(table.column('summary') or { panic(err) }, text_index) or {
+		panic(err)
+	}
+
+	assert markdown_index.is_embedding()
+	assert markdown_index.embedding_source_plugin == 'markdown'
+	assert markdown_index.embedding_scope == 'path'
+	assert markdown_index.embedding_profile == 'bge-small'
+	assert markdown_index.target_label() == 'body#embedding(path,bge-small)'
+	validate_embedding_index(table.column('body') or { panic(err) }, markdown_index) or {
+		panic(err)
+	}
+}
+
+fn test_validate_embedding_index_rejects_invalid_scope_on_markdown() {
+	index := SchemaIndexDef{
+		...SchemaIndexDef.embedding_markdown('body_vec_idx', 'body', .block, 'bge-small') or {
+			panic(err)
+		}
+		embedding_scope: 'weird'
+	}
+	column := ColumnDef.new('body', .markdown_, false) or { panic(err) }
+
+	if _ := validate_embedding_index(column, index) {
+		assert false
+	} else {
+		assert err.msg().contains('block or path scope')
+	}
+}
+
 fn test_validate_fts_index_rejects_markdown_mode_on_plain_text_column() {
 	index := SchemaIndexDef{
 		...SchemaIndexDef.fts_text('content_fts_idx', 'content') or { panic(err) }

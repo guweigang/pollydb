@@ -36,9 +36,9 @@ struct CliField {
 }
 
 struct CliSyncExecution {
-	session storage.SyncSession
+	session  storage.SyncSession
 	exchange storage.SyncExchange
-	policy storage.SyncNegotiationPolicy
+	policy   storage.SyncNegotiationPolicy
 }
 
 fn PollyDbCli.new(args []string) PollyDbCli {
@@ -68,7 +68,8 @@ fn cli_has_repository_layout(root_dir string) bool {
 }
 
 fn cli_looks_like_path(raw string) bool {
-	return raw.starts_with('/') || raw.starts_with('./') || raw.starts_with('../') || raw.contains('/')
+	return raw.starts_with('/') || raw.starts_with('./') || raw.starts_with('../')
+		|| raw.contains('/')
 }
 
 fn cli_looks_like_url(raw string) bool {
@@ -115,7 +116,7 @@ fn cli_info(text string) string {
 
 fn cli_empty(label string, detail string) string {
 	mut fields := [
-		CliField{'status', cli_dim(label)}
+		CliField{'status', cli_dim(label)},
 	]
 	if detail.len > 0 {
 		fields << CliField{'detail', cli_dim(detail)}
@@ -306,21 +307,41 @@ fn cli_render_rows(title string, spec storage.TypedTableSpec, rows []storage.Typ
 fn cli_render_status_report(report storage.PersistentDatabaseStatusReport) string {
 	mut lines := []string{}
 	lines << cli_render_field_card('Repository', [
-		CliField{'root', report.root_dir}
-		CliField{'default_branch', report.default_branch}
-		CliField{'catalog', if report.catalog_exists { cli_success('present') } else { cli_warn('missing') }}
-		CliField{'repository', if report.repository_exists { cli_success('present') } else { cli_warn('missing') }}
-		CliField{'branches', report.branch_count.str()}
-		CliField{'tables', report.registered_tables.str()}
-		CliField{'projectors', report.registered_projectors.str()}
+		CliField{'root', report.root_dir},
+		CliField{'default_branch', report.default_branch},
+		CliField{'catalog', if report.catalog_exists {
+			cli_success('present')
+		} else {
+			cli_warn('missing')
+		}},
+		CliField{'repository', if report.repository_exists {
+			cli_success('present')
+		} else {
+			cli_warn('missing')
+		}},
+		CliField{'branches', report.branch_count.str()},
+		CliField{'tables', report.registered_tables.str()},
+		CliField{'projectors', report.registered_projectors.str()},
 	])
 	lines << ''
 	lines << cli_render_field_card('Durability', [
-		CliField{'data_durable', if report.data_durable { cli_success('true') } else { cli_warn('false') }}
-		CliField{'index_snapshots_fresh', if report.index_snapshots_fresh { cli_success('true') } else { cli_warn('false') }}
-		CliField{'checkpoint_journal', if report.checkpoint_journal_exists { cli_warn('present') } else { cli_dim('none') }}
-		CliField{'node_index_entries', report.node_index_entries.str()}
-		CliField{'commit_index_entries', report.commit_index_entries.str()}
+		CliField{'data_durable', if report.data_durable {
+			cli_success('true')
+		} else {
+			cli_warn('false')
+		}},
+		CliField{'index_snapshots_fresh', if report.index_snapshots_fresh {
+			cli_success('true')
+		} else {
+			cli_warn('false')
+		}},
+		CliField{'checkpoint_journal', if report.checkpoint_journal_exists {
+			cli_warn('present')
+		} else {
+			cli_dim('none')
+		}},
+		CliField{'node_index_entries', report.node_index_entries.str()},
+		CliField{'commit_index_entries', report.commit_index_entries.str()},
 	])
 	if report.branches.len > 0 {
 		lines << ''
@@ -336,32 +357,32 @@ fn cli_render_status_report(report storage.PersistentDatabaseStatusReport) strin
 
 fn cli_render_commit(title string, commit storage.Commit) string {
 	return cli_render_field_card(title, [
-		CliField{'commit', commit.cid}
-		CliField{'root', commit.root_cid}
-		CliField{'parents', commit.parent_cids.len.str()}
-		CliField{'author', commit.meta.author}
-		CliField{'message', commit.meta.message}
-		CliField{'timestamp', commit.meta.timestamp.str()}
+		CliField{'commit', commit.cid},
+		CliField{'root', commit.root_cid},
+		CliField{'parents', commit.parent_cids.len.str()},
+		CliField{'author', commit.meta.author},
+		CliField{'message', commit.meta.message},
+		CliField{'timestamp', commit.meta.timestamp.str()},
 	])
 }
 
 fn cli_render_merge_preview(preview storage.RootHashMergePreview) string {
 	mut lines := []string{}
 	lines << cli_render_field_card('Merge Preview', [
-		CliField{'ours_branch', preview.ours_branch}
-		CliField{'theirs_branch', preview.theirs_branch}
-		CliField{'base_commit', preview.base_commit_cid}
-		CliField{'base_root', preview.base_root_cid}
-		CliField{'ours_commit', preview.ours_commit_cid}
-		CliField{'ours_root', preview.ours_root_cid}
-		CliField{'theirs_commit', preview.theirs_commit_cid}
-		CliField{'theirs_root', preview.theirs_root_cid}
-		CliField{'fast_forward', preview.fast_forward.str()}
-		CliField{'ours_unchanged', preview.ours_unchanged.str()}
-		CliField{'theirs_unchanged', preview.theirs_unchanged.str()}
-		CliField{'conflicts', preview.conflicts.str()}
-		CliField{'changed_keys', preview.changed_keys.str()}
-		CliField{'changed_subtrees', preview.changed_subtrees.str()}
+		CliField{'ours_branch', preview.ours_branch},
+		CliField{'theirs_branch', preview.theirs_branch},
+		CliField{'base_commit', preview.base_commit_cid},
+		CliField{'base_root', preview.base_root_cid},
+		CliField{'ours_commit', preview.ours_commit_cid},
+		CliField{'ours_root', preview.ours_root_cid},
+		CliField{'theirs_commit', preview.theirs_commit_cid},
+		CliField{'theirs_root', preview.theirs_root_cid},
+		CliField{'fast_forward', preview.fast_forward.str()},
+		CliField{'ours_unchanged', preview.ours_unchanged.str()},
+		CliField{'theirs_unchanged', preview.theirs_unchanged.str()},
+		CliField{'conflicts', preview.conflicts.str()},
+		CliField{'changed_keys', preview.changed_keys.str()},
+		CliField{'changed_subtrees', preview.changed_subtrees.str()},
 	])
 	return lines.join('\n')
 }
@@ -381,7 +402,8 @@ fn cli_render_merge_report(report storage.RootHashMergeReport) string {
 		}
 		lines << ''
 		lines << cli_title('Table Changes')
-		lines << cli_render_table(['table', 'row_changes', 'index_changes', 'conflicts'], table_rows)
+		lines << cli_render_table(['table', 'row_changes', 'index_changes', 'conflicts'],
+			table_rows)
 	}
 	if report.conflict_keys.len > 0 {
 		mut conflict_rows := [][]string{cap: report.conflict_keys.len}
@@ -829,28 +851,28 @@ fn (cli PollyDbCli) resolve_root_context(start_idx int, require_repo bool) !CliR
 	if !cli_has_repository(root_dir) {
 		if cli_has_repository_layout(root_dir) {
 			return CliRootContext{
-				root_dir: root_dir
+				root_dir:       root_dir
 				default_branch: 'main'
-				branches: []string{}
-				next_idx: next_idx
+				branches:       []string{}
+				next_idx:       next_idx
 			}
 		}
 		if require_repo {
 			return error('no .pollydb repository in current directory: ${root_dir}; pass <root_dir> explicitly or run `pollydb init`')
 		}
 		return CliRootContext{
-			root_dir: root_dir
+			root_dir:       root_dir
 			default_branch: 'main'
-			branches: []string{}
-			next_idx: next_idx
+			branches:       []string{}
+			next_idx:       next_idx
 		}
 	}
 	repo := cli_open_repository(root_dir)!
 	return CliRootContext{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: repo.default_branch
-		branches: repo.branch_names()
-		next_idx: next_idx
+		branches:       repo.branch_names()
+		next_idx:       next_idx
 	}
 }
 
@@ -863,10 +885,10 @@ fn (cli PollyDbCli) resolve_db_context(start_idx int, require_repo bool) !CliDbC
 		next_idx++
 	}
 	return CliDbContext{
-		root_dir: root.root_dir
+		root_dir:       root.root_dir
 		default_branch: root.default_branch
-		branch: branch
-		next_idx: next_idx
+		branch:         branch
+		next_idx:       next_idx
 	}
 }
 
@@ -887,10 +909,10 @@ fn (cli PollyDbCli) resolve_sync_peer_context(start_idx int) !CliSyncPeerContext
 		next_idx++
 	}
 	return CliSyncPeerContext{
-		root_dir: root_dir
+		root_dir:       root_dir
 		default_branch: repo.default_branch
-		branch: branch
-		next_idx: next_idx
+		branch:         branch
+		next_idx:       next_idx
 	}
 }
 
@@ -935,54 +957,70 @@ fn sync_policy_label(policy storage.SyncNegotiationPolicy) string {
 }
 
 fn resolve_sidecar_default_sync_policy(client storage.PollyLinkClient) storage.SyncNegotiationPolicy {
-	info := client.repository_info() or {
-		return storage.SyncNegotiationPolicy.auto
+	info := client.repository_info() or { return storage.SyncNegotiationPolicy.auto }
+	return parse_sync_negotiation_policy(info.default_sync_policy) or {
+		storage.SyncNegotiationPolicy.auto
 	}
-	return parse_sync_negotiation_policy(info.default_sync_policy) or { storage.SyncNegotiationPolicy.auto }
 }
 
 fn cli_render_sync_result(title string, direction string, source_root string, source_branch string, peer_root string, peer_branch string, policy string, packet_count int, packet_bytes int, branch storage.Branch, result_label string) string {
 	return cli_render_field_card(title, [
-		CliField{'direction', direction}
-		CliField{'source', '${source_root}#${source_branch}'}
-		CliField{'peer', '${peer_root}#${peer_branch}'}
-		CliField{'policy', policy}
-		CliField{'result', result_label}
-		CliField{'packets', packet_count.str()}
-		CliField{'bytes', packet_bytes.str()}
-		CliField{'head_branch', branch.name}
-		CliField{'head_commit', branch.commit_cid}
+		CliField{'direction', direction},
+		CliField{'source', '${source_root}#${source_branch}'},
+		CliField{'peer', '${peer_root}#${peer_branch}'},
+		CliField{'policy', policy},
+		CliField{'result', result_label},
+		CliField{'packets', packet_count.str()},
+		CliField{'bytes', packet_bytes.str()},
+		CliField{'head_branch', branch.name},
+		CliField{'head_commit', branch.commit_cid},
 	])
 }
 
 fn cli_render_sync_policy_recommendation(source_root string, source_branch string, peer_root string, peer_branch string, simulated_rtt_ms int, decision storage.SyncNegotiationDecision, tree_depth int, regular_local_ms i64, manifest1_local_ms i64, manifest2_local_ms i64) string {
 	return cli_render_field_card('Sync Policy Recommendation', [
-		CliField{'source', '${source_root}#${source_branch}'}
-		CliField{'peer', '${peer_root}#${peer_branch}'}
-		CliField{'simulated_rtt_ms', simulated_rtt_ms.str()}
-		CliField{'tree_depth', tree_depth.str()}
-		CliField{'recommended_policy', sync_policy_label(decision.policy)}
-		CliField{'prediction_depth', decision.prediction_depth.str()}
-		CliField{'estimated_rtts', decision.estimated_rtts.str()}
-		CliField{'regular_local_ms', regular_local_ms.str()}
-		CliField{'manifest1_local_ms', manifest1_local_ms.str()}
-		CliField{'manifest2_local_ms', manifest2_local_ms.str()}
+		CliField{'source', '${source_root}#${source_branch}'},
+		CliField{'peer', '${peer_root}#${peer_branch}'},
+		CliField{'simulated_rtt_ms', simulated_rtt_ms.str()},
+		CliField{'tree_depth', tree_depth.str()},
+		CliField{'recommended_policy', sync_policy_label(decision.policy)},
+		CliField{'prediction_depth', decision.prediction_depth.str()},
+		CliField{'estimated_rtts', decision.estimated_rtts.str()},
+		CliField{'regular_local_ms', regular_local_ms.str()},
+		CliField{'manifest1_local_ms', manifest1_local_ms.str()},
+		CliField{'manifest2_local_ms', manifest2_local_ms.str()},
 	])
 }
 
 fn cli_render_sidecar_repo_info(info storage.SidecarRepositoryInfo) string {
 	return cli_render_field_card('Sidecar Repository', [
-		CliField{'repo', info.repo_name}
-		CliField{'default_branch', info.default_branch}
-		CliField{'auth', if info.auth_enabled { cli_info('bearer') } else { cli_dim('disabled') }}
-		CliField{'branches', info.branch_count.str()}
-		CliField{'latest_branch', if info.latest_branch.len > 0 { info.latest_branch } else { '-' }}
-		CliField{'latest_commit', if info.latest_commit_cid.len > 0 { info.latest_commit_cid } else { '-' }}
-		CliField{'latest_timestamp', if info.latest_timestamp > 0 { info.latest_timestamp.str() } else { '-' }}
-		CliField{'allow_push_to_default', if info.allow_push_to_default { cli_success('true') } else { cli_warn('false') }}
-		CliField{'require_auto_merge', if info.require_auto_merge { cli_warn('true') } else { cli_dim('false') }}
-		CliField{'default_sync_policy', info.default_sync_policy}
-		CliField{'protection', info.protection_summary}
+		CliField{'repo', info.repo_name},
+		CliField{'default_branch', info.default_branch},
+		CliField{'auth', if info.auth_enabled { cli_info('bearer') } else { cli_dim('disabled') }},
+		CliField{'branches', info.branch_count.str()},
+		CliField{'latest_branch', if info.latest_branch.len > 0 { info.latest_branch } else { '-' }},
+		CliField{'latest_commit', if info.latest_commit_cid.len > 0 {
+			info.latest_commit_cid
+		} else {
+			'-'
+		}},
+		CliField{'latest_timestamp', if info.latest_timestamp > 0 {
+			info.latest_timestamp.str()
+		} else {
+			'-'
+		}},
+		CliField{'allow_push_to_default', if info.allow_push_to_default {
+			cli_success('true')
+		} else {
+			cli_warn('false')
+		}},
+		CliField{'require_auto_merge', if info.require_auto_merge {
+			cli_warn('true')
+		} else {
+			cli_dim('false')
+		}},
+		CliField{'default_sync_policy', info.default_sync_policy},
+		CliField{'protection', info.protection_summary},
 	])
 }
 
@@ -1008,50 +1046,64 @@ fn cli_render_sidecar_repo_summaries(infos []storage.SidecarRepositoryInfo) stri
 	}
 	mut lines := []string{}
 	lines << cli_title('Sidecar Repository Summaries')
-	lines << cli_render_table(['repo', 'default_branch', 'auth', 'branches', 'latest_branch', 'push_default', 'auto_merge', 'sync_policy', 'protection', 'latest_commit', 'latest_timestamp'], rows)
+	lines << cli_render_table(['repo', 'default_branch', 'auth', 'branches', 'latest_branch',
+		'push_default', 'auto_merge', 'sync_policy', 'protection', 'latest_commit',
+		'latest_timestamp'], rows)
 	return lines.join('\n')
 }
 
 fn cli_render_sidecar_branch_status(repo_name string, status storage.SidecarBranchStatus) string {
 	return cli_render_field_card('Sidecar Branch Status', [
-		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }}
-		CliField{'branch', status.branch.name}
-		CliField{'head_commit', status.branch.commit_cid}
-		CliField{'root', status.root_cid}
-		CliField{'merge', status.merge_relation}
-		CliField{'policy_scope', status.policy_scope}
-		CliField{'allow_push', if status.allow_push { cli_success('true') } else { cli_warn('false') }}
-		CliField{'require_auto_merge', if status.require_auto_merge { cli_warn('true') } else { cli_dim('false') }}
-		CliField{'default_sync_policy', status.default_sync_policy}
-		CliField{'protection', status.protection_summary}
-		CliField{'projectors', '${status.projector_fresh} fresh / ${status.projector_stale} stale'}
-		CliField{'stale_projectors', if status.stale_projectors.len > 0 { status.stale_projectors.join(',') } else { '-' }}
-		CliField{'recommended_policy', status.recommended_projection_refresh_policy}
-		CliField{'author', if status.author.len > 0 { status.author } else { '-' }}
-		CliField{'message', if status.message.len > 0 { status.message } else { '-' }}
-		CliField{'timestamp', status.timestamp.str()}
+		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }},
+		CliField{'branch', status.branch.name},
+		CliField{'head_commit', status.branch.commit_cid},
+		CliField{'root', status.root_cid},
+		CliField{'merge', status.merge_relation},
+		CliField{'policy_scope', status.policy_scope},
+		CliField{'allow_push', if status.allow_push {
+			cli_success('true')
+		} else {
+			cli_warn('false')
+		}},
+		CliField{'require_auto_merge', if status.require_auto_merge {
+			cli_warn('true')
+		} else {
+			cli_dim('false')
+		}},
+		CliField{'default_sync_policy', status.default_sync_policy},
+		CliField{'protection', status.protection_summary},
+		CliField{'projectors', '${status.projector_fresh} fresh / ${status.projector_stale} stale'},
+		CliField{'stale_projectors', if status.stale_projectors.len > 0 {
+			status.stale_projectors.join(',')
+		} else {
+			'-'
+		}},
+		CliField{'recommended_policy', status.recommended_projection_refresh_policy},
+		CliField{'author', if status.author.len > 0 { status.author } else { '-' }},
+		CliField{'message', if status.message.len > 0 { status.message } else { '-' }},
+		CliField{'timestamp', status.timestamp.str()},
 	])
 }
 
 fn cli_render_sidecar_branch_activity(repo_name string, activity storage.SidecarBranchActivity) string {
 	return cli_render_field_card('Sidecar Branch Activity', [
-		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }}
-		CliField{'branch', activity.branch.name}
-		CliField{'head_commit', activity.branch.commit_cid}
-		CliField{'root', activity.root_cid}
-		CliField{'parents', activity.parent_count.str()}
-		CliField{'author', activity.author}
-		CliField{'message', activity.message}
-		CliField{'timestamp', activity.timestamp.str()}
+		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }},
+		CliField{'branch', activity.branch.name},
+		CliField{'head_commit', activity.branch.commit_cid},
+		CliField{'root', activity.root_cid},
+		CliField{'parents', activity.parent_count.str()},
+		CliField{'author', activity.author},
+		CliField{'message', activity.message},
+		CliField{'timestamp', activity.timestamp.str()},
 	])
 }
 
 fn cli_render_sidecar_branch_log(repo_name string, branch_name string, entries []storage.SidecarBranchLogEntry) string {
 	mut lines := []string{}
 	lines << cli_render_field_card('Sidecar Branch Log', [
-		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }}
-		CliField{'branch', branch_name}
-		CliField{'commits', entries.len.str()}
+		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }},
+		CliField{'branch', branch_name},
+		CliField{'commits', entries.len.str()},
 	])
 	if entries.len == 0 {
 		lines << ''
@@ -1070,15 +1122,16 @@ fn cli_render_sidecar_branch_log(repo_name string, branch_name string, entries [
 		]
 	}
 	lines << ''
-	lines << cli_render_table(['commit', 'root', 'parents', 'author', 'message', 'timestamp'], rows)
+	lines << cli_render_table(['commit', 'root', 'parents', 'author', 'message', 'timestamp'],
+		rows)
 	return lines.join('\n')
 }
 
 fn cli_render_sidecar_repo_activity(repo_name string, entries []storage.SidecarRepoActivityEntry) string {
 	mut lines := []string{}
 	lines << cli_render_field_card('Sidecar Repository Activity', [
-		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }}
-		CliField{'branches', entries.len.str()}
+		CliField{'repo', if repo_name.len == 0 { '.' } else { repo_name }},
+		CliField{'branches', entries.len.str()},
 	])
 	if entries.len == 0 {
 		lines << ''
@@ -1098,7 +1151,8 @@ fn cli_render_sidecar_repo_activity(repo_name string, entries []storage.SidecarR
 		]
 	}
 	lines << ''
-	lines << cli_render_table(['branch', 'head_commit', 'root', 'parents', 'author', 'message', 'timestamp'], rows)
+	lines << cli_render_table(['branch', 'head_commit', 'root', 'parents', 'author', 'message',
+		'timestamp'], rows)
 	return lines.join('\n')
 }
 
@@ -1121,7 +1175,8 @@ fn cli_render_sidecar_global_activity(entries []storage.SidecarRepoActivityEntry
 	}
 	mut lines := []string{}
 	lines << cli_title('Sidecar Global Activity')
-	lines << cli_render_table(['repo', 'branch', 'head_commit', 'root', 'parents', 'author', 'message', 'timestamp'], rows)
+	lines << cli_render_table(['repo', 'branch', 'head_commit', 'root', 'parents', 'author',
+		'message', 'timestamp'], rows)
 	return lines.join('\n')
 }
 
@@ -1143,7 +1198,8 @@ fn cli_render_sidecar_audit(entries []storage.PollyHubAuditEntry) string {
 	}
 	mut lines := []string{}
 	lines << cli_title('Sidecar Audit Log')
-	lines << cli_render_table(['timestamp', 'actor', 'action', 'repo', 'branch', 'result', 'detail'], rows)
+	lines << cli_render_table(['timestamp', 'actor', 'action', 'repo', 'branch', 'result', 'detail'],
+		rows)
 	return lines.join('\n')
 }
 
@@ -1170,19 +1226,25 @@ fn cli_render_sidecar_branch_statuses(repo_name string, statuses []storage.Sidec
 	}
 	mut lines := []string{}
 	lines << cli_title('Sidecar Branch Statuses')
-	lines << cli_render_table(['repo', 'branch', 'head_commit', 'merge', 'scope', 'push', 'auto_merge', 'sync_policy', 'protection', 'projectors', 'stale_projectors', 'timestamp'], rows)
+	lines << cli_render_table(['repo', 'branch', 'head_commit', 'merge', 'scope', 'push',
+		'auto_merge', 'sync_policy', 'protection', 'projectors', 'stale_projectors', 'timestamp'],
+		rows)
 	return lines.join('\n')
 }
 
 fn cli_render_sidecar_governance_status(status storage.SidecarGovernanceStatus) string {
 	mut lines := []string{}
 	lines << cli_render_field_card('Sidecar Governance', [
-		CliField{'auth', if status.auth_enabled { cli_info('bearer') } else { cli_dim('disabled') }}
-		CliField{'tokens', status.token_count.str()}
-		CliField{'repos', status.repo_count.str()}
-		CliField{'requests_per_minute', if status.requests_per_minute > 0 { status.requests_per_minute.str() } else { cli_dim('unlimited') }}
-		CliField{'recent_requests_1m', status.recent_requests_1m.str()}
-		CliField{'recent_denies_1m', status.recent_denies_1m.str()}
+		CliField{'auth', if status.auth_enabled { cli_info('bearer') } else { cli_dim('disabled') }},
+		CliField{'tokens', status.token_count.str()},
+		CliField{'repos', status.repo_count.str()},
+		CliField{'requests_per_minute', if status.requests_per_minute > 0 {
+			status.requests_per_minute.str()
+		} else {
+			cli_dim('unlimited')
+		}},
+		CliField{'recent_requests_1m', status.recent_requests_1m.str()},
+		CliField{'recent_denies_1m', status.recent_denies_1m.str()},
 	])
 	if status.recent_categories.len > 0 {
 		mut rows := [][]string{}
@@ -1235,16 +1297,18 @@ fn sync_packet_bytes(packets []storage.DataPacket) int {
 }
 
 fn build_sync_execution_for_policy(mut source_repo storage.PersistentRepository, source_branch string, mut target_repo storage.PersistentRepository, target_branch string, policy storage.SyncNegotiationPolicy) !CliSyncExecution {
-	prepared := storage.prepare_sync_exchange_for_policy(mut source_repo, source_branch, mut target_repo, target_branch, policy)!
+	prepared := storage.prepare_sync_exchange_for_policy(mut source_repo, source_branch, mut
+		target_repo, target_branch, policy)!
 	return CliSyncExecution{
-		session: prepared.session
+		session:  prepared.session
 		exchange: prepared.exchange
-		policy: prepared.policy
+		policy:   prepared.policy
 	}
 }
 
 fn recommend_sync_policy_for_branches(mut source_repo storage.PersistentRepository, source_branch string, mut target_repo storage.PersistentRepository, target_branch string, simulated_rtt_ms int) !(storage.SyncNegotiationDecision, int, i64, i64, i64) {
-	recommendation := storage.recommend_sync_policy_for_repos(mut source_repo, source_branch, mut target_repo, target_branch, simulated_rtt_ms)!
+	recommendation := storage.recommend_sync_policy_for_repos(mut source_repo, source_branch, mut
+		target_repo, target_branch, simulated_rtt_ms)!
 	return recommendation.decision, recommendation.tree_depth, recommendation.regular_local_ms, recommendation.manifest1_local_ms, recommendation.manifest2_local_ms
 }
 
@@ -1327,7 +1391,7 @@ fn format_column_type(column storage.ColumnDef) string {
 		.i64_ { 'i64' }
 		.string_ { 'string' }
 		.bytes_ { 'bytes' }
-		.enum_ { 'enum(${column.enum_values.join("|")})' }
+		.enum_ { 'enum(${column.enum_values.join('|')})' }
 		.json_ { 'json' }
 		.datetime_ { 'datetime' }
 		.markdown_ { 'markdown' }
@@ -1355,7 +1419,7 @@ fn format_column_datetime_behaviors(column storage.ColumnDef) string {
 fn format_table_spec(spec storage.TypedTableSpec) string {
 	mut lines := []string{}
 	lines << 'table=${spec.name()}'
-	lines << 'primary_key=${spec.table.primary_key.join(",")}'
+	lines << 'primary_key=${spec.table.primary_key.join(',')}'
 	mut columns := []string{cap: spec.table.columns.len}
 	for column in spec.table.columns {
 		mut rendered := '${column.name}:${format_column_type(column)}'
@@ -1366,7 +1430,7 @@ fn format_table_spec(spec storage.TypedTableSpec) string {
 		rendered += format_column_datetime_behaviors(column)
 		columns << rendered
 	}
-	lines << 'columns=${columns.join(",")}'
+	lines << 'columns=${columns.join(',')}'
 	if spec.indexes.len == 0 {
 		lines << 'indexes=(none)'
 	} else {
@@ -1375,23 +1439,31 @@ fn format_table_spec(spec storage.TypedTableSpec) string {
 			target := index.target_label()
 			indexes << if index.stores_row {
 				if index.is_field_selector() {
-					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.field_selector(), index.json_field_type, true) or { panic(err) })}:covering'
+					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.field_selector(),
+						index.json_field_type, true) or { panic(err) })}:covering'
 				} else if index.is_json_path() {
-					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.json_field, index.json_field_type, true) or { panic(err) })}:covering'
+					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.json_field,
+						index.json_field_type, true) or { panic(err) })}:covering'
+				} else if index.is_embedding() {
+					'${index.name}:${target}:covering'
 				} else {
 					'${index.name}:${target}:covering'
 				}
 			} else {
 				if index.is_field_selector() {
-					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.field_selector(), index.json_field_type, true) or { panic(err) })}'
+					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.field_selector(),
+						index.json_field_type, true) or { panic(err) })}'
 				} else if index.is_json_path() {
-					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.json_field, index.json_field_type, true) or { panic(err) })}'
+					'${index.name}:${target}:${format_column_type(storage.ColumnDef.new(index.json_field,
+						index.json_field_type, true) or { panic(err) })}'
+				} else if index.is_embedding() {
+					'${index.name}:${target}'
 				} else {
 					'${index.name}:${target}'
 				}
 			}
 		}
-		lines << 'indexes=${indexes.join(",")}'
+		lines << 'indexes=${indexes.join(',')}'
 	}
 	return lines.join('\n')
 }
@@ -1403,7 +1475,11 @@ fn format_projector_state(state storage.AggregateProjectorState) string {
 	}
 	rendered += ' current_data_root=${state.current_data_root_cid}'
 	rendered += ' source_data_root=${state.source_data_root_cid}'
-	rendered += ' virtual_root=${if state.virtual_root_cid.len > 0 { state.virtual_root_cid } else { "(pending)" }}'
+	rendered += ' virtual_root=${if state.virtual_root_cid.len > 0 {
+		state.virtual_root_cid
+	} else {
+		'(pending)'
+	}}'
 	rendered += ' fresh=${state.fresh}'
 	if state.stale_reason.len > 0 {
 		rendered += ' stale_reason=${state.stale_reason}'
@@ -1611,13 +1687,15 @@ fn parse_column_defs(spec string) ![]storage.ColumnDef {
 			}
 		}
 		columns << if typ_name.starts_with('enum(') {
-			mut column := storage.ColumnDef.enum_string(name, parse_enum_values(typ_name)!, nullable)!
+			mut column := storage.ColumnDef.enum_string(name, parse_enum_values(typ_name)!,
+				nullable)!
 			if aggregate != .none || default_current_timestamp || auto_update_current_timestamp {
 				return error('enum columns do not support modifiers: ${name}')
 			}
 			column
 		} else {
-			storage.ColumnDef.new_with_options(name, parse_column_type(typ_name)!, nullable, aggregate, default_current_timestamp, auto_update_current_timestamp)!
+			storage.ColumnDef.new_with_options(name, parse_column_type(typ_name)!, nullable,
+				aggregate, default_current_timestamp, auto_update_current_timestamp)!
 		}
 	}
 	return columns
@@ -1642,6 +1720,33 @@ fn parse_index_defs(spec string) ![]storage.SchemaIndexDef {
 			rest = rest[..rest.len - ':covering'.len]
 		}
 		if !rest.contains(':') {
+			if rest.contains('#') {
+				target_parts := rest.split_nth('#', 2)
+				if target_parts.len == 2 && target_parts[1].starts_with('embedding(')
+					&& target_parts[1].ends_with(')') {
+					if stores_row {
+						return error('embedding indexes cannot be covering indexes: ${part}')
+					}
+					inner := target_parts[1]['embedding('.len..target_parts[1].len - 1]
+					embed_parts := parse_csv_values(inner)
+					if embed_parts.len == 1 {
+						indexes << storage.SchemaIndexDef.embedding_text(name, target_parts[0],
+							embed_parts[0])!
+						continue
+					}
+					if embed_parts.len == 2 {
+						scope := match embed_parts[0] {
+							'block' { storage.MarkdownEmbeddingScope.block }
+							'path' { storage.MarkdownEmbeddingScope.path }
+							else { return error('embedding scope must be block or path: ${part}') }
+						}
+						indexes << storage.SchemaIndexDef.embedding_markdown(name, target_parts[0],
+							scope, embed_parts[1])!
+						continue
+					}
+					return error('embedding target must be embedding(profile) or embedding(scope,profile): ${part}')
+				}
+			}
 			if stores_row {
 				indexes << storage.SchemaIndexDef.covering(name, rest)!
 			} else {
@@ -1662,7 +1767,8 @@ fn parse_index_defs(spec string) ![]storage.SchemaIndexDef {
 				.string_, .i64_ {}
 				else { return error('markdown selector index type must be string or i64: ${part}') }
 			}
-			indexes << storage.SchemaIndexDef.field_selector(name, target_parts[0], 'markdown', target_parts[1], value_type, stores_row)!
+			indexes << storage.SchemaIndexDef.field_selector(name, target_parts[0], 'markdown',
+				target_parts[1], value_type, stores_row)!
 			continue
 		}
 		if !target.contains('.') {
@@ -1674,9 +1780,11 @@ fn parse_index_defs(spec string) ![]storage.SchemaIndexDef {
 		}
 		json_type := parse_column_type(value_type_name)!
 		if stores_row {
-			indexes << storage.SchemaIndexDef.json_path_covering(name, target_parts[0], target_parts[1], json_type)!
+			indexes << storage.SchemaIndexDef.json_path_covering(name, target_parts[0],
+				target_parts[1], json_type)!
 		} else {
-			indexes << storage.SchemaIndexDef.json_path(name, target_parts[0], target_parts[1], json_type)!
+			indexes << storage.SchemaIndexDef.json_path(name, target_parts[0], target_parts[1],
+				json_type)!
 		}
 	}
 	return indexes
@@ -1845,16 +1953,16 @@ fn parse_json_path_updates(spec string) ![]storage.JsonPathUpdate {
 		payload := field[1].trim_space()
 		if payload == 'delete' {
 			updates << storage.JsonPathUpdate{
-				path: path
-				op: .delete
+				path:  path
+				op:    .delete
 				value: storage.NullValue{}
 			}
 			continue
 		}
 		if payload == 'null' {
 			updates << storage.JsonPathUpdate{
-				path: path
-				op: .set
+				path:  path
+				op:    .set
 				value: storage.NullValue{}
 			}
 			continue
@@ -1864,8 +1972,8 @@ fn parse_json_path_updates(spec string) ![]storage.JsonPathUpdate {
 			return error('json path update must be delete, null, or type:value: ${part}')
 		}
 		updates << storage.JsonPathUpdate{
-			path: path
-			op: .set
+			path:  path
+			op:    .set
 			value: parse_json_scalar_value(value_parts[0].trim_space(), value_parts[1].trim_space())!
 		}
 	}
@@ -1917,7 +2025,8 @@ fn apply_insert_defaults(spec storage.TypedTableSpec, row storage.TypedRowData) 
 	mut next_row := row.clone()
 	current_timestamp := storage.current_datetime_string()
 	for column in spec.table.columns {
-		if !next_row.has(column.name) && (column.default_current_timestamp || column.auto_update_current_timestamp) {
+		if !next_row.has(column.name)
+			&& (column.default_current_timestamp || column.auto_update_current_timestamp) {
 			next_row.set(column.name, current_timestamp)
 		}
 	}
@@ -1960,12 +2069,28 @@ fn table_index_def(spec storage.TypedTableSpec, index_name string) !storage.Sche
 
 fn format_column_value(value storage.ColumnValue) string {
 	return match value {
-		storage.NullValue { 'null' }
-		bool { if value { 'true' } else { 'false' } }
-		i64 { value.str() }
-		string { value }
-		[]u8 { 'hex:${value.hex()}' }
-		storage.MarkdownRef { 'markdown:${value.doc_root_id}' }
+		storage.NullValue {
+			'null'
+		}
+		bool {
+			if value {
+				'true'
+			} else {
+				'false'
+			}
+		}
+		i64 {
+			value.str()
+		}
+		string {
+			value
+		}
+		[]u8 {
+			'hex:${value.hex()}'
+		}
+		storage.MarkdownRef {
+			'markdown:${value.doc_root_id}'
+		}
 	}
 }
 
@@ -2028,7 +2153,11 @@ fn (mut cli PollyDbCli) run_init() ! {
 
 fn (mut cli PollyDbCli) run_checkpoint() ! {
 	ctx := cli.resolve_db_context(1, true)!
-	mode := if cli.args.len > ctx.next_idx { parse_checkpoint_mode(cli.args[ctx.next_idx])! } else { storage.CheckpointMode.full }
+	mode := if cli.args.len > ctx.next_idx {
+		parse_checkpoint_mode(cli.args[ctx.next_idx])!
+	} else {
+		storage.CheckpointMode.full
+	}
 	mode_label := if cli.args.len > ctx.next_idx { cli.args[ctx.next_idx] } else { 'full' }
 	mut db := storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
 	defer {
@@ -2039,7 +2168,7 @@ fn (mut cli PollyDbCli) run_checkpoint() ! {
 	println(cli_render_status_report(report))
 	println('')
 	println(cli_render_fields('Checkpoint', [
-		CliField{'mode', mode_label}
+		CliField{'mode', mode_label},
 	]))
 }
 
@@ -2054,7 +2183,7 @@ fn (mut cli PollyDbCli) run_refresh_index_snapshots() ! {
 	println(cli_render_status_report(report))
 	println('')
 	println(cli_render_fields('Index Snapshots', [
-		CliField{'status', 'done'}
+		CliField{'status', 'done'},
 	]))
 }
 
@@ -2076,17 +2205,21 @@ fn (mut cli PollyDbCli) run_sync_push() ! {
 	}
 	mut effective_policy := policy
 	if effective_policy == .auto {
-		decision, _, _, _, _ := recommend_sync_policy_for_branches(mut source_repo, ctx.branch, mut peer_repo, peer.branch, 40)!
+		decision, _, _, _, _ := recommend_sync_policy_for_branches(mut source_repo, ctx.branch, mut
+			peer_repo, peer.branch, 40)!
 		effective_policy = decision.policy
 	}
-	execution := build_sync_execution_for_policy(mut source_repo, ctx.branch, mut peer_repo, peer.branch, effective_policy)!
+	execution := build_sync_execution_for_policy(mut source_repo, ctx.branch, mut peer_repo,
+		peer.branch, effective_policy)!
 	branch := storage.apply_exchange_to_repo(mut peer_repo, execution.exchange)!
 	policy_label := if policy == .auto {
 		'auto -> ${sync_policy_label(effective_policy)}'
 	} else {
 		sync_policy_label(effective_policy)
 	}
-	println(cli_render_sync_result('Sync Push', 'push', ctx.root_dir, ctx.branch, peer.root_dir, peer.branch, policy_label, execution.exchange.packets.len, sync_packet_bytes(execution.exchange.packets), branch, 'applied'))
+	println(cli_render_sync_result('Sync Push', 'push', ctx.root_dir, ctx.branch, peer.root_dir,
+		peer.branch, policy_label, execution.exchange.packets.len, sync_packet_bytes(execution.exchange.packets),
+		branch, 'applied'))
 }
 
 fn (mut cli PollyDbCli) run_sync_pull() ! {
@@ -2107,17 +2240,21 @@ fn (mut cli PollyDbCli) run_sync_pull() ! {
 	}
 	mut effective_policy := policy
 	if effective_policy == .auto {
-		decision, _, _, _, _ := recommend_sync_policy_for_branches(mut source_repo, peer.branch, mut target_repo, ctx.branch, 40)!
+		decision, _, _, _, _ := recommend_sync_policy_for_branches(mut source_repo, peer.branch, mut
+			target_repo, ctx.branch, 40)!
 		effective_policy = decision.policy
 	}
-	execution := build_sync_execution_for_policy(mut source_repo, peer.branch, mut target_repo, ctx.branch, effective_policy)!
+	execution := build_sync_execution_for_policy(mut source_repo, peer.branch, mut target_repo,
+		ctx.branch, effective_policy)!
 	branch := storage.apply_exchange_to_repo(mut target_repo, execution.exchange)!
 	policy_label := if policy == .auto {
 		'auto -> ${sync_policy_label(effective_policy)}'
 	} else {
 		sync_policy_label(effective_policy)
 	}
-	println(cli_render_sync_result('Sync Pull', 'pull', peer.root_dir, peer.branch, ctx.root_dir, ctx.branch, policy_label, execution.exchange.packets.len, sync_packet_bytes(execution.exchange.packets), branch, 'applied'))
+	println(cli_render_sync_result('Sync Pull', 'pull', peer.root_dir, peer.branch, ctx.root_dir,
+		ctx.branch, policy_label, execution.exchange.packets.len, sync_packet_bytes(execution.exchange.packets),
+		branch, 'applied'))
 }
 
 fn (mut cli PollyDbCli) run_recommend_sync_policy() ! {
@@ -2132,8 +2269,11 @@ fn (mut cli PollyDbCli) run_recommend_sync_policy() ! {
 	defer {
 		peer_repo.close() or {}
 	}
-	decision, tree_depth, regular_local_ms, manifest1_local_ms, manifest2_local_ms := recommend_sync_policy_for_branches(mut source_repo, ctx.branch, mut peer_repo, peer.branch, simulated_rtt_ms)!
-	println(cli_render_sync_policy_recommendation(ctx.root_dir, ctx.branch, peer.root_dir, peer.branch, simulated_rtt_ms, decision, tree_depth, regular_local_ms, manifest1_local_ms, manifest2_local_ms))
+	decision, tree_depth, regular_local_ms, manifest1_local_ms, manifest2_local_ms := recommend_sync_policy_for_branches(mut source_repo,
+		ctx.branch, mut peer_repo, peer.branch, simulated_rtt_ms)!
+	println(cli_render_sync_policy_recommendation(ctx.root_dir, ctx.branch, peer.root_dir,
+		peer.branch, simulated_rtt_ms, decision, tree_depth, regular_local_ms, manifest1_local_ms,
+		manifest2_local_ms))
 }
 
 fn (mut cli PollyDbCli) run_sync_push_sidecar() ! {
@@ -2146,7 +2286,8 @@ fn (mut cli PollyDbCli) run_sync_push_sidecar() ! {
 	mut target_branch := ctx.branch
 	mut next_idx := ctx.next_idx + 1
 	if cli.args.len > next_idx && !looks_like_sync_negotiation_policy(cli.args[next_idx]) {
-		if cli.args.len > next_idx + 1 && !looks_like_sync_negotiation_policy(cli.args[next_idx + 1]) {
+		if cli.args.len > next_idx + 1
+			&& !looks_like_sync_negotiation_policy(cli.args[next_idx + 1]) {
 			repo_name = cli.args[next_idx]
 			target_branch = cli.args[next_idx + 1]
 			next_idx += 2
@@ -2159,8 +2300,8 @@ fn (mut cli PollyDbCli) run_sync_push_sidecar() ! {
 		parse_sync_negotiation_policy(cli.args[next_idx])!
 	} else {
 		resolve_sidecar_default_sync_policy(storage.PollyLinkClient{
-			base_url: sidecar_url
-			repo_name: repo_name
+			base_url:   sidecar_url
+			repo_name:  repo_name
 			auth_token: cli_sidecar_auth_token()
 		})
 	}
@@ -2169,14 +2310,17 @@ fn (mut cli PollyDbCli) run_sync_push_sidecar() ! {
 		repo.close() or {}
 	}
 	client := storage.PollyLinkClient{
-		base_url: sidecar_url
-		repo_name: repo_name
+		base_url:   sidecar_url
+		repo_name:  repo_name
 		auth_token: cli_sidecar_auth_token()
 	}
-	result := storage.push_branch_to_sidecar(mut repo, ctx.branch, client, target_branch, policy)!
+	result := storage.push_branch_to_sidecar(mut repo, ctx.branch, client, target_branch,
+		policy)!
 	result_label := if result.auto_merged { cli_success('auto_merged') } else { 'applied' }
 	sidecar_target := if repo_name.len == 0 { sidecar_url } else { '${sidecar_url} [${repo_name}]' }
-	println(cli_render_sync_result('Sync Push (Sidecar)', 'push', ctx.root_dir, ctx.branch, sidecar_target, target_branch, sync_policy_label(policy), result.exchange.packets.len, sync_packet_bytes(result.exchange.packets), result.branch, result_label))
+	println(cli_render_sync_result('Sync Push (Sidecar)', 'push', ctx.root_dir, ctx.branch,
+		sidecar_target, target_branch, sync_policy_label(policy), result.exchange.packets.len,
+		sync_packet_bytes(result.exchange.packets), result.branch, result_label))
 }
 
 fn (mut cli PollyDbCli) run_sync_pull_sidecar() ! {
@@ -2189,7 +2333,8 @@ fn (mut cli PollyDbCli) run_sync_pull_sidecar() ! {
 	mut source_branch := ctx.branch
 	mut next_idx := ctx.next_idx + 1
 	if cli.args.len > next_idx && !looks_like_sync_negotiation_policy(cli.args[next_idx]) {
-		if cli.args.len > next_idx + 1 && !looks_like_sync_negotiation_policy(cli.args[next_idx + 1]) {
+		if cli.args.len > next_idx + 1
+			&& !looks_like_sync_negotiation_policy(cli.args[next_idx + 1]) {
 			repo_name = cli.args[next_idx]
 			source_branch = cli.args[next_idx + 1]
 			next_idx += 2
@@ -2202,8 +2347,8 @@ fn (mut cli PollyDbCli) run_sync_pull_sidecar() ! {
 		parse_sync_negotiation_policy(cli.args[next_idx])!
 	} else {
 		resolve_sidecar_default_sync_policy(storage.PollyLinkClient{
-			base_url: sidecar_url
-			repo_name: repo_name
+			base_url:   sidecar_url
+			repo_name:  repo_name
 			auth_token: cli_sidecar_auth_token()
 		})
 	}
@@ -2212,13 +2357,16 @@ fn (mut cli PollyDbCli) run_sync_pull_sidecar() ! {
 		repo.close() or {}
 	}
 	client := storage.PollyLinkClient{
-		base_url: sidecar_url
-		repo_name: repo_name
+		base_url:   sidecar_url
+		repo_name:  repo_name
 		auth_token: cli_sidecar_auth_token()
 	}
-	result := storage.pull_branch_from_sidecar(mut repo, ctx.branch, client, source_branch, policy)!
+	result := storage.pull_branch_from_sidecar(mut repo, ctx.branch, client, source_branch,
+		policy)!
 	sidecar_source := if repo_name.len == 0 { sidecar_url } else { '${sidecar_url} [${repo_name}]' }
-	println(cli_render_sync_result('Sync Pull (Sidecar)', 'pull', sidecar_source, source_branch, ctx.root_dir, ctx.branch, sync_policy_label(policy), result.exchange.packets.len, sync_packet_bytes(result.exchange.packets), result.branch, 'applied'))
+	println(cli_render_sync_result('Sync Pull (Sidecar)', 'pull', sidecar_source, source_branch,
+		ctx.root_dir, ctx.branch, sync_policy_label(policy), result.exchange.packets.len,
+		sync_packet_bytes(result.exchange.packets), result.branch, 'applied'))
 }
 
 fn (mut cli PollyDbCli) run_sidecar_repos() ! {
@@ -2226,7 +2374,7 @@ fn (mut cli PollyDbCli) run_sidecar_repos() ! {
 		return error('sidecar-repos requires <sidecar_url>')
 	}
 	client := storage.PollyLinkClient{
-		base_url: cli.args[1]
+		base_url:   cli.args[1]
 		auth_token: cli_sidecar_auth_token()
 	}
 	repos := client.list_repositories()!
@@ -2249,7 +2397,7 @@ fn (mut cli PollyDbCli) run_sidecar_repo_summaries() ! {
 	sidecar_url := cli.args[1]
 	limit := if cli.args.len > 2 && cli.args[2].int() > 0 { cli.args[2].int() } else { 20 }
 	client := storage.PollyLinkClient{
-		base_url: sidecar_url
+		base_url:   sidecar_url
 		auth_token: cli_sidecar_auth_token()
 	}
 	infos := client.list_repository_summaries(limit)!
@@ -2263,7 +2411,7 @@ fn (mut cli PollyDbCli) run_sidecar_global_activity() ! {
 	sidecar_url := cli.args[1]
 	limit := if cli.args.len > 2 && cli.args[2].int() > 0 { cli.args[2].int() } else { 20 }
 	client := storage.PollyLinkClient{
-		base_url: sidecar_url
+		base_url:   sidecar_url
 		auth_token: cli_sidecar_auth_token()
 	}
 	entries := client.global_activity(limit)!
@@ -2278,8 +2426,8 @@ fn (mut cli PollyDbCli) run_sidecar_open_repo() ! {
 	repo_name := cli.args[2]
 	default_branch := if cli.args.len > 3 { cli.args[3] } else { 'main' }
 	client := storage.PollyLinkClient{
-		base_url: sidecar_url
-		repo_name: repo_name
+		base_url:   sidecar_url
+		repo_name:  repo_name
 		auth_token: cli_sidecar_auth_token()
 	}
 	info := client.open_repository(default_branch)!
@@ -2291,7 +2439,7 @@ fn (mut cli PollyDbCli) run_sidecar_governance_status() ! {
 		return error('sidecar-governance-status requires <sidecar_url>')
 	}
 	client := storage.PollyLinkClient{
-		base_url: cli.args[1]
+		base_url:   cli.args[1]
 		auth_token: cli_sidecar_auth_token()
 	}
 	status := client.governance_status()!
@@ -2305,8 +2453,8 @@ fn (mut cli PollyDbCli) run_sidecar_branches() ! {
 	sidecar_url := cli.args[1]
 	repo_name := if cli.args.len > 2 { cli.args[2] } else { '' }
 	client := storage.PollyLinkClient{
-		base_url: sidecar_url
-		repo_name: repo_name
+		base_url:   sidecar_url
+		repo_name:  repo_name
 		auth_token: cli_sidecar_auth_token()
 	}
 	statuses := client.branch_statuses()!
@@ -2327,8 +2475,8 @@ fn (mut cli PollyDbCli) run_sidecar_branch_status() ! {
 		branch_name = cli.args[3]
 	}
 	client := storage.PollyLinkClient{
-		base_url: sidecar_url
-		repo_name: repo_name
+		base_url:   sidecar_url
+		repo_name:  repo_name
 		auth_token: cli_sidecar_auth_token()
 	}
 	status := client.branch_status(branch_name)!
@@ -2356,8 +2504,8 @@ fn (mut cli PollyDbCli) run_sidecar_repo_activity() ! {
 		}
 	}
 	client := storage.PollyLinkClient{
-		base_url: sidecar_url
-		repo_name: repo_name
+		base_url:   sidecar_url
+		repo_name:  repo_name
 		auth_token: cli_sidecar_auth_token()
 	}
 	entries := client.repo_activity(limit)!
@@ -2378,8 +2526,8 @@ fn (mut cli PollyDbCli) run_sidecar_branch_activity() ! {
 		branch_name = cli.args[3]
 	}
 	client := storage.PollyLinkClient{
-		base_url: sidecar_url
-		repo_name: repo_name
+		base_url:   sidecar_url
+		repo_name:  repo_name
 		auth_token: cli_sidecar_auth_token()
 	}
 	activity := client.branch_activity(branch_name)!
@@ -2413,8 +2561,8 @@ fn (mut cli PollyDbCli) run_sidecar_branch_log() ! {
 		}
 	}
 	client := storage.PollyLinkClient{
-		base_url: sidecar_url
-		repo_name: repo_name
+		base_url:   sidecar_url
+		repo_name:  repo_name
 		auth_token: cli_sidecar_auth_token()
 	}
 	entries := client.branch_log(branch_name, limit)!
@@ -2430,9 +2578,9 @@ fn (mut cli PollyDbCli) run_sidecar_init_governance() ! {
 	token := cli.args[3]
 	storage.init_pollyhub_governance(root_dir, actor, token)!
 	println(cli_render_field_card('Sidecar Governance', [
-		CliField{'root', root_dir}
-		CliField{'actor', actor}
-		CliField{'status', cli_success('initialized')}
+		CliField{'root', root_dir},
+		CliField{'actor', actor},
+		CliField{'status', cli_success('initialized')},
 	]))
 }
 
@@ -2451,11 +2599,11 @@ fn (mut cli PollyDbCli) run_sidecar_grant_repo() ! {
 	}
 	storage.grant_pollyhub_repo_access(root_dir, repo_name, actor, role)!
 	println(cli_render_field_card('Sidecar Repo Grant', [
-		CliField{'root', root_dir}
-		CliField{'repo', repo_name}
-		CliField{'actor', actor}
-		CliField{'role', cli.args[4]}
-		CliField{'status', cli_success('granted')}
+		CliField{'root', root_dir},
+		CliField{'repo', repo_name},
+		CliField{'actor', actor},
+		CliField{'role', cli.args[4]},
+		CliField{'status', cli_success('granted')},
 	]))
 }
 
@@ -2477,14 +2625,23 @@ fn (mut cli PollyDbCli) run_sidecar_set_repo_policy() ! {
 	allow_push_to_default := cli_parse_bool(cli.args[3])!
 	require_auto_merge := cli_parse_bool(cli.args[4])!
 	default_sync_policy := if cli.args.len > 5 && cli.args[5].len > 0 { cli.args[5] } else { 'auto' }
-	storage.set_pollyhub_repo_policy(root_dir, repo_name, allow_push_to_default, require_auto_merge, default_sync_policy)!
+	storage.set_pollyhub_repo_policy(root_dir, repo_name, allow_push_to_default, require_auto_merge,
+		default_sync_policy)!
 	println(cli_render_field_card('Sidecar Repo Policy', [
-		CliField{'root', root_dir}
-		CliField{'repo', repo_name}
-		CliField{'allow_push_to_default', if allow_push_to_default { cli_success('true') } else { cli_warn('false') }}
-		CliField{'require_auto_merge', if require_auto_merge { cli_warn('true') } else { cli_dim('false') }}
-		CliField{'default_sync_policy', default_sync_policy}
-		CliField{'status', cli_success('updated')}
+		CliField{'root', root_dir},
+		CliField{'repo', repo_name},
+		CliField{'allow_push_to_default', if allow_push_to_default {
+			cli_success('true')
+		} else {
+			cli_warn('false')
+		}},
+		CliField{'require_auto_merge', if require_auto_merge {
+			cli_warn('true')
+		} else {
+			cli_dim('false')
+		}},
+		CliField{'default_sync_policy', default_sync_policy},
+		CliField{'status', cli_success('updated')},
 	]))
 }
 
@@ -2498,15 +2655,20 @@ fn (mut cli PollyDbCli) run_sidecar_set_branch_policy() ! {
 	allow_push := cli_parse_bool(cli.args[4])!
 	require_auto_merge := cli_parse_bool(cli.args[5])!
 	default_sync_policy := if cli.args.len > 6 && cli.args[6].len > 0 { cli.args[6] } else { 'auto' }
-	storage.set_pollyhub_branch_policy(root_dir, repo_name, branch_name, allow_push, require_auto_merge, default_sync_policy)!
+	storage.set_pollyhub_branch_policy(root_dir, repo_name, branch_name, allow_push, require_auto_merge,
+		default_sync_policy)!
 	println(cli_render_field_card('Sidecar Branch Policy', [
-		CliField{'root', root_dir}
-		CliField{'repo', repo_name}
-		CliField{'branch', branch_name}
-		CliField{'allow_push', if allow_push { cli_success('true') } else { cli_warn('false') }}
-		CliField{'require_auto_merge', if require_auto_merge { cli_warn('true') } else { cli_dim('false') }}
-		CliField{'default_sync_policy', default_sync_policy}
-		CliField{'status', cli_success('updated')}
+		CliField{'root', root_dir},
+		CliField{'repo', repo_name},
+		CliField{'branch', branch_name},
+		CliField{'allow_push', if allow_push { cli_success('true') } else { cli_warn('false') }},
+		CliField{'require_auto_merge', if require_auto_merge {
+			cli_warn('true')
+		} else {
+			cli_dim('false')
+		}},
+		CliField{'default_sync_policy', default_sync_policy},
+		CliField{'status', cli_success('updated')},
 	]))
 }
 
@@ -2518,9 +2680,13 @@ fn (mut cli PollyDbCli) run_sidecar_set_rate_limit() ! {
 	requests_per_minute := cli.args[2].int()
 	storage.set_pollyhub_rate_limit_policy(root_dir, requests_per_minute)!
 	println(cli_render_field_card('Sidecar Rate Limit', [
-		CliField{'root', root_dir}
-		CliField{'requests_per_minute', if requests_per_minute > 0 { requests_per_minute.str() } else { cli_dim('unlimited') }}
-		CliField{'status', cli_success('updated')}
+		CliField{'root', root_dir},
+		CliField{'requests_per_minute', if requests_per_minute > 0 {
+			requests_per_minute.str()
+		} else {
+			cli_dim('unlimited')
+		}},
+		CliField{'status', cli_success('updated')},
 	]))
 }
 
@@ -2560,7 +2726,11 @@ fn (mut cli PollyDbCli) run_create_branch() ! {
 		return error('create-branch requires [root_dir] <new_branch> [from_branch]')
 	}
 	new_branch := cli.args[ctx.next_idx]
-	from_branch := if cli.args.len > ctx.next_idx + 1 { cli.args[ctx.next_idx + 1] } else { ctx.default_branch }
+	from_branch := if cli.args.len > ctx.next_idx + 1 {
+		cli.args[ctx.next_idx + 1]
+	} else {
+		ctx.default_branch
+	}
 	mut db := storage.PersistentDatabase.open(ctx.root_dir, from_branch)!
 	defer {
 		db.close() or {}
@@ -2569,8 +2739,8 @@ fn (mut cli PollyDbCli) run_create_branch() ! {
 	created := db.create_branch(new_branch, source.commit_cid)!
 	db.checkpoint()!
 	println(cli_render_field_card('Branch Created', [
-		CliField{'branch', created.name}
-		CliField{'head_commit', created.commit_cid}
+		CliField{'branch', created.name},
+		CliField{'head_commit', created.commit_cid},
 	]))
 }
 
@@ -2582,12 +2752,12 @@ fn (mut cli PollyDbCli) run_checkout() ! {
 	}
 	commit := db.checkout(ctx.branch)!
 	println(cli_render_field_card('Branch Head', [
-		CliField{'branch', ctx.branch}
-		CliField{'commit', commit.cid}
-		CliField{'root', commit.root_cid}
-		CliField{'parents', commit.parent_cids.len.str()}
-		CliField{'author', commit.meta.author}
-		CliField{'message', commit.meta.message}
+		CliField{'branch', ctx.branch},
+		CliField{'commit', commit.cid},
+		CliField{'root', commit.root_cid},
+		CliField{'parents', commit.parent_cids.len.str()},
+		CliField{'author', commit.meta.author},
+		CliField{'message', commit.meta.message},
 	]))
 }
 
@@ -2600,16 +2770,16 @@ fn (mut cli PollyDbCli) run_show_branch() ! {
 	branch := db.branch(ctx.branch)!
 	commit := db.checkout(ctx.branch)!
 	println(cli_render_field_card('Branch', [
-		CliField{'name', branch.name}
-		CliField{'head_commit', branch.commit_cid}
+		CliField{'name', branch.name},
+		CliField{'head_commit', branch.commit_cid},
 	]))
 	println('')
 	println(cli_render_field_card('Head Commit', [
-		CliField{'commit', commit.cid}
-		CliField{'root', commit.root_cid}
-		CliField{'parents', commit.parent_cids.len.str()}
-		CliField{'author', commit.meta.author}
-		CliField{'message', commit.meta.message}
+		CliField{'commit', commit.cid},
+		CliField{'root', commit.root_cid},
+		CliField{'parents', commit.parent_cids.len.str()},
+		CliField{'author', commit.meta.author},
+		CliField{'message', commit.meta.message},
 	]))
 }
 
@@ -2670,12 +2840,17 @@ fn (mut cli PollyDbCli) run_merge_report() ! {
 	}
 	ours_branch := cli.args[ctx.next_idx]
 	theirs_branch := cli.args[ctx.next_idx + 1]
-	conflict_limit := if cli.args.len > ctx.next_idx + 2 { cli.args[ctx.next_idx + 2].int() } else { 8 }
+	conflict_limit := if cli.args.len > ctx.next_idx + 2 {
+		cli.args[ctx.next_idx + 2].int()
+	} else {
+		8
+	}
 	mut db := storage.PersistentDatabase.open(ctx.root_dir, ours_branch)!
 	defer {
 		db.close() or {}
 	}
-	report := db.merge_report(ours_branch, theirs_branch, storage.ChunkConfig.default(), conflict_limit)!
+	report := db.merge_report(ours_branch, theirs_branch, storage.ChunkConfig.default(),
+		conflict_limit)!
 	println(cli_render_merge_report(report))
 }
 
@@ -2698,13 +2873,13 @@ fn (mut cli PollyDbCli) run_merge_branch() ! {
 			return error('merge has ${result.conflicts.len} conflicts; rerun with strategy ours or theirs')
 		}
 		update := db.commit_to_branch(ours_branch, result.tree, storage.CommitMeta{
-			author: 'pollydb-cli'
-			message: 'merge ${theirs_branch} into ${ours_branch}'
+			author:    'pollydb-cli'
+			message:   'merge ${theirs_branch} into ${ours_branch}'
 			timestamp: 0
 		})!
 		println(cli_render_field_card('Merge Commit', [
-			CliField{'branch', update.branch.name}
-			CliField{'head_commit', update.branch.commit_cid}
+			CliField{'branch', update.branch.name},
+			CliField{'head_commit', update.branch.commit_cid},
 		]))
 		return
 	}
@@ -2719,14 +2894,14 @@ fn (mut cli PollyDbCli) run_merge_branch() ! {
 		}
 	}
 	update := db.merge_branch_into(ours_branch, theirs_branch, resolutions, cfg, storage.CommitMeta{
-		author: 'pollydb-cli'
-		message: 'merge ${theirs_branch} into ${ours_branch} (${strategy})'
+		author:    'pollydb-cli'
+		message:   'merge ${theirs_branch} into ${ours_branch} (${strategy})'
 		timestamp: 0
 	})!
 	println(cli_render_field_card('Merge Commit', [
-		CliField{'branch', update.branch.name}
-		CliField{'head_commit', update.branch.commit_cid}
-		CliField{'strategy', strategy}
+		CliField{'branch', update.branch.name},
+		CliField{'head_commit', update.branch.commit_cid},
+		CliField{'strategy', strategy},
 	]))
 }
 
@@ -2744,7 +2919,8 @@ fn (mut cli PollyDbCli) run_tables() ! {
 	mut rows := [][]string{cap: names.len}
 	for name in names {
 		spec := db.table_spec(name)!
-		rows << [name, spec.table.primary_key.join(','), spec.table.columns.len.str(), spec.indexes.len.str()]
+		rows << [name, spec.table.primary_key.join(','), spec.table.columns.len.str(),
+			spec.indexes.len.str()]
 	}
 	println(cli_title('Tables'))
 	println(cli_render_table(['table', 'primary_key', 'columns', 'indexes'], rows))
@@ -2762,8 +2938,8 @@ fn (mut cli PollyDbCli) run_describe_table() ! {
 	}
 	spec := db.table_spec(table_name)!
 	println(cli_render_field_card('Table', [
-		CliField{'name', spec.name()}
-		CliField{'primary_key', spec.table.primary_key.join(',')}
+		CliField{'name', spec.name()},
+		CliField{'primary_key', spec.table.primary_key.join(',')},
 	]))
 	mut column_rows := [][]string{cap: spec.table.columns.len}
 	for column in spec.table.columns {
@@ -2780,7 +2956,11 @@ fn (mut cli PollyDbCli) run_describe_table() ! {
 		if column.auto_update_current_timestamp {
 			modifiers << 'auto_update'
 		}
-		column_rows << [column.name, format_column_type(column), if modifiers.len > 0 { modifiers.join(',') } else { '-' }]
+		column_rows << [column.name, format_column_type(column), if modifiers.len > 0 {
+			modifiers.join(',')
+		} else {
+			'-'
+		}]
 	}
 	println('')
 	println(cli_title('Columns'))
@@ -2788,7 +2968,11 @@ fn (mut cli PollyDbCli) run_describe_table() ! {
 	if spec.indexes.len > 0 {
 		mut index_rows := [][]string{cap: spec.indexes.len}
 		for index in spec.indexes {
-			index_rows << [index.name, index.target_label(), if index.stores_row { 'covering' } else { 'standard' }]
+			index_rows << [index.name, index.target_label(), if index.stores_row {
+				'covering'
+			} else {
+				'standard'
+			}]
 		}
 		println('')
 		println(cli_title('Indexes'))
@@ -2810,7 +2994,8 @@ fn (mut cli PollyDbCli) run_export_catalog() ! {
 	mut rows := [][]string{cap: names.len}
 	for name in names {
 		spec := db.table_spec(name)!
-		rows << [name, spec.table.primary_key.join(','), spec.table.columns.len.str(), spec.indexes.len.str()]
+		rows << [name, spec.table.primary_key.join(','), spec.table.columns.len.str(),
+			spec.indexes.len.str()]
 	}
 	println(cli_title('Catalog'))
 	println(cli_render_table(['table', 'primary_key', 'columns', 'indexes'], rows))
@@ -2861,10 +3046,10 @@ fn (mut cli PollyDbCli) run_rebuild_indexes() ! {
 	update := db.rebuild_indexes_at_branch(ctx.branch, table_names, storage.ChunkConfig.default())!
 	db.checkpoint()!
 	mut fields := [
-		CliField{'branch', ctx.branch}
-		CliField{'tables', if table_names.len > 0 { table_names.join(',') } else { cli_dim('(all)') }}
-		CliField{'commit', update.branch.commit_cid}
-		CliField{'root', update.snapshot.commit.root_cid}
+		CliField{'branch', ctx.branch},
+		CliField{'tables', if table_names.len > 0 { table_names.join(',') } else { cli_dim('(all)') }},
+		CliField{'commit', update.branch.commit_cid},
+		CliField{'root', update.snapshot.commit.root_cid},
 	]
 	println(cli_render_field_card('Rebuild Indexes', fields))
 }
@@ -2882,9 +3067,9 @@ fn (mut cli PollyDbCli) run_projectors() ! {
 	}
 	report := db.status_report()!
 	println(cli_render_field_card('Projectors', [
-		CliField{'recommended_policy', report.recommended_aggregate_projection_refresh_policy}
-		CliField{'fresh', report.fresh_projectors.str()}
-		CliField{'stale', report.stale_projectors.str()}
+		CliField{'recommended_policy', report.recommended_aggregate_projection_refresh_policy},
+		CliField{'fresh', report.fresh_projectors.str()},
+		CliField{'stale', report.stale_projectors.str()},
 	]))
 	println('')
 	mut rows := [][]string{cap: states.len}
@@ -2899,7 +3084,8 @@ fn (mut cli PollyDbCli) run_projectors() ! {
 			if state.stale_reason.len > 0 { state.stale_reason } else { '-' },
 		]
 	}
-	println(cli_render_table(['name', 'table', 'column', 'priority', 'cost', 'state', 'reason'], rows))
+	println(cli_render_table(['name', 'table', 'column', 'priority', 'cost', 'state', 'reason'],
+		rows))
 }
 
 fn (mut cli PollyDbCli) run_register_aggregate_projection() ! {
@@ -2912,7 +3098,11 @@ fn (mut cli PollyDbCli) run_register_aggregate_projection() ! {
 	column_name := cli.args[ctx.next_idx + 2]
 	json_path := if cli.args.len > ctx.next_idx + 3 { cli.args[ctx.next_idx + 3] } else { '' }
 	priority := if cli.args.len > ctx.next_idx + 4 { cli.args[ctx.next_idx + 4].int() } else { 100 }
-	cost_hint := if cli.args.len > ctx.next_idx + 5 { parse_aggregate_projection_cost_hint(cli.args[ctx.next_idx + 5])! } else { storage.AggregateProjectionCostHint.medium }
+	cost_hint := if cli.args.len > ctx.next_idx + 5 {
+		parse_aggregate_projection_cost_hint(cli.args[ctx.next_idx + 5])!
+	} else {
+		storage.AggregateProjectionCostHint.medium
+	}
 	mut db := storage.PersistentDatabase.open(ctx.root_dir, ctx.branch) or {
 		storage.PersistentDatabase.init(ctx.root_dir, ctx.branch)!
 	}
@@ -2930,27 +3120,27 @@ fn (mut cli PollyDbCli) run_register_aggregate_projection() ! {
 	states := db.projection_states_at_branch(ctx.branch) or { []storage.AggregateProjectorState{} }
 	if states.len == 0 {
 		println(cli_render_fields('Projector Registered', [
-			CliField{'name', name}
-			CliField{'state', 'pending'}
+			CliField{'name', name},
+			CliField{'state', 'pending'},
 		]))
 		return
 	}
 	for state in states {
 		if state.projection.name == name {
 			println(cli_render_fields('Projector Registered', [
-				CliField{'name', state.projection.name}
-				CliField{'table', state.projection.table_name}
-				CliField{'column', state.projection.column_name}
-				CliField{'priority', state.projection.priority.str()}
-				CliField{'cost_hint', state.projection.cost_hint.str()}
-				CliField{'state', if state.fresh { 'fresh' } else { 'stale' }}
-				CliField{'reason', if state.stale_reason.len > 0 { state.stale_reason } else { '-' }}
+				CliField{'name', state.projection.name},
+				CliField{'table', state.projection.table_name},
+				CliField{'column', state.projection.column_name},
+				CliField{'priority', state.projection.priority.str()},
+				CliField{'cost_hint', state.projection.cost_hint.str()},
+				CliField{'state', if state.fresh { 'fresh' } else { 'stale' }},
+				CliField{'reason', if state.stale_reason.len > 0 { state.stale_reason } else { '-' }},
 			]))
 			return
 		}
 	}
 	println(cli_render_fields('Projector Registered', [
-		CliField{'name', name}
+		CliField{'name', name},
 	]))
 }
 
@@ -2967,15 +3157,23 @@ fn (mut cli PollyDbCli) run_refresh_aggregate_projections() ! {
 		db.close() or {}
 	}
 	effective_limit := match policy {
-		.none { -1 }
-		.stale_one { 1 }
-		.stale_up_to { if limit > 0 { limit } else { return error('stale_up_to requires a positive [limit]') } }
-		.stale_all { 0 }
+		.none {
+			-1
+		}
+		.stale_one {
+			1
+		}
+		.stale_up_to {
+			if limit > 0 { limit } else { return error('stale_up_to requires a positive [limit]') }
+		}
+		.stale_all {
+			0
+		}
 	}
 	if effective_limit < 0 {
 		println(cli_render_fields('Projector Refresh', [
-			CliField{'policy', 'none'}
-			CliField{'status', 'skipped'}
+			CliField{'policy', 'none'},
+			CliField{'status', 'skipped'},
 		]))
 		println('')
 		mut rows := [][]string{}
@@ -2991,15 +3189,16 @@ fn (mut cli PollyDbCli) run_refresh_aggregate_projections() ! {
 		}
 		return
 	}
-	commit := db.refresh_aggregate_projections_limited(ctx.branch, storage.ChunkConfig.default(), storage.CommitMeta{
-		author: 'pollydb-cli'
-		message: 'refresh aggregate projections'
+	commit := db.refresh_aggregate_projections_limited(ctx.branch, storage.ChunkConfig.default(),
+		storage.CommitMeta{
+		author:    'pollydb-cli'
+		message:   'refresh aggregate projections'
 		timestamp: 0
 	}, effective_limit)!
 	println(cli_render_fields('Projector Refresh', [
-		CliField{'policy', policy.str()}
-		CliField{'commit', commit.cid}
-		CliField{'root', commit.root_cid}
+		CliField{'policy', policy.str()},
+		CliField{'commit', commit.cid},
+		CliField{'root', commit.root_cid},
 	]))
 	if commit.virtual_roots.len > 0 {
 		println('')
@@ -3012,7 +3211,8 @@ fn (mut cli PollyDbCli) run_refresh_aggregate_projections() ! {
 				virtual_root.fresh.str(),
 			]
 		}
-		println(cli_render_table(['name', 'virtual_root', 'source_data_root', 'fresh'], rows))
+		println(cli_render_table(['name', 'virtual_root', 'source_data_root', 'fresh'],
+			rows))
 	}
 }
 
@@ -3039,21 +3239,21 @@ fn (mut cli PollyDbCli) run_put_row() ! {
 		table_view := storage.TableView.new(storage.Tree{}, table_name)
 		mut tree := storage.Tree.build([
 			storage.KVPair{
-				key: table_view.row_key(primary_key.bytes())
+				key:   table_view.row_key(primary_key.bytes())
 				value: codec.encode(row)!
 			},
 		], cfg)!
 		tree = storage.rebuild_typed_indexes_for_specs(tree, [spec], cfg)!
 		tree = storage.rebuild_typed_aggregates_for_specs(tree, [spec], cfg)!
 		_ = db.commit_to_branch(ctx.branch, tree, storage.CommitMeta{
-			author: 'pollydb-cli'
-			message: 'init branch ${ctx.branch} with ${table_name}:${primary_key}'
+			author:    'pollydb-cli'
+			message:   'init branch ${ctx.branch} with ${table_name}:${primary_key}'
 			timestamp: 0
 		})!
 	} else {
 		_ = session.put_row(mut db, table_name, primary_key.bytes(), row, cfg, storage.CommitMeta{
-			author: 'pollydb-cli'
-			message: 'put row ${table_name}:${primary_key}'
+			author:    'pollydb-cli'
+			message:   'put row ${table_name}:${primary_key}'
 			timestamp: 0
 		})!
 	}
@@ -3061,7 +3261,7 @@ fn (mut cli PollyDbCli) run_put_row() ! {
 	loaded := session2.get_row(mut db, table_name, primary_key.bytes())!
 	if auto_filled.len > 0 {
 		println(cli_render_fields('Auto-filled', [
-			CliField{'columns', auto_filled.join(',')}
+			CliField{'columns', auto_filled.join(',')},
 		]))
 		println('')
 	}
@@ -3086,9 +3286,10 @@ fn (mut cli PollyDbCli) run_set_json_path() ! {
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	spec := session.table_spec(table_name)!
 	value := parse_json_scalar_value(value_type, raw_value)!
-	_ = session.set_json_path(mut db, table_name, primary_key.bytes(), json_column, json_path, value, storage.ChunkConfig.default(), storage.CommitMeta{
-		author: 'pollydb-cli'
-		message: 'set json path ${json_column}.${json_path}'
+	_ = session.set_json_path(mut db, table_name, primary_key.bytes(), json_column, json_path,
+		value, storage.ChunkConfig.default(), storage.CommitMeta{
+		author:    'pollydb-cli'
+		message:   'set json path ${json_column}.${json_path}'
 		timestamp: 0
 	})!
 	loaded := session.get_row(mut db, table_name, primary_key.bytes())!
@@ -3110,9 +3311,10 @@ fn (mut cli PollyDbCli) run_null_json_path() ! {
 	}
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	spec := session.table_spec(table_name)!
-	_ = session.set_json_path_null(mut db, table_name, primary_key.bytes(), json_column, json_path, storage.ChunkConfig.default(), storage.CommitMeta{
-		author: 'pollydb-cli'
-		message: 'null json path ${json_column}.${json_path}'
+	_ = session.set_json_path_null(mut db, table_name, primary_key.bytes(), json_column,
+		json_path, storage.ChunkConfig.default(), storage.CommitMeta{
+		author:    'pollydb-cli'
+		message:   'null json path ${json_column}.${json_path}'
 		timestamp: 0
 	})!
 	loaded := session.get_row(mut db, table_name, primary_key.bytes())!
@@ -3134,9 +3336,10 @@ fn (mut cli PollyDbCli) run_delete_json_path() ! {
 	}
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	spec := session.table_spec(table_name)!
-	_ = session.delete_json_path(mut db, table_name, primary_key.bytes(), json_column, json_path, storage.ChunkConfig.default(), storage.CommitMeta{
-		author: 'pollydb-cli'
-		message: 'delete json path ${json_column}.${json_path}'
+	_ = session.delete_json_path(mut db, table_name, primary_key.bytes(), json_column,
+		json_path, storage.ChunkConfig.default(), storage.CommitMeta{
+		author:    'pollydb-cli'
+		message:   'delete json path ${json_column}.${json_path}'
 		timestamp: 0
 	})!
 	loaded := session.get_row(mut db, table_name, primary_key.bytes())!
@@ -3159,9 +3362,10 @@ fn (mut cli PollyDbCli) run_patch_json_paths() ! {
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	spec := session.table_spec(table_name)!
 	updates := parse_json_path_updates(updates_csv)!
-	_ = session.patch_json_paths(mut db, table_name, primary_key.bytes(), json_column, updates, storage.ChunkConfig.default(), storage.CommitMeta{
-		author: 'pollydb-cli'
-		message: 'patch json paths ${json_column}'
+	_ = session.patch_json_paths(mut db, table_name, primary_key.bytes(), json_column,
+		updates, storage.ChunkConfig.default(), storage.CommitMeta{
+		author:    'pollydb-cli'
+		message:   'patch json paths ${json_column}'
 		timestamp: 0
 	})!
 	loaded := session.get_row(mut db, table_name, primary_key.bytes())!
@@ -3199,8 +3403,8 @@ fn (mut cli PollyDbCli) run_delete_row() ! {
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	cfg := storage.ChunkConfig.default()
 	_ = session.delete_row(mut db, table_name, primary_key.bytes(), cfg, storage.CommitMeta{
-		author: 'pollydb-cli'
-		message: 'delete row ${table_name}:${primary_key}'
+		author:    'pollydb-cli'
+		message:   'delete row ${table_name}:${primary_key}'
 		timestamp: 0
 	}) or {
 		if err.msg().contains('empty tree') {
@@ -3224,8 +3428,8 @@ fn (mut cli PollyDbCli) run_count_rows() ! {
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	count := session.count_rows(mut db, table_name)!
 	println(cli_render_fields('Count', [
-		CliField{'table', table_name}
-		CliField{'count', count.str()}
+		CliField{'table', table_name},
+		CliField{'count', count.str()},
 	]))
 }
 
@@ -3244,10 +3448,10 @@ fn (mut cli PollyDbCli) run_count_rows_range() ! {
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	count := session.count_rows_range(mut db, table_name, start_primary_key, end_primary_key)!
 	println(cli_render_fields('Count Range', [
-		CliField{'table', table_name}
-		CliField{'start', cli.args[ctx.next_idx + 1]}
-		CliField{'end', cli.args[ctx.next_idx + 2]}
-		CliField{'count', count.str()}
+		CliField{'table', table_name},
+		CliField{'start', cli.args[ctx.next_idx + 1]},
+		CliField{'end', cli.args[ctx.next_idx + 2]},
+		CliField{'count', count.str()},
 	]))
 }
 
@@ -3265,9 +3469,9 @@ fn (mut cli PollyDbCli) run_sum_column() ! {
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	sum := session.sum_i64_column(mut db, table_name, column_name)!
 	println(cli_render_fields('Sum', [
-		CliField{'table', table_name}
-		CliField{'column', column_name}
-		CliField{'sum', sum.str()}
+		CliField{'table', table_name},
+		CliField{'column', column_name},
+		CliField{'sum', sum.str()},
 	]))
 }
 
@@ -3285,13 +3489,14 @@ fn (mut cli PollyDbCli) run_sum_column_range() ! {
 		db.close() or {}
 	}
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
-	sum := session.sum_i64_column_range(mut db, table_name, column_name, start_primary_key, end_primary_key)!
+	sum := session.sum_i64_column_range(mut db, table_name, column_name, start_primary_key,
+		end_primary_key)!
 	println(cli_render_fields('Sum Range', [
-		CliField{'table', table_name}
-		CliField{'column', column_name}
-		CliField{'start', cli.args[ctx.next_idx + 2]}
-		CliField{'end', cli.args[ctx.next_idx + 3]}
-		CliField{'sum', sum.str()}
+		CliField{'table', table_name},
+		CliField{'column', column_name},
+		CliField{'start', cli.args[ctx.next_idx + 2]},
+		CliField{'end', cli.args[ctx.next_idx + 3]},
+		CliField{'sum', sum.str()},
 	]))
 }
 
@@ -3340,9 +3545,9 @@ fn (mut cli PollyDbCli) run_lookup_index() ! {
 		return
 	}
 	println(cli_render_fields('Index Lookup', [
-		CliField{'index', index.name}
-		CliField{'mode', if index.stores_row { 'covering' } else { 'standard' }}
-		CliField{'matches', rows.len.str()}
+		CliField{'index', index.name},
+		CliField{'mode', if index.stores_row { 'covering' } else { 'standard' }},
+		CliField{'matches', rows.len.str()},
 	]))
 	println('')
 	println(cli_render_rows('', spec, rows))
@@ -3368,16 +3573,17 @@ fn (mut cli PollyDbCli) run_scan_index_between() ! {
 	column := index_column(spec, index_name)!
 	start_value := parse_typed_value(column, raw_start)!
 	end_value := parse_typed_value(column, raw_end)!
-	rows := session.lookup_index_between(mut db, table_name, index_name, start_value, end_value, limit)!
+	rows := session.lookup_index_between(mut db, table_name, index_name, start_value,
+		end_value, limit)!
 	if rows.len == 0 {
 		println(cli_empty('no rows', 'no values matched the requested range'))
 		return
 	}
 	println(cli_render_fields('Index Scan', [
-		CliField{'index', index.name}
-		CliField{'mode', if index.stores_row { 'covering' } else { 'standard' }}
-		CliField{'scan', 'between'}
-		CliField{'matches', rows.len.str()}
+		CliField{'index', index.name},
+		CliField{'mode', if index.stores_row { 'covering' } else { 'standard' }},
+		CliField{'scan', 'between'},
+		CliField{'matches', rows.len.str()},
 	]))
 	println('')
 	println(cli_render_rows('', spec, rows))
@@ -3407,10 +3613,10 @@ fn (mut cli PollyDbCli) run_scan_index_after() ! {
 		return
 	}
 	println(cli_render_fields('Index Scan', [
-		CliField{'index', index.name}
-		CliField{'mode', if index.stores_row { 'covering' } else { 'standard' }}
-		CliField{'scan', 'after'}
-		CliField{'matches', rows.len.str()}
+		CliField{'index', index.name},
+		CliField{'mode', if index.stores_row { 'covering' } else { 'standard' }},
+		CliField{'scan', 'after'},
+		CliField{'matches', rows.len.str()},
 	]))
 	println('')
 	println(cli_render_rows('', spec, rows))
@@ -3440,10 +3646,10 @@ fn (mut cli PollyDbCli) run_scan_index_before() ! {
 		return
 	}
 	println(cli_render_fields('Index Scan', [
-		CliField{'index', index.name}
-		CliField{'mode', if index.stores_row { 'covering' } else { 'standard' }}
-		CliField{'scan', 'before'}
-		CliField{'matches', rows.len.str()}
+		CliField{'index', index.name},
+		CliField{'mode', if index.stores_row { 'covering' } else { 'standard' }},
+		CliField{'scan', 'before'},
+		CliField{'matches', rows.len.str()},
 	]))
 	println('')
 	println(cli_render_rows('', spec, rows))
@@ -3457,7 +3663,11 @@ fn (mut cli PollyDbCli) run_scan_index() ! {
 	table_name := cli.args[ctx.next_idx]
 	index_name := cli.args[ctx.next_idx + 1]
 	raw_value := cli.args[ctx.next_idx + 2]
-	start_primary_key := if cli.args.len > ctx.next_idx + 3 { cli.args[ctx.next_idx + 3].bytes() } else { []u8{} }
+	start_primary_key := if cli.args.len > ctx.next_idx + 3 {
+		cli.args[ctx.next_idx + 3].bytes()
+	} else {
+		[]u8{}
+	}
 	limit := if cli.args.len > ctx.next_idx + 4 { cli.args[ctx.next_idx + 4].int() } else { 0 }
 	mut db := storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
 	defer {
@@ -3468,13 +3678,14 @@ fn (mut cli PollyDbCli) run_scan_index() ! {
 	index := table_index_def(spec, index_name)!
 	column := index_column(spec, index_name)!
 	value := parse_typed_value(column, raw_value)!
-	mut cursor := session.index_cursor(mut db, table_name, index_name, value, start_primary_key, limit)!
+	mut cursor := session.index_cursor(mut db, table_name, index_name, value, start_primary_key,
+		limit)!
 	rows := cursor.collect(limit)!
 	if rows.len == 0 {
 		println(cli_empty('no rows', 'no rows matched this index value'))
 		return
 	}
-	println('index=${index.name} mode=${if index.stores_row { "covering" } else { "standard" }} matches=${rows.len}')
+	println('index=${index.name} mode=${if index.stores_row { 'covering' } else { 'standard' }} matches=${rows.len}')
 	for row in rows {
 		println(format_typed_row(row.row, spec))
 	}
@@ -3503,7 +3714,7 @@ fn (mut cli PollyDbCli) run_prefix_index() ! {
 		println(cli_empty('no rows', 'no rows matched this prefix'))
 		return
 	}
-	println('index=${index.name} mode=${if index.stores_row { "covering" } else { "standard" }} scan=prefix matches=${rows.len}')
+	println('index=${index.name} mode=${if index.stores_row { 'covering' } else { 'standard' }} scan=prefix matches=${rows.len}')
 	for row in rows {
 		println(format_typed_row(row, spec))
 	}
@@ -3531,12 +3742,13 @@ fn (mut cli PollyDbCli) run_prefix_index_projected() ! {
 	index := table_index_def(spec, index_name)!
 	column := index_column(spec, index_name)!
 	prefix := parse_typed_value(column, raw_prefix)!
-	rows := session.lookup_index_prefix_projected(mut db, table_name, index_name, prefix, limit, columns)!
+	rows := session.lookup_index_prefix_projected(mut db, table_name, index_name, prefix,
+		limit, columns)!
 	if rows.len == 0 {
 		println(cli_empty('no rows', 'no rows matched this prefix'))
 		return
 	}
-	println('index=${index.name} mode=${if index.stores_row { "covering" } else { "standard" }} scan=prefix projected=${columns.join(",")} matches=${rows.len}')
+	println('index=${index.name} mode=${if index.stores_row { 'covering' } else { 'standard' }} scan=prefix projected=${columns.join(',')} matches=${rows.len}')
 	for row in rows {
 		println(format_typed_row(row, spec))
 	}
@@ -3554,13 +3766,13 @@ fn (mut cli PollyDbCli) run_query_fts_preview() ! {
 	terms := parse_csv_values(cli.args[ctx.next_idx + 4])
 	select_columns, limit := parse_optional_columns_and_limit(cli.args, ctx.next_idx + 5)!
 	query := storage.FtsQuery{
-		table_name: table_name
-		column_name: column_name
-		scope: scope
-		kind: kind
-		terms: terms
+		table_name:     table_name
+		column_name:    column_name
+		scope:          scope
+		kind:           kind
+		terms:          terms
 		select_columns: select_columns
-		limit: limit
+		limit:          limit
 	}
 	mut db := storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
 	defer {
@@ -3570,15 +3782,19 @@ fn (mut cli PollyDbCli) run_query_fts_preview() ! {
 	preview := session.preview_fts_query_details(query)!
 	mut lines := []string{}
 	lines << cli_render_field_card('FTS Query Preview', [
-		CliField{'table', preview.plan.table_name}
-		CliField{'column', preview.plan.column_name}
-		CliField{'scope', storage.fts_scope_name(preview.plan.scope)}
-		CliField{'kind', storage.fts_query_kind_name(preview.plan.kind)}
-		CliField{'selector', preview.plan.selector}
-		CliField{'strategy', preview.plan.strategy}
-		CliField{'index', if preview.plan.index_name.len > 0 { preview.plan.index_name } else { cli_dim('(scan)') }}
-		CliField{'terms', preview.plan.term_count.str()}
-		CliField{'limit', preview.plan.limit.str()}
+		CliField{'table', preview.plan.table_name},
+		CliField{'column', preview.plan.column_name},
+		CliField{'scope', storage.fts_scope_name(preview.plan.scope)},
+		CliField{'kind', storage.fts_query_kind_name(preview.plan.kind)},
+		CliField{'selector', preview.plan.selector},
+		CliField{'strategy', preview.plan.strategy},
+		CliField{'index', if preview.plan.index_name.len > 0 {
+			preview.plan.index_name
+		} else {
+			cli_dim('(scan)')
+		}},
+		CliField{'terms', preview.plan.term_count.str()},
+		CliField{'limit', preview.plan.limit.str()},
 	])
 	if preview.warnings.len > 0 {
 		lines << ''
@@ -3603,13 +3819,13 @@ fn (mut cli PollyDbCli) run_query_fts() ! {
 	terms := parse_csv_values(cli.args[ctx.next_idx + 4])
 	select_columns, limit := parse_optional_columns_and_limit(cli.args, ctx.next_idx + 5)!
 	query := storage.FtsQuery{
-		table_name: table_name
-		column_name: column_name
-		scope: scope
-		kind: kind
-		terms: terms
+		table_name:     table_name
+		column_name:    column_name
+		scope:          scope
+		kind:           kind
+		terms:          terms
 		select_columns: select_columns
-		limit: limit
+		limit:          limit
 	}
 	mut db := storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
 	defer {
@@ -3624,13 +3840,17 @@ fn (mut cli PollyDbCli) run_query_fts() ! {
 	}
 	mut lines := []string{}
 	lines << cli_render_field_card('FTS Query', [
-		CliField{'table', result.plan.table_name}
-		CliField{'column', result.plan.column_name}
-		CliField{'scope', storage.fts_scope_name(result.plan.scope)}
-		CliField{'kind', storage.fts_query_kind_name(result.plan.kind)}
-		CliField{'strategy', result.plan.strategy}
-		CliField{'index', if result.plan.index_name.len > 0 { result.plan.index_name } else { cli_dim('(scan)') }}
-		CliField{'matches', result.rows.len.str()}
+		CliField{'table', result.plan.table_name},
+		CliField{'column', result.plan.column_name},
+		CliField{'scope', storage.fts_scope_name(result.plan.scope)},
+		CliField{'kind', storage.fts_query_kind_name(result.plan.kind)},
+		CliField{'strategy', result.plan.strategy},
+		CliField{'index', if result.plan.index_name.len > 0 {
+			result.plan.index_name
+		} else {
+			cli_dim('(scan)')
+		}},
+		CliField{'matches', result.rows.len.str()},
 	])
 	lines << ''
 	lines << cli_render_fts_hits(result.hits)
@@ -3643,8 +3863,7 @@ fn main() {
 	mut cli := PollyDbCli.new(os.args[1..])
 	cli.run() or {
 		eprintln(err.msg())
-		if err.msg().starts_with('unknown command:')
-			|| err.msg().contains('requires <')
+		if err.msg().starts_with('unknown command:') || err.msg().contains('requires <')
 			|| err.msg().contains('requires [') {
 			eprintln(cli.usage())
 		}

@@ -589,6 +589,9 @@ pub fn TypedIndexedSchemaView.new_with_split_storage(schema TypedSchemaView, ind
 		} else if index.is_fts() {
 			column := schema.codec.table.column(index.column)!
 			validate_fts_index(column, index)!
+		} else if index.is_embedding() {
+			column := schema.codec.table.column(index.column)!
+			validate_embedding_index(column, index)!
 		} else if index.is_field_selector() {
 			column := schema.codec.table.column(index.column)!
 			validate_field_selector_index(column, index)!
@@ -768,6 +771,9 @@ pub fn TypedTableSpec.new(table TableDef, indexes []SchemaIndexDef) !TypedTableS
 		} else if index.is_fts() {
 			column := table.column(index.column)!
 			validate_fts_index(column, index)!
+		} else if index.is_embedding() {
+			column := table.column(index.column)!
+			validate_embedding_index(column, index)!
 		} else if index.is_field_selector() {
 			column := table.column(index.column)!
 			validate_field_selector_index(column, index)!

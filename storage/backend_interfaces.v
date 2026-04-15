@@ -31,8 +31,8 @@ mut:
 
 pub interface CatalogBackend {
 mut:
-	load_catalog() !(map[string]TypedTableSpec, map[string]AggregateProjectionDef)
-	save_catalog(catalog map[string]TypedTableSpec, projectors map[string]AggregateProjectionDef) !
+	load_catalog() !(map[string]TypedTableSpec, map[string]AggregateProjectionDef, map[string]MemoryCapabilityDef)
+	save_catalog(catalog map[string]TypedTableSpec, projectors map[string]AggregateProjectionDef, memory_capabilities map[string]MemoryCapabilityDef) !
 }
 
 pub interface DatabaseBackendProvider {
@@ -159,14 +159,14 @@ pub:
 	root_dir string
 }
 
-pub fn (mut backend LocalCatalogBackend) load_catalog() !(map[string]TypedTableSpec, map[string]AggregateProjectionDef) {
+pub fn (mut backend LocalCatalogBackend) load_catalog() !(map[string]TypedTableSpec, map[string]AggregateProjectionDef, map[string]MemoryCapabilityDef) {
 	return load_database_catalog(backend.root_dir)
 }
 
-pub fn (mut backend LocalCatalogBackend) save_catalog(catalog map[string]TypedTableSpec, projectors map[string]AggregateProjectionDef) ! {
+pub fn (mut backend LocalCatalogBackend) save_catalog(catalog map[string]TypedTableSpec, projectors map[string]AggregateProjectionDef, memory_capabilities map[string]MemoryCapabilityDef) ! {
 	catalog_path := database_catalog_path(backend.root_dir)
 	os.mkdir_all(os.dir(catalog_path))!
-	os.write_file(catalog_path, catalog_data(catalog, projectors).bytestr())!
+	os.write_file(catalog_path, catalog_data(catalog, projectors, memory_capabilities).bytestr())!
 }
 
 pub struct LocalBackendPaths {
@@ -180,17 +180,17 @@ pub:
 
 pub fn local_backend_paths(root_dir string) LocalBackendPaths {
 	return LocalBackendPaths{
-		root_dir: root_dir
+		root_dir:        root_dir
 		repository_meta: repository_metadata_path(root_dir)
-		nodes_chunk: repository_nodes_path(root_dir)
-		commits_chunk: repository_commits_path(root_dir)
-		catalog_meta: database_catalog_path(root_dir)
+		nodes_chunk:     repository_nodes_path(root_dir)
+		commits_chunk:   repository_commits_path(root_dir)
+		catalog_meta:    database_catalog_path(root_dir)
 	}
 }
 
 pub struct LocalDatabaseBackends {
 pub:
-	paths                   LocalBackendPaths
+	paths LocalBackendPaths
 mut:
 	node_backend            LocalNodeBackend
 	commit_backend          LocalCommitBackend
@@ -207,16 +207,16 @@ pub fn open_local_database_backends(root_dir string, default_branch string) !Loc
 		Repository.new(default_branch).persist(paths.repository_meta)!
 	}
 	return LocalDatabaseBackends{
-		paths: paths
-		node_backend: LocalNodeBackend.open_high_throughput(paths.nodes_chunk)!
-		commit_backend: LocalCommitBackend.open_high_throughput(paths.commits_chunk)!
-		branch_head_backend: LocalBranchHeadBackend{
+		paths:                   paths
+		node_backend:            LocalNodeBackend.open_high_throughput(paths.nodes_chunk)!
+		commit_backend:          LocalCommitBackend.open_high_throughput(paths.commits_chunk)!
+		branch_head_backend:     LocalBranchHeadBackend{
 			path: paths.repository_meta
 		}
 		repository_meta_backend: LocalRepositoryMetaBackend{
 			path: paths.repository_meta
 		}
-		catalog_backend: LocalCatalogBackend{
+		catalog_backend:         LocalCatalogBackend{
 			root_dir: root_dir
 		}
 	}
@@ -238,13 +238,13 @@ pub fn (mut backends LocalDatabaseBackends) close() {
 
 pub struct LocalDatabaseBackendProvider {
 pub:
-	root_dir            string
+	root_dir              string
 	config_default_branch string
 }
 
 pub fn LocalDatabaseBackendProvider.new(root_dir string, default_branch string) LocalDatabaseBackendProvider {
 	return LocalDatabaseBackendProvider{
-		root_dir: root_dir
+		root_dir:              root_dir
 		config_default_branch: default_branch
 	}
 }

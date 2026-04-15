@@ -6,12 +6,8 @@ import term
 import time
 
 fn test_parse_register_table_spec() {
-	spec := parse_register_table_spec(
-		'users',
-		'id',
-		'id:string,name:string,email:string?,active:bool',
-		'email_idx:email',
-	) or { panic(err) }
+	spec := parse_register_table_spec('users', 'id', 'id:string,name:string,email:string?,active:bool',
+		'email_idx:email') or { panic(err) }
 	assert spec.name() == 'users'
 	assert spec.table.primary_key == ['id']
 	assert spec.table.columns.len == 4
@@ -25,12 +21,8 @@ fn test_parse_register_table_spec() {
 }
 
 fn test_parse_register_table_spec_covering_index() {
-	spec := parse_register_table_spec(
-		'users',
-		'id',
-		'id:string,name:string,email:string?',
-		'email_cover:email:covering',
-	) or { panic(err) }
+	spec := parse_register_table_spec('users', 'id', 'id:string,name:string,email:string?',
+		'email_cover:email:covering') or { panic(err) }
 	assert spec.indexes.len == 1
 	assert spec.indexes[0].name == 'email_cover'
 	assert spec.indexes[0].column == 'email'
@@ -38,24 +30,17 @@ fn test_parse_register_table_spec_covering_index() {
 }
 
 fn test_parse_register_table_spec_sum_aggregate_column() {
-	spec := parse_register_table_spec(
-		'metrics',
-		'id',
-		'id:i64:sum,name:string',
-		'-',
-	) or { panic(err) }
+	spec := parse_register_table_spec('metrics', 'id', 'id:i64:sum,name:string', '-') or {
+		panic(err)
+	}
 	assert spec.table.columns.len == 2
 	assert spec.table.columns[0].aggregate == .sum
 	assert spec.table.columns[1].aggregate == .none
 }
 
 fn test_parse_register_table_spec_enum_and_json_columns() {
-	spec := parse_register_table_spec(
-		'items',
-		'id',
-		'id:string,status:enum(active|draft|done),meta:json,enabled:bool',
-		'-',
-	) or { panic(err) }
+	spec := parse_register_table_spec('items', 'id', 'id:string,status:enum(active|draft|done),meta:json,enabled:bool',
+		'-') or { panic(err) }
 	assert spec.table.columns.len == 4
 	assert spec.table.columns[1].typ == .enum_
 	assert spec.table.columns[1].enum_values == ['active', 'draft', 'done']
@@ -64,12 +49,8 @@ fn test_parse_register_table_spec_enum_and_json_columns() {
 }
 
 fn test_parse_register_table_spec_datetime_modifiers() {
-	spec := parse_register_table_spec(
-		'events',
-		'id',
-		'id:string,created_at:datetime:current_timestamp,updated_at:datetime:current_timestamp:auto_update',
-		'-',
-	) or { panic(err) }
+	spec := parse_register_table_spec('events', 'id', 'id:string,created_at:datetime:current_timestamp,updated_at:datetime:current_timestamp:auto_update',
+		'-') or { panic(err) }
 	assert spec.table.columns[1].typ == .datetime_
 	assert spec.table.columns[1].default_current_timestamp
 	assert !spec.table.columns[1].auto_update_current_timestamp
@@ -78,12 +59,9 @@ fn test_parse_register_table_spec_datetime_modifiers() {
 }
 
 fn test_parse_register_table_spec_json_path_indexes() {
-	spec := parse_register_table_spec(
-		'items',
-		'id',
-		'id:string,meta:json',
-		'kind_idx:meta.kind:string,flag_cover:meta.enabled:bool:covering',
-	) or { panic(err) }
+	spec := parse_register_table_spec('items', 'id', 'id:string,meta:json', 'kind_idx:meta.kind:string,flag_cover:meta.enabled:bool:covering') or {
+		panic(err)
+	}
 	assert spec.indexes.len == 2
 	assert spec.indexes[0].is_json_path()
 	assert spec.indexes[0].json_field == 'kind'
@@ -96,12 +74,9 @@ fn test_parse_register_table_spec_json_path_indexes() {
 }
 
 fn test_parse_register_table_spec_markdown_selector_indexes() {
-	spec := parse_register_table_spec(
-		'notes',
-		'id',
-		'id:string,body:markdown',
-		'body_heading_text_idx:body#heading_text:2:string,body_link_count_idx:body#links:i64,body_code_lang_cover:body#code_block_lang:string:covering',
-	) or { panic(err) }
+	spec := parse_register_table_spec('notes', 'id', 'id:string,body:markdown', 'body_heading_text_idx:body#heading_text:2:string,body_link_count_idx:body#links:i64,body_code_lang_cover:body#code_block_lang:string:covering') or {
+		panic(err)
+	}
 	assert spec.indexes.len == 3
 	assert spec.indexes[0].is_field_selector()
 	assert spec.indexes[0].column == 'body'
@@ -127,16 +102,37 @@ fn test_parse_index_defs_rejects_invalid_markdown_selector_type() {
 }
 
 fn test_format_table_spec_round_trips_markdown_selector_indexes() {
-	spec := parse_register_table_spec(
-		'notes',
-		'id',
-		'id:string,body:markdown',
-		'body_heading_text_idx:body#heading_text:2:string,body_link_count_idx:body#links:i64,body_code_lang_cover:body#code_block_lang:string:covering',
-	) or { panic(err) }
+	spec := parse_register_table_spec('notes', 'id', 'id:string,body:markdown', 'body_heading_text_idx:body#heading_text:2:string,body_link_count_idx:body#links:i64,body_code_lang_cover:body#code_block_lang:string:covering') or {
+		panic(err)
+	}
 	rendered := format_table_spec(spec)
 	assert rendered.contains('body_heading_text_idx:body#heading_text:2:string')
 	assert rendered.contains('body_link_count_idx:body#links:i64')
 	assert rendered.contains('body_code_lang_cover:body#code_block_lang:string:covering')
+}
+
+fn test_parse_register_table_spec_embedding_indexes() {
+	spec := parse_register_table_spec('notes', 'id', 'id:string,summary:string,body:markdown',
+		'summary_vec_idx:summary#embedding(bge-small),body_path_vec_idx:body#embedding(path,bge-small)') or {
+		panic(err)
+	}
+	assert spec.indexes.len == 2
+	assert spec.indexes[0].is_embedding()
+	assert spec.indexes[0].embedding_profile == 'bge-small'
+	assert spec.indexes[0].embedding_scope == ''
+	assert spec.indexes[1].is_embedding()
+	assert spec.indexes[1].embedding_source_plugin == 'markdown'
+	assert spec.indexes[1].embedding_scope == 'path'
+}
+
+fn test_format_table_spec_round_trips_embedding_indexes() {
+	spec := parse_register_table_spec('notes', 'id', 'id:string,summary:string,body:markdown',
+		'summary_vec_idx:summary#embedding(bge-small),body_path_vec_idx:body#embedding(path,bge-small)') or {
+		panic(err)
+	}
+	rendered := format_table_spec(spec)
+	assert rendered.contains('summary_vec_idx:summary#embedding(bge-small)')
+	assert rendered.contains('body_path_vec_idx:body#embedding(path,bge-small)')
 }
 
 fn test_parse_index_defs_dash_means_empty() {
@@ -153,12 +149,8 @@ fn test_parse_index_defs_rejects_unknown_mode() {
 }
 
 fn test_parse_register_table_spec_mixed_index_modes() {
-	spec := parse_register_table_spec(
-		'users',
-		'id',
-		'id:string,email:string?,name:string',
-		'email_idx:email,email_cover:email:covering',
-	) or { panic(err) }
+	spec := parse_register_table_spec('users', 'id', 'id:string,email:string?,name:string',
+		'email_idx:email,email_cover:email:covering') or { panic(err) }
 	assert spec.indexes.len == 2
 	assert !spec.indexes[0].stores_row
 	assert spec.indexes[1].stores_row
@@ -180,7 +172,9 @@ fn test_parse_typed_value_current_timestamp_datetime() {
 		string {
 			_ := time.parse_rfc3339(value) or { panic(err) }
 		}
-		else { panic('expected datetime string') }
+		else {
+			panic('expected datetime string')
+		}
 	}
 }
 
@@ -340,8 +334,9 @@ fn test_cli_looks_like_url() {
 }
 
 fn test_cli_render_sync_result_includes_auto_merged_status() {
-	output := cli_render_sync_result('Sync Push (Sidecar)', 'push', '/tmp/source', 'main', 'http://127.0.0.1:19191', 'main', 'manifest_depth1', 5, 1024, storage.Branch{
-		name: 'main'
+	output := cli_render_sync_result('Sync Push (Sidecar)', 'push', '/tmp/source', 'main',
+		'http://127.0.0.1:19191', 'main', 'manifest_depth1', 5, 1024, storage.Branch{
+		name:       'main'
 		commit_cid: 'commit-123'
 	}, 'auto_merged')
 	assert term.strip_ansi(output).contains('auto_merged')
@@ -432,12 +427,8 @@ fn test_resolve_db_context_accepts_repository_layout_without_repo_meta() {
 }
 
 fn test_build_typed_row() {
-	spec := parse_register_table_spec(
-		'users',
-		'id',
-		'id:string,active:bool,score:i64,payload:bytes?,email:string?',
-		'-',
-	) or { panic(err) }
+	spec := parse_register_table_spec('users', 'id', 'id:string,active:bool,score:i64,payload:bytes?,email:string?',
+		'-') or { panic(err) }
 	row := build_typed_row(spec, 'id=001,active=true,score=42,payload=hex:6162,email=null') or {
 		panic(err)
 	}
@@ -469,12 +460,8 @@ fn test_build_typed_row() {
 }
 
 fn test_build_typed_row_accepts_enum_and_json() {
-	spec := parse_register_table_spec(
-		'items',
-		'id',
-		'id:string,status:enum(active|draft),meta:json',
-		'-',
-	) or { panic(err) }
+	spec := parse_register_table_spec('items', 'id', 'id:string,status:enum(active|draft),meta:json',
+		'-') or { panic(err) }
 	row := build_typed_row(spec, 'id=001,status=active,meta={"kind":"alpha","enabled":true}') or {
 		panic(err)
 	}
@@ -491,12 +478,8 @@ fn test_build_typed_row_accepts_enum_and_json() {
 }
 
 fn test_apply_insert_defaults_populates_datetime_columns() {
-	spec := parse_register_table_spec(
-		'users',
-		'id',
-		'id:string,name:string,created_at:datetime:current_timestamp,updated_at:datetime:current_timestamp:auto_update',
-		'-',
-	) or { panic(err) }
+	spec := parse_register_table_spec('users', 'id', 'id:string,name:string,created_at:datetime:current_timestamp,updated_at:datetime:current_timestamp:auto_update',
+		'-') or { panic(err) }
 	row := build_typed_row(spec, 'id=u-001,name=Ada') or { panic(err) }
 	with_defaults := apply_insert_defaults(spec, row)
 	created_at := with_defaults.get('created_at') or { panic(err) }
@@ -505,13 +488,17 @@ fn test_apply_insert_defaults_populates_datetime_columns() {
 		string {
 			_ := time.parse_rfc3339(created_at) or { panic(err) }
 		}
-		else { panic('expected datetime string created_at') }
+		else {
+			panic('expected datetime string created_at')
+		}
 	}
 	match updated_at {
 		string {
 			_ := time.parse_rfc3339(updated_at) or { panic(err) }
 		}
-		else { panic('expected datetime string updated_at') }
+		else {
+			panic('expected datetime string updated_at')
+		}
 	}
 	auto_filled := detect_auto_filled_columns(spec, row, with_defaults)
 	assert auto_filled == ['created_at', 'updated_at']
@@ -519,20 +506,20 @@ fn test_apply_insert_defaults_populates_datetime_columns() {
 
 fn test_format_merge_preview() {
 	formatted := format_merge_preview(storage.RootHashMergePreview{
-		ours_branch: 'main'
-		theirs_branch: 'feature'
-		base_commit_cid: 'base'
-		base_root_cid: 'base-root'
-		ours_commit_cid: 'ours'
-		ours_root_cid: 'ours-root'
+		ours_branch:       'main'
+		theirs_branch:     'feature'
+		base_commit_cid:   'base'
+		base_root_cid:     'base-root'
+		ours_commit_cid:   'ours'
+		ours_root_cid:     'ours-root'
 		theirs_commit_cid: 'theirs'
-		theirs_root_cid: 'theirs-root'
-		conflicts: 0
-		changed_keys: 2
-		changed_subtrees: 1
-		fast_forward: false
-		ours_unchanged: false
-		theirs_unchanged: false
+		theirs_root_cid:   'theirs-root'
+		conflicts:         0
+		changed_keys:      2
+		changed_subtrees:  1
+		fast_forward:      false
+		ours_unchanged:    false
+		theirs_unchanged:  false
 	})
 	assert formatted.contains('ours_branch=main')
 	assert formatted.contains('theirs_branch=feature')
@@ -541,33 +528,33 @@ fn test_format_merge_preview() {
 
 fn test_format_merge_report() {
 	formatted := format_merge_report(storage.RootHashMergeReport{
-		preview: storage.RootHashMergePreview{
-			ours_branch: 'main'
-			theirs_branch: 'feature'
-			base_commit_cid: 'base'
-			base_root_cid: 'base-root'
-			ours_commit_cid: 'ours'
-			ours_root_cid: 'ours-root'
+		preview:        storage.RootHashMergePreview{
+			ours_branch:       'main'
+			theirs_branch:     'feature'
+			base_commit_cid:   'base'
+			base_root_cid:     'base-root'
+			ours_commit_cid:   'ours'
+			ours_root_cid:     'ours-root'
 			theirs_commit_cid: 'theirs'
-			theirs_root_cid: 'theirs-root'
-			conflicts: 1
-			changed_keys: 4
-			changed_subtrees: 1
-			fast_forward: false
-			ours_unchanged: false
-			theirs_unchanged: false
+			theirs_root_cid:   'theirs-root'
+			conflicts:         1
+			changed_keys:      4
+			changed_subtrees:  1
+			fast_forward:      false
+			ours_unchanged:    false
+			theirs_unchanged:  false
 		}
-		table_stats: [
+		table_stats:    [
 			storage.MergeTableStat{
-				table_name: 'users'
-				row_changes: 2
-				index_changes: 1
+				table_name:       'users'
+				row_changes:      2
+				index_changes:    1
 				conflict_changes: 1
 			},
 		]
-		conflict_keys: [
+		conflict_keys:  [
 			storage.MergeConflictPreview{
-				key: 't|users|001'
+				key:        't|users|001'
 				table_name: 'users'
 				index_name: ''
 			},

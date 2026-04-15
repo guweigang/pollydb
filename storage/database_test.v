@@ -688,6 +688,112 @@ fn test_persistent_database_catalog_preserves_datetime_behaviors() {
 	assert loaded.table.columns[3].auto_update_current_timestamp
 }
 
+fn database_docs_embedding_spec() !TypedTableSpec {
+	return TypedTableSpec.new(TableDef.new('docs', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('summary', .string_, false)!,
+		ColumnDef.new('body', .markdown_, false)!,
+	], ['id'])!, [
+		SchemaIndexDef.embedding_text('summary_vec_idx', 'summary', 'bge-small')!,
+		SchemaIndexDef.embedding_markdown('body_path_vec_idx', 'body', .path, 'bge-small')!,
+	])!
+}
+
+fn test_persistent_database_catalog_preserves_embedding_indexes() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-catalog-embedding')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_docs_embedding_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	db.close() or { panic(err) }
+
+	mut reopened := PersistentDatabase.open(dir, 'main') or { panic(err) }
+	defer {
+		reopened.close() or {}
+	}
+	loaded := reopened.table_spec('docs') or { panic(err) }
+	assert loaded.indexes.len == 2
+	assert loaded.indexes[0].is_embedding()
+	assert loaded.indexes[0].embedding_source_plugin == ''
+	assert loaded.indexes[0].embedding_scope == ''
+	assert loaded.indexes[0].embedding_profile == 'bge-small'
+	assert loaded.indexes[1].is_embedding()
+	assert loaded.indexes[1].embedding_source_plugin == 'markdown'
+	assert loaded.indexes[1].embedding_scope == 'path'
+	assert loaded.indexes[1].embedding_profile == 'bge-small'
+}
+
+fn test_persistent_database_catalog_preserves_memory_capabilities() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-catalog-memory-capabilities')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_docs_embedding_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	db.register_memory_capability(MemoryCapabilityDef.reflective_field('docs', 'body',
+		ReflectionOptions{
+		embedding_index:         'body_path_vec_idx'
+		reflection_kind:         'summary'
+		replay_anchor:           true
+		link_evidence_blocks:    true
+		link_semantic_neighbors: true
+	}) or { panic(err) }) or { panic(err) }
+	db.close() or { panic(err) }
+
+	mut reopened := PersistentDatabase.open(dir, 'main') or { panic(err) }
+	defer {
+		reopened.close() or {}
+	}
+	capability := reopened.memory_capability('docs', 'body') or {
+		panic('expected memory capability for docs.body')
+	}
+	assert capability.table_name == 'docs'
+	assert capability.column_name == 'body'
+	assert capability.options.enabled
+	assert capability.options.embedding_index == 'body_path_vec_idx'
+	assert capability.options.reflection_kind == 'summary'
+	assert capability.options.replay_anchor
+	assert capability.options.link_evidence_blocks
+	assert capability.options.link_semantic_neighbors
+	assert reopened.memory_capabilities_for_table('docs').len == 1
+}
+
+fn test_persistent_database_register_memory_capability_requires_matching_embedding_index() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-memory-capability-validation')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_docs_embedding_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+
+	mut saw_missing_err := false
+	db.register_memory_capability(MemoryCapabilityDef.reflective_field('docs', 'body',
+		ReflectionOptions{
+		embedding_index: 'missing_vec_idx'
+	}) or { panic(err) }) or {
+		assert err.msg().contains('embedding_index not found on table')
+		saw_missing_err = true
+	}
+	assert saw_missing_err
+
+	mut saw_wrong_column_err := false
+	db.register_memory_capability(MemoryCapabilityDef.reflective_field('docs', 'body',
+		ReflectionOptions{
+		embedding_index: 'summary_vec_idx'
+	}) or { panic(err) }) or {
+		assert err.msg().contains('embedding_index must target the same column')
+		saw_wrong_column_err = true
+	}
+	assert saw_wrong_column_err
+}
+
 fn test_persistent_database_datetime_current_timestamp_and_auto_update() {
 	cfg := ChunkConfig{
 		min_size: 64
@@ -2722,9 +2828,12 @@ fn test_persistent_database_open_local_backends() {
 	}
 	repo := backends.repository_meta_backend.load_repository() or { panic(err) }
 	assert repo.default_branch == 'main'
-	catalog, projectors := backends.catalog_backend.load_catalog() or { panic(err) }
+	catalog, projectors, memory_capabilities := backends.catalog_backend.load_catalog() or {
+		panic(err)
+	}
 	assert catalog.len == 0
 	assert projectors.len == 0
+	assert memory_capabilities.len == 0
 }
 
 fn test_persistent_database_backend_provider() {

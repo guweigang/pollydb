@@ -173,7 +173,7 @@ fn sqlite_stmt_text(stmt &C.sqlite3_stmt, idx int) string {
 	if value_len <= 0 {
 		return ''
 	}
-	return unsafe { (&char(value)).vstring_with_len(value_len) }
+	return unsafe { (&char(value)).vstring_with_len(value_len).clone() }
 }
 
 fn (db &FtsSqliteDb) q_f64(query string) !f64 {

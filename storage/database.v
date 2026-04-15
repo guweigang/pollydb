@@ -15,11 +15,12 @@ pub:
 	root_dir       string
 	default_branch string
 mut:
-	engine         PersistentEngine
-	catalog        map[string]TypedTableSpec
-	projectors     map[string]AggregateProjectionDef
-	field_registry FieldCapabilityRegistry
-	catalog_dirty  bool
+	engine              PersistentEngine
+	catalog             map[string]TypedTableSpec
+	projectors          map[string]AggregateProjectionDef
+	memory_capabilities map[string]MemoryCapabilityDef
+	field_registry      FieldCapabilityRegistry
+	catalog_dirty       bool
 }
 
 pub struct PersistentDatabaseOpenTimings {
@@ -776,7 +777,7 @@ fn row_spec_for_merge_key(key []u8, specs []TypedTableSpec) ?TypedTableSpec {
 }
 
 fn persistent_typed_index_values_from_row(root_dir string, row TypedRowData, index SchemaIndexDef, table TableDef) ![]ColumnValue {
-	if index.is_fts() {
+	if index.is_fts() || index.is_embedding() {
 		return []ColumnValue{}
 	}
 	if !index.is_field_selector() {
@@ -1718,7 +1719,17 @@ fn sorted_projector_names_by_priority(projectors map[string]AggregateProjectionD
 	return names
 }
 
-fn catalog_data(catalog map[string]TypedTableSpec, projectors map[string]AggregateProjectionDef) []u8 {
+fn sorted_memory_capability_keys(capabilities map[string]MemoryCapabilityDef) []string {
+	mut keys := capabilities.keys()
+	keys.sort()
+	return keys
+}
+
+fn memory_capability_key(table_name string, column_name string) string {
+	return '${table_name}\x00${column_name}'
+}
+
+fn catalog_data(catalog map[string]TypedTableSpec, projectors map[string]AggregateProjectionDef, memory_capabilities map[string]MemoryCapabilityDef) []u8 {
 	mut out := []u8{}
 	names := sorted_catalog_names(catalog)
 	database_append_u32(mut out, u32(names.len))
@@ -1752,14 +1763,19 @@ fn catalog_data(catalog map[string]TypedTableSpec, projectors map[string]Aggrega
 	}
 	mut fts_table_names := []string{}
 	mut fts_indexes := []SchemaIndexDef{}
+	mut embedding_table_names := []string{}
+	mut embedding_indexes := []SchemaIndexDef{}
 	for name in names {
 		spec := catalog[name] or { continue }
 		for index in spec.indexes {
-			if !index.is_fts() {
-				continue
+			if index.is_fts() {
+				fts_table_names << spec.table.name
+				fts_indexes << index
 			}
-			fts_table_names << spec.table.name
-			fts_indexes << index
+			if index.is_embedding() {
+				embedding_table_names << spec.table.name
+				embedding_indexes << index
+			}
 		}
 	}
 	projector_names := sorted_projector_names(projectors)
@@ -1834,12 +1850,43 @@ fn catalog_data(catalog map[string]TypedTableSpec, projectors map[string]Aggrega
 			database_append_u32(mut out, u32(prefix_len))
 		}
 	}
+	database_append_field(mut out, 'schema_embedding_indexes_v1'.bytes())
+	database_append_u32(mut out, u32(embedding_indexes.len))
+	for idx, index in embedding_indexes {
+		database_append_field(mut out, embedding_table_names[idx].bytes())
+		database_append_field(mut out, index.name.bytes())
+		database_append_field(mut out, index.embedding_source_plugin.bytes())
+		database_append_field(mut out, index.embedding_scope.bytes())
+		database_append_field(mut out, index.embedding_profile.bytes())
+	}
+	capability_keys := sorted_memory_capability_keys(memory_capabilities)
+	database_append_field(mut out, 'memory_capabilities_v1'.bytes())
+	database_append_u32(mut out, u32(capability_keys.len))
+	for key in capability_keys {
+		capability := memory_capabilities[key] or { continue }
+		database_append_field(mut out, capability.table_name.bytes())
+		database_append_field(mut out, capability.column_name.bytes())
+		database_append_u8(mut out, if capability.options.enabled { u8(1) } else { u8(0) })
+		database_append_field(mut out, capability.options.embedding_index.bytes())
+		database_append_field(mut out, capability.options.reflection_kind.bytes())
+		database_append_u8(mut out, if capability.options.replay_anchor { u8(1) } else { u8(0) })
+		database_append_u8(mut out, if capability.options.link_evidence_blocks {
+			u8(1)
+		} else {
+			u8(0)
+		})
+		database_append_u8(mut out, if capability.options.link_semantic_neighbors {
+			u8(1)
+		} else {
+			u8(0)
+		})
+	}
 	return out
 }
 
-fn catalog_from_data(data []u8) !(map[string]TypedTableSpec, map[string]AggregateProjectionDef) {
+fn catalog_from_data(data []u8) !(map[string]TypedTableSpec, map[string]AggregateProjectionDef, map[string]MemoryCapabilityDef) {
 	if data.len == 0 {
-		return map[string]TypedTableSpec{}, map[string]AggregateProjectionDef{}
+		return map[string]TypedTableSpec{}, map[string]AggregateProjectionDef{}, map[string]MemoryCapabilityDef{}
 	}
 	mut reader := DatabaseCatalogReader{
 		data: data
@@ -1908,6 +1955,7 @@ fn catalog_from_data(data []u8) !(map[string]TypedTableSpec, map[string]Aggregat
 		catalog[spec.name()] = spec
 	}
 	mut projectors := map[string]AggregateProjectionDef{}
+	mut memory_capabilities := map[string]MemoryCapabilityDef{}
 	if reader.cursor < data.len {
 		projector_count := int(reader.read_u32()!)
 		for _ in 0 .. projector_count {
@@ -2034,6 +2082,53 @@ fn catalog_from_data(data []u8) !(map[string]TypedTableSpec, map[string]Aggregat
 					catalog[table_name] = TypedTableSpec.new(spec.table, indexes)!
 				}
 			}
+			'schema_embedding_indexes_v1' {
+				embedding_count := int(reader.read_u32()!)
+				for _ in 0 .. embedding_count {
+					table_name := reader.read_field()!.bytestr()
+					index_name := reader.read_field()!.bytestr()
+					source_plugin := reader.read_field()!.bytestr()
+					scope := reader.read_field()!.bytestr()
+					profile := reader.read_field()!.bytestr()
+					spec := catalog[table_name] or { continue }
+					mut indexes := spec.indexes.clone()
+					for idx, index in indexes {
+						if index.name != index_name {
+							continue
+						}
+						indexes[idx] = SchemaIndexDef{
+							...index
+							embedding_source_plugin: source_plugin
+							embedding_scope:         scope
+							embedding_profile:       profile
+						}
+					}
+					catalog[table_name] = TypedTableSpec.new(spec.table, indexes)!
+				}
+			}
+			'memory_capabilities_v1' {
+				capability_count := int(reader.read_u32()!)
+				for _ in 0 .. capability_count {
+					table_name := reader.read_field()!.bytestr()
+					column_name := reader.read_field()!.bytestr()
+					enabled := reader.read_u8()! == 1
+					embedding_index := reader.read_field()!.bytestr()
+					reflection_kind := reader.read_field()!.bytestr()
+					replay_anchor := reader.read_u8()! == 1
+					link_evidence_blocks := reader.read_u8()! == 1
+					link_semantic_neighbors := reader.read_u8()! == 1
+					capability := MemoryCapabilityDef.reflective_field(table_name, column_name,
+						ReflectionOptions{
+						enabled:                 enabled
+						embedding_index:         embedding_index
+						reflection_kind:         reflection_kind
+						replay_anchor:           replay_anchor
+						link_evidence_blocks:    link_evidence_blocks
+						link_semantic_neighbors: link_semantic_neighbors
+					}) or { continue }
+					memory_capabilities[memory_capability_key(table_name, column_name)] = capability
+				}
+			}
 			else {
 				return error('unknown database catalog extension section: ${section_tag}')
 			}
@@ -2042,13 +2137,13 @@ fn catalog_from_data(data []u8) !(map[string]TypedTableSpec, map[string]Aggregat
 	if reader.cursor != data.len {
 		return error('database catalog has trailing bytes')
 	}
-	return catalog, projectors
+	return catalog, projectors, memory_capabilities
 }
 
-fn load_database_catalog(root_dir string) !(map[string]TypedTableSpec, map[string]AggregateProjectionDef) {
+fn load_database_catalog(root_dir string) !(map[string]TypedTableSpec, map[string]AggregateProjectionDef, map[string]MemoryCapabilityDef) {
 	path := database_catalog_path(root_dir)
 	if !os.exists(path) {
-		return map[string]TypedTableSpec{}, map[string]AggregateProjectionDef{}
+		return map[string]TypedTableSpec{}, map[string]AggregateProjectionDef{}, map[string]MemoryCapabilityDef{}
 	}
 	return catalog_from_data(os.read_bytes(path)!)
 }
@@ -2076,17 +2171,18 @@ pub fn PersistentDatabase.open_with_provider_profiled(provider LocalDatabaseBack
 	os.mkdir_all(repository_layout_dir(provider.root_dir))!
 	backends_ms := i64(0)
 	mut catalog_sw := time.new_stopwatch()
-	catalog, projectors := load_database_catalog(provider.root_dir)!
+	catalog, projectors, memory_capabilities := load_database_catalog(provider.root_dir)!
 	catalog_ms := catalog_sw.elapsed().milliseconds()
 	engine_result := PersistentEngine.open_with_provider_profiled(provider)!
 	database := PersistentDatabase{
-		root_dir:       provider.root_dir
-		default_branch: provider.default_branch()
-		engine:         engine_result.engine
-		catalog:        catalog
-		projectors:     projectors
-		field_registry: default_field_capability_registry()
-		catalog_dirty:  false
+		root_dir:            provider.root_dir
+		default_branch:      provider.default_branch()
+		engine:              engine_result.engine
+		catalog:             catalog
+		projectors:          projectors
+		memory_capabilities: memory_capabilities
+		field_registry:      default_field_capability_registry()
+		catalog_dirty:       false
 	}
 	return PersistentDatabaseOpenResult{
 		database: database
@@ -2102,13 +2198,14 @@ pub fn PersistentDatabase.open_with_provider_profiled(provider LocalDatabaseBack
 pub fn PersistentDatabase.init_with_provider(provider LocalDatabaseBackendProvider) !PersistentDatabase {
 	os.mkdir_all(repository_layout_dir(provider.root_dir))!
 	mut database := PersistentDatabase{
-		root_dir:       provider.root_dir
-		default_branch: provider.default_branch()
-		engine:         PersistentEngine.init_with_provider(provider)!
-		catalog:        map[string]TypedTableSpec{}
-		projectors:     map[string]AggregateProjectionDef{}
-		field_registry: default_field_capability_registry()
-		catalog_dirty:  true
+		root_dir:            provider.root_dir
+		default_branch:      provider.default_branch()
+		engine:              PersistentEngine.init_with_provider(provider)!
+		catalog:             map[string]TypedTableSpec{}
+		projectors:          map[string]AggregateProjectionDef{}
+		memory_capabilities: map[string]MemoryCapabilityDef{}
+		field_registry:      default_field_capability_registry()
+		catalog_dirty:       true
 	}
 	database.persist_catalog()!
 	return database
@@ -2154,7 +2251,7 @@ pub fn (mut database PersistentDatabase) persist_catalog() ! {
 	}
 	os.mkdir_all(repository_layout_dir(database.root_dir))!
 	os.write_file(database_catalog_path(database.root_dir), catalog_data(database.catalog,
-		database.projectors).bytestr())!
+		database.projectors, database.memory_capabilities).bytestr())!
 	database.catalog_dirty = false
 }
 
@@ -2514,8 +2611,8 @@ pub fn PersistentDatabase.inspect(root_dir string, default_branch string) !Persi
 
 pub fn PersistentDatabase.inspect_with_provider(provider LocalDatabaseBackendProvider) !PersistentDatabaseStatusReport {
 	recovery := PersistentDatabase.recovery_status_with_provider(provider)!
-	catalog, projectors := load_database_catalog(provider.root_dir) or {
-		map[string]TypedTableSpec{}, map[string]AggregateProjectionDef{}
+	catalog, projectors, _ := load_database_catalog(provider.root_dir) or {
+		map[string]TypedTableSpec{}, map[string]AggregateProjectionDef{}, map[string]MemoryCapabilityDef{}
 	}
 	mut branches := []string{}
 	if recovery.engine.repository.repository_exists {
@@ -2708,6 +2805,57 @@ pub fn (mut database PersistentDatabase) register_aggregate_projection(def Aggre
 	database.projectors[def.name] = def
 	database.catalog_dirty = true
 	database.persist_catalog()!
+}
+
+pub fn (mut database PersistentDatabase) register_memory_capability(def MemoryCapabilityDef) ! {
+	spec := database.catalog[def.table_name] or {
+		return error('memory capability table not registered: ${def.table_name}')
+	}
+	if !spec.table.has_column(def.column_name) {
+		return error('memory capability column not in table: ${def.column_name}')
+	}
+	if def.options.embedding_index.len > 0 {
+		mut found := false
+		for index in spec.indexes {
+			if index.name != def.options.embedding_index {
+				continue
+			}
+			if !index.is_embedding() {
+				return error('memory capability embedding_index is not an embedding index: ${def.options.embedding_index}')
+			}
+			if index.column != def.column_name {
+				return error('memory capability embedding_index must target the same column: ${def.options.embedding_index}')
+			}
+			found = true
+			break
+		}
+		if !found {
+			return error('memory capability embedding_index not found on table: ${def.options.embedding_index}')
+		}
+	}
+	key := memory_capability_key(def.table_name, def.column_name)
+	if key in database.memory_capabilities {
+		return error('memory capability already registered: ${def.table_name}.${def.column_name}')
+	}
+	database.memory_capabilities[key] = def
+	database.catalog_dirty = true
+	database.persist_catalog()!
+}
+
+pub fn (database PersistentDatabase) memory_capabilities_for_table(table_name string) []MemoryCapabilityDef {
+	mut out := []MemoryCapabilityDef{}
+	for key in sorted_memory_capability_keys(database.memory_capabilities) {
+		capability := database.memory_capabilities[key] or { continue }
+		if capability.table_name == table_name {
+			out << capability
+		}
+	}
+	return out
+}
+
+pub fn (database PersistentDatabase) memory_capability(table_name string, column_name string) ?MemoryCapabilityDef {
+	key := memory_capability_key(table_name, column_name)
+	return database.memory_capabilities[key]
 }
 
 pub fn (database PersistentDatabase) has_table(name string) bool {
