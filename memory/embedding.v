@@ -1,5 +1,6 @@
-module storage
+module memory
 
+import crypto.sha256
 import vmarkdown
 
 pub enum MarkdownEmbeddingScope {
@@ -40,12 +41,6 @@ pub fn markdown_embedding_targets(raw string) ![]MarkdownEmbeddingTarget {
 	doc := vmarkdown.parse(raw)!
 	root_id := doc.stable_id()
 	return markdown_embedding_targets_from_doc(root_id, doc)
-}
-
-pub fn markdown_embedding_targets_from_ref(database &PersistentDatabase, ref MarkdownRef) ![]MarkdownEmbeddingTarget {
-	raw := database.load_markdown(ref)!
-	doc := vmarkdown.parse(raw)!
-	return markdown_embedding_targets_from_doc(ref.doc_root_id, doc)
 }
 
 pub fn markdown_embedding_texts(targets []MarkdownEmbeddingTarget) []string {
@@ -89,7 +84,7 @@ fn (mut collector MarkdownEmbeddingCollector) collect_block(block vmarkdown.Bloc
 	}
 	occurrence_id := markdown_hash_id([parent_id, content_id, dup_ordinal.str(), anchor, path])
 	kind := markdown_embedding_block_kind(block)
-	text := markdown_block_embedding_text(block)
+	text := markdown_block_text(block)
 	if should_embed_markdown_block(block) && text.len > 0 {
 		collector.targets << MarkdownEmbeddingTarget{
 			id:            '${collector.root_id}:block:${occurrence_id}'
@@ -140,7 +135,7 @@ fn (mut collector MarkdownEmbeddingCollector) collect_heading_path_targets(block
 				}
 				else {}
 			}
-			text := markdown_block_embedding_text(next)
+			text := markdown_block_text(next)
 			if text.len > 0 {
 				parts << text
 			}
@@ -208,19 +203,105 @@ fn markdown_embedding_block_kind(block vmarkdown.BlockNode) string {
 	}
 }
 
-fn markdown_block_embedding_text(block vmarkdown.BlockNode) string {
-	return match block {
-		vmarkdown.CodeBlockNode {
-			lang := block.lang.trim_space()
-			content := block.content.trim_space()
-			if lang.len == 0 {
-				content
-			} else {
-				'${lang}\n${content}'
-			}
-		}
-		else {
-			markdown_block_text(block).trim_space()
+fn markdown_blocks_text(nodes []vmarkdown.BlockNode) string {
+	mut parts := []string{}
+	for node in nodes {
+		text := markdown_block_text(node)
+		if text.len > 0 {
+			parts << text
 		}
 	}
+	return parts.join(' ').trim_space()
+}
+
+fn markdown_block_text(node vmarkdown.BlockNode) string {
+	return match node {
+		vmarkdown.MetaNode { markdown_meta_text(node) }
+		vmarkdown.HorizontalRuleNode { '' }
+		vmarkdown.HeadingNode { markdown_inline_text_value(node.children) }
+		vmarkdown.ParagraphNode { markdown_inline_text_value(node.children) }
+		vmarkdown.CodeBlockNode { node.content.trim_space() }
+		vmarkdown.BlockquoteNode { markdown_blocks_text(node.children) }
+		vmarkdown.ListNode {
+			mut texts := []string{}
+			for item in node.items {
+				text := markdown_blocks_text(item.children)
+				if text.len > 0 {
+					texts << text
+				}
+			}
+			texts.join(' ').trim_space()
+		}
+	}
+}
+
+fn markdown_meta_text(node vmarkdown.MetaNode) string {
+	mut keys := node.data.keys()
+	keys.sort()
+	mut parts := []string{}
+	for key in keys {
+		value := node.data[key].trim_space()
+		if key.len > 0 {
+			parts << key
+		}
+		if value.len > 0 {
+			parts << value
+		}
+	}
+	return parts.join(' ').trim_space()
+}
+
+fn heading_anchor_segment(node vmarkdown.HeadingNode) string {
+	text := markdown_slug(markdown_inline_text(node.children))
+	return 'h${node.level}:${text}'
+}
+
+fn markdown_inline_text(nodes []vmarkdown.InlineNode) string {
+	mut parts := []string{}
+	for node in nodes {
+		match node {
+			vmarkdown.TextNode { parts << node.text }
+			vmarkdown.CodeSpanNode { parts << node.text }
+			vmarkdown.EmphasisNode { parts << markdown_inline_text(node.children) }
+			vmarkdown.StrongNode { parts << markdown_inline_text(node.children) }
+			vmarkdown.LinkNode { parts << markdown_inline_text(node.text) }
+			vmarkdown.ImageNode { parts << markdown_inline_text(node.alt) }
+		}
+	}
+	return parts.join(' ').trim_space()
+}
+
+fn markdown_inline_text_value(nodes []vmarkdown.InlineNode) string {
+	return markdown_inline_text(nodes)
+}
+
+fn markdown_slug(text string) string {
+	if text.len == 0 {
+		return 'empty'
+	}
+	mut out := []u8{}
+	mut last_dash := false
+	for b in text.to_lower().bytes() {
+		if (b >= `a` && b <= `z`) || (b >= `0` && b <= `9`) {
+			out << b
+			last_dash = false
+			continue
+		}
+		if !last_dash {
+			out << `-`
+			last_dash = true
+		}
+	}
+	mut slug := out.bytestr().trim('-')
+	if slug.len == 0 {
+		slug = 'empty'
+	}
+	if slug.len > 48 {
+		slug = slug[..48]
+	}
+	return slug
+}
+
+fn markdown_hash_id(parts []string) string {
+	return sha256.sum(parts.join('|').bytes()).hex()[..16]
 }

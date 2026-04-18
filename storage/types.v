@@ -918,6 +918,10 @@ pub fn (tx TypedTransaction) indexed_view(name string) !TypedIndexedSchemaView {
 	return TypedIndexedSchemaView.new_with_split_storage(schema, spec.indexes, split_storage)
 }
 
+pub fn (tx TypedTransaction) table_spec(name string) !TypedTableSpec {
+	return tx.specs[name] or { error('typed table not registered: ${name}') }
+}
+
 pub fn (tx TypedTransaction) indexed_view_split_backed(name string, cfg ChunkConfig) !TypedIndexedSchemaView {
 	return (tx.indexed_view(name)!).split_backed(cfg)
 }

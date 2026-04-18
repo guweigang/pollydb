@@ -2,6 +2,7 @@ module main
 
 import net.http
 import os
+import pollylink
 import storage
 
 fn usage() string {
@@ -33,7 +34,7 @@ fn main() {
 	addr := if args.len > 2 { args[2] } else { '127.0.0.1:19191' }
 	mut server := &http.Server{
 		addr: addr
-		handler: storage.PollyLinkSidecarHandler{
+		handler: pollylink.SidecarHandler{
 			root_dir: root_dir
 			default_branch: default_branch
 		}

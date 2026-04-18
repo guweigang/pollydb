@@ -1,6 +1,7 @@
 module main
 
 import math
+import memory
 import os
 import storage
 
@@ -14,7 +15,7 @@ fn run() ! {
 	} else {
 		return error('usage: v -d llama_cpp run cmd/bench/llama_embedding_smoke.v /path/to/model.gguf')
 	}
-	mut engine := storage.new_llama_embedding_engine(storage.LlamaEmbeddingConfig{
+	mut engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
 		model_path:   model_path
 		n_ctx:        512
 		n_batch:      512
@@ -27,9 +28,9 @@ fn run() ! {
 	query := '数据库索引优化和查询规划'
 	related := '如何优化数据库查询和索引设计'
 	unrelated := '今天的天气和晚饭吃什么'
-	targets := storage.markdown_embedding_targets('# Memory\n\n' + query + '\n\n## Related\n\n' +
+	targets := memory.markdown_embedding_targets('# Memory\n\n' + query + '\n\n## Related\n\n' +
 		related + '\n\n## Unrelated\n\n' + unrelated + '\n')!
-	vectors := engine.embed_batch(storage.markdown_embedding_texts(targets))!
+	vectors := engine.embed_batch(memory.markdown_embedding_texts(targets))!
 
 	println('model=${engine.model_name()}')
 	println('dims=${engine.dimensions()}')

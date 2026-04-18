@@ -601,6 +601,34 @@ pub fn full_sync_exchange_for_offer(mut repo PersistentRepository, offer SyncOff
 	})
 }
 
+pub fn build_auto_merge_offer_for_remote_offer(mut source_repo PersistentRepository, source_branch string, target_branch string, remote_offer SyncOffer) !SyncOffer {
+	source_branch_head := source_repo.branch(source_branch)!
+	source_commit := source_repo.commit_store.get(source_branch_head.commit_cid)!
+	base_commit := source_repo.repo.merge_base_commit(source_commit.cid, remote_offer.target_commit_cid, mut source_repo.commit_store)!
+	merge_result := auto_merge_by_roots(base_commit.root_cid, source_commit.root_cid,
+		remote_offer.target_root_cid, ChunkConfig.default(), mut source_repo.node_store)!
+	if merge_result.conflicts.len > 0 {
+		return error('auto-merge required manual resolution: ${merge_result.conflicts.len} conflicts')
+	}
+	merge_meta := CommitMeta{
+		author:    'pollylink'
+		message:   'auto-merge ${source_branch} into ${target_branch}'
+		timestamp: 0
+	}
+	snapshot := Snapshot.new(merge_result.tree, [source_commit.cid, remote_offer.target_commit_cid],
+		merge_meta)
+	snapshot.persist(mut source_repo.node_store, mut source_repo.commit_store)!
+	return SyncOffer{
+		request:                 SyncRequest{
+			local_root_hash: snapshot.commit.root_cid
+			branch_name:     target_branch
+		}
+		expected_old_commit_cid: remote_offer.target_commit_cid
+		target_commit_cid:       snapshot.commit.cid
+		target_root_cid:         snapshot.commit.root_cid
+	}
+}
+
 pub fn collect_sync_packets_for_plan(plan SyncPlan, mut commit_source CommitStore, mut node_source NodeByteStore) ![]DataPacket {
 	mut packets := []DataPacket{}
 	packets << collect_commit_packets(plan.missing_commit_cids, mut commit_source)!

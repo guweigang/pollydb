@@ -1,7 +1,7 @@
 module main
 
+import memory
 import os
-import storage
 
 fn main() {
 	run() or { panic(err) }
@@ -13,7 +13,7 @@ fn run() ! {
 	} else {
 		return error('usage: v -d llama_cpp run cmd/bench/llama_reflection_distill_smoke.v /path/to/model.gguf')
 	}
-	mut generator := storage.new_llama_generation_engine(storage.LlamaGenerationConfig{
+	mut generator := memory.new_llama_generation_engine(memory.LlamaGenerationConfig{
 		model_path:   model_path
 		n_ctx:        2048
 		n_batch:      512
@@ -23,7 +23,7 @@ fn run() ! {
 	defer {
 		generator.close()
 	}
-	job := storage.ReflectionJob{
+	job := memory.ReflectionJob{
 		branch_name:     'main'
 		table_name:      'memory_entries'
 		primary_key:     'entry-1'.bytes()
@@ -33,7 +33,7 @@ fn run() ! {
 		seed_anchor:     '/h1:local-memory'
 		seed_text:       'PollyDB 持有记忆真相；SQLite 只做 FTS；USearch 是可重建 ANN 视图。'
 		evidence:        [
-			storage.ReflectionEvidence{
+			memory.ReflectionEvidence{
 				table_name:  'memory_entries'
 				primary_key: 'entry-2'.bytes()
 				column_name: 'content_md'
@@ -45,7 +45,7 @@ fn run() ! {
 				path_hint:   'blocks[0]'
 				text:        '向量记录已经迁回 PollyDB typed table，SQLite 不再保存 vector payload。'
 			},
-			storage.ReflectionEvidence{
+			memory.ReflectionEvidence{
 				table_name:  'memory_entries'
 				primary_key: 'entry-3'.bytes()
 				column_name: 'content_md'
@@ -59,7 +59,7 @@ fn run() ! {
 			},
 		]
 	}
-	input := storage.generate_reflection_persist_input(job, mut generator, storage.ReflectionDistillOptions{
+	input := memory.generate_reflection_persist_input(job, mut generator, memory.ReflectionDistillOptions{
 		title:     '本地记忆引擎边界'
 		topic_key: 'local-memory-engine'
 	})!

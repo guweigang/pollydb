@@ -1,5 +1,6 @@
 module storage
 
+import memory
 import os
 
 struct TestEmbeddingEngine {
@@ -39,7 +40,7 @@ fn test_vector_sidecar_upsert_and_query() {
 		db.close() or {}
 	}
 	targets := [
-		MarkdownEmbeddingTarget{
+		memory.MarkdownEmbeddingTarget{
 			id:            'note:block:1'
 			scope:         .block
 			kind:          'paragraph'
@@ -51,7 +52,7 @@ fn test_vector_sidecar_upsert_and_query() {
 			path_hint:     'blocks[0]'
 			text:          'query-like text'
 		},
-		MarkdownEmbeddingTarget{
+		memory.MarkdownEmbeddingTarget{
 			id:            'note:block:2'
 			scope:         .block
 			kind:          'paragraph'
@@ -90,13 +91,13 @@ fn test_vector_sidecar_scope_filter() {
 		db.close() or {}
 	}
 	db.upsert_markdown_embedding_targets('main', [
-		MarkdownEmbeddingTarget{
+		memory.MarkdownEmbeddingTarget{
 			id:    'a'
 			scope: .block
 			kind:  'paragraph'
 			text:  'a'
 		},
-		MarkdownEmbeddingTarget{
+		memory.MarkdownEmbeddingTarget{
 			id:    'b'
 			scope: .path
 			kind:  'heading_path'
@@ -189,7 +190,7 @@ fn test_vector_backend_usearch_placeholder_returns_clear_error() {
 			db.close() or {}
 		}
 		db.upsert_markdown_embedding_targets('main', [
-			MarkdownEmbeddingTarget{
+			memory.MarkdownEmbeddingTarget{
 				id:    'x'
 				scope: .block
 				kind:  'paragraph'
@@ -213,7 +214,7 @@ fn test_vector_target_bindings_are_branch_consistent() {
 		db.close() or {}
 	}
 	db.ensure_vector_target_bindings('main', [
-		MarkdownEmbeddingTarget{
+		memory.MarkdownEmbeddingTarget{
 			id:            'doc:path:a'
 			scope:         .path
 			kind:          'heading_path'
@@ -227,7 +228,7 @@ fn test_vector_target_bindings_are_branch_consistent() {
 	assert db.vector_target_id_for_int('main', 1) or { panic(err) } == 'doc:path:a'
 
 	db.ensure_vector_target_bindings('main', [
-		MarkdownEmbeddingTarget{
+		memory.MarkdownEmbeddingTarget{
 			id:            'doc:path:a'
 			scope:         .path
 			kind:          'heading_path'
@@ -240,7 +241,7 @@ fn test_vector_target_bindings_are_branch_consistent() {
 	assert db.vector_int_id_for_target('main', 'doc:path:a') or { panic(err) } == 1
 
 	db.ensure_vector_target_bindings('main', [
-		MarkdownEmbeddingTarget{
+		memory.MarkdownEmbeddingTarget{
 			id:            'doc:path:b'
 			scope:         .path
 			kind:          'heading_path'
@@ -272,13 +273,13 @@ $if usearch ? {
 			db.close() or {}
 		}
 		db.upsert_markdown_embedding_targets('main', [
-			MarkdownEmbeddingTarget{
+			memory.MarkdownEmbeddingTarget{
 				id:    'a'
 				scope: .block
 				kind:  'paragraph'
 				text:  'near'
 			},
-			MarkdownEmbeddingTarget{
+			memory.MarkdownEmbeddingTarget{
 				id:    'b'
 				scope: .block
 				kind:  'paragraph'
@@ -305,13 +306,13 @@ $if usearch ? {
 		assert os.exists(usearch_sidecar_meta_path(index_path))
 
 		db.upsert_markdown_embedding_targets('main', [
-			MarkdownEmbeddingTarget{
+			memory.MarkdownEmbeddingTarget{
 				id:    'a'
 				scope: .block
 				kind:  'paragraph'
 				text:  'near'
 			},
-			MarkdownEmbeddingTarget{
+			memory.MarkdownEmbeddingTarget{
 				id:    'b'
 				scope: .block
 				kind:  'paragraph'

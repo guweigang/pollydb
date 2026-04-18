@@ -1,4 +1,4 @@
-module storage
+module memory
 
 struct MockReflectionGenerator {
 	output string

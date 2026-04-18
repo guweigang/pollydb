@@ -4,8 +4,10 @@ import encoding.base64
 import json
 import net.http
 import os
+import pollyhub
+import time
 
-pub struct PollyLinkOfferEnvelope {
+struct PollyLinkOfferEnvelope {
 pub:
 	offer    SyncOffer
 	manifest SyncManifest
@@ -425,7 +427,7 @@ struct SidecarRepositoryInfoDto {
 	protection_summary    string
 }
 
-pub struct SidecarRepositoryInfo {
+struct SidecarRepositoryInfo {
 pub:
 	repo_name             string
 	default_branch        string
@@ -483,7 +485,7 @@ struct CommitDto {
 	timestamp    i64
 }
 
-pub struct SidecarBranchActivity {
+struct SidecarBranchActivity {
 pub:
 	branch       Branch
 	root_cid     string
@@ -512,7 +514,7 @@ struct SidecarBranchStatusDto {
 	protection_summary                    string
 }
 
-pub struct SidecarBranchStatus {
+struct SidecarBranchStatus {
 pub:
 	branch                                Branch
 	root_cid                              string
@@ -532,7 +534,7 @@ pub:
 	protection_summary                    string
 }
 
-pub struct SidecarProjectorValue {
+struct SidecarProjectorValue {
 pub:
 	name                         string
 	branch_name                  string
@@ -549,7 +551,7 @@ pub:
 	source_markdown_selector     string
 }
 
-pub struct SidecarFieldSelectorMeta {
+struct SidecarFieldSelectorMeta {
 pub:
 	plugin_name string
 	selector    string
@@ -557,7 +559,7 @@ pub:
 	stores_row  bool
 }
 
-pub struct SidecarMarkdownMetric {
+struct SidecarMarkdownMetric {
 pub:
 	branch_name string
 	table_name  string
@@ -566,13 +568,13 @@ pub:
 	value       i64
 }
 
-pub struct SidecarTypedRow {
+struct SidecarTypedRow {
 pub:
 	primary_key string
 	values      map[string]string
 }
 
-pub struct SidecarIndexLookup {
+struct SidecarIndexLookup {
 pub:
 	branch_name         string
 	table_name          string
@@ -583,7 +585,7 @@ pub:
 	rows                []SidecarTypedRow
 }
 
-pub struct SidecarColumnDef {
+struct SidecarColumnDef {
 pub:
 	name        string
 	typ         string
@@ -592,7 +594,7 @@ pub:
 	enum_values []string
 }
 
-pub struct SidecarIndexDef {
+struct SidecarIndexDef {
 pub:
 	name                string
 	column              string
@@ -602,7 +604,7 @@ pub:
 	field_selector_meta SidecarFieldSelectorMeta
 }
 
-pub struct SidecarTableSpec {
+struct SidecarTableSpec {
 pub:
 	branch_name string
 	table_name  string
@@ -611,7 +613,7 @@ pub:
 	indexes     []SidecarIndexDef
 }
 
-pub struct SidecarQuerySchemaColumn {
+struct SidecarQuerySchemaColumn {
 pub:
 	name          string
 	typ           string
@@ -622,7 +624,7 @@ pub:
 	filter_shapes []SidecarQueryFilterShape
 }
 
-pub struct SidecarQueryPlannerHint {
+struct SidecarQueryPlannerHint {
 pub:
 	op         string
 	strategy   string
@@ -631,7 +633,7 @@ pub:
 	score      int
 }
 
-pub struct SidecarQueryFilterShape {
+struct SidecarQueryFilterShape {
 pub:
 	op                  string
 	value_type          string
@@ -644,7 +646,7 @@ pub:
 	sample_explain      SidecarQuerySamplePlanExplain
 }
 
-pub struct SidecarFtsShape {
+struct SidecarFtsShape {
 pub:
 	kind             string
 	indexed          bool
@@ -653,7 +655,7 @@ pub:
 	sample_explain   SidecarQuerySamplePlanExplain
 }
 
-pub struct SidecarQuerySamplePlanExplain {
+struct SidecarQuerySamplePlanExplain {
 pub:
 	strategy                    string
 	index_name                  string
@@ -663,7 +665,7 @@ pub:
 	supports_continuation_token bool
 }
 
-pub struct SidecarQuerySchemaIndex {
+struct SidecarQuerySchemaIndex {
 pub:
 	name                string
 	column_name         string
@@ -677,7 +679,7 @@ pub:
 	filter_ops          []string
 }
 
-pub struct SidecarGeneralFtsQueryRequest {
+struct SidecarGeneralFtsQueryRequest {
 pub:
 	branch_name    string
 	table_name     string
@@ -688,7 +690,7 @@ pub:
 	limit          int
 }
 
-pub struct SidecarGeneralFtsQueryPlan {
+struct SidecarGeneralFtsQueryPlan {
 pub:
 	strategy    string
 	index_name  string
@@ -699,14 +701,14 @@ pub:
 	limit       int
 }
 
-pub struct SidecarGeneralFtsHit {
+struct SidecarGeneralFtsHit {
 pub:
 	primary_key string
 	score       f64
 	snippet     string
 }
 
-pub struct SidecarGeneralFtsQueryPreview {
+struct SidecarGeneralFtsQueryPreview {
 pub:
 	branch_name string
 	table_name  string
@@ -716,7 +718,7 @@ pub:
 	plan        SidecarGeneralFtsQueryPlan
 }
 
-pub struct SidecarGeneralFtsQueryResult {
+struct SidecarGeneralFtsQueryResult {
 pub:
 	branch_name    string
 	table_name     string
@@ -729,7 +731,7 @@ pub:
 	rows           []SidecarTypedRow
 }
 
-pub struct SidecarQuerySchemaFieldSelector {
+struct SidecarQuerySchemaFieldSelector {
 pub:
 	column_name      string
 	plugin_name      string
@@ -801,7 +803,7 @@ struct SidecarFtsHitDto {
 	summary        string
 }
 
-pub struct SidecarQuerySchemaProjection {
+struct SidecarQuerySchemaProjection {
 pub:
 	name             string
 	column_name      string
@@ -814,7 +816,7 @@ pub:
 	cost_hint        string
 }
 
-pub struct SidecarQuerySchema {
+struct SidecarQuerySchema {
 pub:
 	branch_name                 string
 	table_name                  string
@@ -829,7 +831,7 @@ pub:
 	supports_select_projection  bool
 }
 
-pub struct SidecarMarkdownQueryRequest {
+struct SidecarMarkdownQueryRequest {
 pub:
 	branch_name string
 	table_name  string
@@ -841,7 +843,7 @@ pub:
 	limit       int
 }
 
-pub struct SidecarMarkdownQuery {
+struct SidecarMarkdownQuery {
 pub:
 	branch_name         string
 	table_name          string
@@ -855,7 +857,7 @@ pub:
 	rows                []SidecarTypedRow
 }
 
-pub struct SidecarQueryRowsRequest {
+struct SidecarQueryRowsRequest {
 pub:
 	branch_name        string
 	table_name         string
@@ -871,7 +873,7 @@ pub:
 	limit              int
 }
 
-pub struct SidecarQueryFilter {
+struct SidecarQueryFilter {
 pub:
 	column_name  string
 	plugin_name  string
@@ -881,7 +883,7 @@ pub:
 	second_value string
 }
 
-pub struct SidecarQueryRowsPostRequest {
+struct SidecarQueryRowsPostRequest {
 pub:
 	branch_name        string
 	table_name         string
@@ -894,7 +896,7 @@ pub:
 	limit              int
 }
 
-pub struct SidecarQueryPlanPreview {
+struct SidecarQueryPlanPreview {
 pub:
 	branch_name    string
 	table_name     string
@@ -910,7 +912,7 @@ pub:
 	supports_continuation_token bool
 }
 
-pub struct SidecarQueryPlan {
+struct SidecarQueryPlan {
 pub:
 	strategy          string
 	index_name        string
@@ -922,7 +924,7 @@ pub:
 
 // SidecarQueryRows keeps legacy top-level cursor fields and echoed request
 // metadata for compatibility. Prefer SidecarQueryPage for new paged reads.
-pub struct SidecarQueryRows {
+struct SidecarQueryRows {
 pub:
 	branch_name             string
 	table_name              string
@@ -947,7 +949,7 @@ pub:
 	rows                    []SidecarTypedRow
 }
 
-pub struct SidecarQueryCursor {
+struct SidecarQueryCursor {
 pub:
 	has_more                bool
 	next_primary_key        string
@@ -955,14 +957,14 @@ pub:
 	next_continuation_token string
 }
 
-pub struct SidecarGeneralFtsClause {
+struct SidecarGeneralFtsClause {
 pub:
 	index_name string
 	query_kind string
 	terms      []string
 }
 
-pub struct SidecarQueryPage {
+struct SidecarQueryPage {
 pub:
 	rows                []SidecarTypedRow
 	plan                SidecarQueryPlan
@@ -971,7 +973,7 @@ pub:
 	field_selector_meta SidecarFieldSelectorMeta
 }
 
-pub struct SidecarFtsQueryPlan {
+struct SidecarFtsQueryPlan {
 pub:
 	strategy   string
 	index_name string
@@ -982,7 +984,7 @@ pub:
 	limit      int
 }
 
-pub struct SidecarFtsQueryRequest {
+struct SidecarFtsQueryRequest {
 pub:
 	branch_name    string
 	table_name     string
@@ -994,7 +996,7 @@ pub:
 	limit          int
 }
 
-pub struct SidecarFtsQueryPreview {
+struct SidecarFtsQueryPreview {
 pub:
 	branch_name string
 	table_name  string
@@ -1008,7 +1010,7 @@ pub:
 	notes       []string
 }
 
-pub struct SidecarFtsQueryResult {
+struct SidecarFtsQueryResult {
 pub:
 	branch_name    string
 	table_name     string
@@ -1022,7 +1024,7 @@ pub:
 	rows           []SidecarTypedRow
 }
 
-pub struct SidecarFtsHit {
+struct SidecarFtsHit {
 pub:
 	primary_key    string
 	score          int
@@ -1031,7 +1033,7 @@ pub:
 	summary        string
 }
 
-pub struct SidecarBranchLogEntry {
+struct SidecarBranchLogEntry {
 pub:
 	cid          string
 	root_cid     string
@@ -1041,7 +1043,7 @@ pub:
 	timestamp    i64
 }
 
-pub struct SidecarRepoActivityEntry {
+struct SidecarRepoActivityEntry {
 pub:
 	repo_name    string
 	branch       Branch
@@ -1110,7 +1112,7 @@ struct DataPacketDto {
 	data_b64 string
 }
 
-pub struct BranchDto {
+struct BranchDto {
 pub:
 	name       string
 	commit_cid string
@@ -1420,7 +1422,7 @@ fn sidecar_column_type_name(typ ColumnType) string {
 }
 
 fn sidecar_field_selector_meta_dto(index SchemaIndexDef) SidecarFieldSelectorMetaDto {
-	selector_meta := index.field_selector_meta() or { FieldSelectorMeta{} }
+	selector_meta := index.field_selector_meta() or { FieldSelectorRef{} }
 	return SidecarFieldSelectorMetaDto{
 		plugin_name: selector_meta.plugin_name
 		selector:    selector_meta.selector
@@ -1658,15 +1660,11 @@ fn sidecar_general_fts_clause_from_dto(dto SidecarGeneralFtsClauseDto) SidecarGe
 }
 
 fn sidecar_fts_hit_dto(hit FtsHit) SidecarFtsHitDto {
-	mut scopes := []string{cap: hit.matched_scopes.len}
-	for scope in hit.matched_scopes {
-		scopes << fts_scope_name(scope)
-	}
 	return SidecarFtsHitDto{
 		primary_key:    hit.primary_key.bytestr()
 		score:          hit.score
 		matched_terms:  hit.matched_terms.clone()
-		matched_scopes: scopes
+		matched_scopes: hit.matched_scopes.map(fts_scope_name(it))
 		summary:        hit.summary
 	}
 }
@@ -1979,7 +1977,7 @@ fn list_sidecar_global_activity(root_dir string, default_branch string, limit in
 	return entries
 }
 
-pub struct PollyLinkSidecarHandler {
+struct PollyLinkSidecarHandler {
 pub:
 	root_dir       string
 	default_branch string
@@ -3992,7 +3990,7 @@ fn (handler PollyLinkSidecarHandler) serve_global_activity(req http.Request) htt
 	}))
 }
 
-pub fn (handler PollyLinkSidecarHandler) handle(req http.Request) http.Response {
+fn (handler PollyLinkSidecarHandler) handle(req http.Request) http.Response {
 	path := req.url.all_before('?')
 	if req.method == .get && path == '/health' {
 		return json_ok('{"status":"ok"}')
@@ -4095,7 +4093,14 @@ pub fn (handler PollyLinkSidecarHandler) handle(req http.Request) http.Response 
 	return json_error(.not_found, 'unknown route: ${path}')
 }
 
-pub fn start_pollylink_sidecar(root_dir string, default_branch string, addr string) !&http.Server {
+fn handle_pollylink_sidecar_request(root_dir string, default_branch string, req http.Request) http.Response {
+	return PollyLinkSidecarHandler{
+		root_dir:       root_dir
+		default_branch: default_branch
+	}.handle(req)
+}
+
+fn start_pollylink_sidecar(root_dir string, default_branch string, addr string) !&http.Server {
 	mut server := &http.Server{
 		addr:                 addr
 		handler:              PollyLinkSidecarHandler{
@@ -4109,14 +4114,14 @@ pub fn start_pollylink_sidecar(root_dir string, default_branch string, addr stri
 	return server
 }
 
-pub struct PollyLinkClient {
+struct PollyLinkClient {
 pub:
 	base_url   string
 	repo_name  string
 	auth_token string
 }
 
-pub struct SidecarGovernanceStatus {
+struct SidecarGovernanceStatus {
 pub:
 	auth_enabled        bool
 	token_count         int
@@ -4129,21 +4134,21 @@ pub:
 	recent_actions      []SidecarGovernanceAction
 }
 
-pub struct SidecarGovernanceCategory {
+struct SidecarGovernanceCategory {
 pub:
 	category           string
 	recent_requests_1m int
 	recent_denies_1m   int
 }
 
-pub struct SidecarGovernanceActor {
+struct SidecarGovernanceActor {
 pub:
 	actor              string
 	recent_requests_1m int
 	recent_denies_1m   int
 }
 
-pub struct SidecarGovernanceAction {
+struct SidecarGovernanceAction {
 pub:
 	action             string
 	recent_requests_1m int
@@ -4210,7 +4215,7 @@ fn (client PollyLinkClient) get(path string) !http.Response {
 	return response
 }
 
-pub fn (client PollyLinkClient) offer(branch_name string, target_branch string, prediction_depth int) !PollyLinkOfferEnvelope {
+fn (client PollyLinkClient) offer(branch_name string, target_branch string, prediction_depth int) !PollyLinkOfferEnvelope {
 	response := client.post_json('/v1/sync/offer', json.encode(SyncOfferRequestDto{
 		repo_name:        client.repo_name
 		branch_name:      branch_name
@@ -4224,7 +4229,7 @@ pub fn (client PollyLinkClient) offer(branch_name string, target_branch string, 
 	}
 }
 
-pub fn (client PollyLinkClient) negotiate_missing(offer SyncOffer, manifest SyncManifest, use_manifest bool) !SyncMissingSet {
+fn (client PollyLinkClient) negotiate_missing(offer SyncOffer, manifest SyncManifest, use_manifest bool) !SyncMissingSet {
 	response := client.post_json('/v1/sync/missing', json.encode(SyncNegotiateRequestDto{
 		repo_name:    client.repo_name
 		offer:        sync_offer_to_dto(offer)
@@ -4235,7 +4240,7 @@ pub fn (client PollyLinkClient) negotiate_missing(offer SyncOffer, manifest Sync
 	return sync_missing_set_from_dto(payload)
 }
 
-pub fn (client PollyLinkClient) fetch_exchange(offer SyncOffer, missing SyncMissingSet) !SyncExchange {
+fn (client PollyLinkClient) fetch_exchange(offer SyncOffer, missing SyncMissingSet) !SyncExchange {
 	response := client.post_json('/v1/sync/exchange', json.encode(SyncExchangeRequestDto{
 		repo_name: client.repo_name
 		offer:     sync_offer_to_dto(offer)
@@ -4245,7 +4250,7 @@ pub fn (client PollyLinkClient) fetch_exchange(offer SyncOffer, missing SyncMiss
 	return sync_exchange_from_dto(payload)
 }
 
-pub fn (client PollyLinkClient) fetch_full_exchange(offer SyncOffer) !SyncExchange {
+fn (client PollyLinkClient) fetch_full_exchange(offer SyncOffer) !SyncExchange {
 	response := client.post_json('/v1/sync/exchange-full', json.encode(SyncFullExchangeRequestDto{
 		repo_name: client.repo_name
 		offer:     sync_offer_to_dto(offer)
@@ -4254,7 +4259,7 @@ pub fn (client PollyLinkClient) fetch_full_exchange(offer SyncOffer) !SyncExchan
 	return sync_exchange_from_dto(payload)
 }
 
-pub fn (client PollyLinkClient) apply_exchange(exchange SyncExchange) !Branch {
+fn (client PollyLinkClient) apply_exchange(exchange SyncExchange) !Branch {
 	response := client.post_json('/v1/sync/apply', json.encode(SyncApplyRequestDto{
 		repo_name: client.repo_name
 		exchange:  sync_exchange_to_dto(exchange)
@@ -4287,13 +4292,13 @@ fn (client PollyLinkClient) try_apply_exchange(exchange SyncExchange) !ApplyExch
 	}
 }
 
-pub fn (client PollyLinkClient) list_repositories() ![]string {
+fn (client PollyLinkClient) list_repositories() ![]string {
 	response := client.get('/v1/repos')!
 	payload := json.decode(SidecarRepoListDto, response.body)!
 	return payload.repos
 }
 
-pub fn (client PollyLinkClient) list_repository_summaries(limit int) ![]SidecarRepositoryInfo {
+fn (client PollyLinkClient) list_repository_summaries(limit int) ![]SidecarRepositoryInfo {
 	path := '/v1/repos/summaries?limit=${limit}'
 	response := client.get(path)!
 	payload := json.decode(SidecarRepoSummaryListDto, response.body)!
@@ -4316,7 +4321,7 @@ pub fn (client PollyLinkClient) list_repository_summaries(limit int) ![]SidecarR
 	return infos
 }
 
-pub fn (client PollyLinkClient) repository_info() !SidecarRepositoryInfo {
+fn (client PollyLinkClient) repository_info() !SidecarRepositoryInfo {
 	path := if client.repo_name.len == 0 {
 		'/v1/repo-info'
 	} else {
@@ -4340,7 +4345,7 @@ pub fn (client PollyLinkClient) repository_info() !SidecarRepositoryInfo {
 	}
 }
 
-pub fn (client PollyLinkClient) governance_status() !SidecarGovernanceStatus {
+fn (client PollyLinkClient) governance_status() !SidecarGovernanceStatus {
 	response := client.get('/v1/governance-status')!
 	dto := json.decode(SidecarGovernanceStatusDto, response.body)!
 	mut recent_categories := []SidecarGovernanceCategory{cap: dto.recent_categories.len}
@@ -4380,7 +4385,7 @@ pub fn (client PollyLinkClient) governance_status() !SidecarGovernanceStatus {
 	}
 }
 
-pub fn (client PollyLinkClient) list_branches() ![]Branch {
+fn (client PollyLinkClient) list_branches() ![]Branch {
 	path := if client.repo_name.len == 0 {
 		'/v1/branches'
 	} else {
@@ -4395,7 +4400,7 @@ pub fn (client PollyLinkClient) list_branches() ![]Branch {
 	return branches
 }
 
-pub fn (client PollyLinkClient) branch_status(branch_name string) !SidecarBranchStatus {
+fn (client PollyLinkClient) branch_status(branch_name string) !SidecarBranchStatus {
 	path := if client.repo_name.len == 0 {
 		'/v1/branch-status?branch=${branch_name}'
 	} else {
@@ -4423,7 +4428,7 @@ pub fn (client PollyLinkClient) branch_status(branch_name string) !SidecarBranch
 	}
 }
 
-pub fn (client PollyLinkClient) branch_statuses() ![]SidecarBranchStatus {
+fn (client PollyLinkClient) branch_statuses() ![]SidecarBranchStatus {
 	path := if client.repo_name.len == 0 {
 		'/v1/branch-statuses'
 	} else {
@@ -4455,7 +4460,7 @@ pub fn (client PollyLinkClient) branch_statuses() ![]SidecarBranchStatus {
 	return rows
 }
 
-pub fn (client PollyLinkClient) projector_value(branch_name string, projector_name string) !SidecarProjectorValue {
+fn (client PollyLinkClient) projector_value(branch_name string, projector_name string) !SidecarProjectorValue {
 	path := if client.repo_name.len == 0 {
 		'/v1/projector-value?branch=${branch_name}&name=${projector_name}'
 	} else {
@@ -4485,7 +4490,7 @@ pub fn (client PollyLinkClient) projector_value(branch_name string, projector_na
 	}
 }
 
-pub fn (client PollyLinkClient) table_spec(branch_name string, table_name string) !SidecarTableSpec {
+fn (client PollyLinkClient) table_spec(branch_name string, table_name string) !SidecarTableSpec {
 	path := if client.repo_name.len == 0 {
 		'/v1/table-spec?branch=${branch_name}&table=${table_name}'
 	} else {
@@ -4528,7 +4533,7 @@ pub fn (client PollyLinkClient) table_spec(branch_name string, table_name string
 	}
 }
 
-pub fn (client PollyLinkClient) query_schema(branch_name string, table_name string) !SidecarQuerySchema {
+fn (client PollyLinkClient) query_schema(branch_name string, table_name string) !SidecarQuerySchema {
 	path := if client.repo_name.len == 0 {
 		'/v1/query-schema?branch=${branch_name}&table=${table_name}'
 	} else {
@@ -4682,7 +4687,7 @@ pub fn (client PollyLinkClient) query_schema(branch_name string, table_name stri
 	}
 }
 
-pub fn (client PollyLinkClient) query_fts_preview(query SidecarFtsQueryRequest) !SidecarFtsQueryPreview {
+fn (client PollyLinkClient) query_fts_preview(query SidecarFtsQueryRequest) !SidecarFtsQueryPreview {
 	response := client.post_json('/v1/query-fts-preview', json.encode(SidecarFtsQueryRequestDto{
 		repo_name:      client.repo_name
 		branch_name:    query.branch_name
@@ -4717,7 +4722,7 @@ pub fn (client PollyLinkClient) query_fts_preview(query SidecarFtsQueryRequest) 
 	}
 }
 
-pub fn (client PollyLinkClient) query_fts(query SidecarFtsQueryRequest) !SidecarFtsQueryResult {
+fn (client PollyLinkClient) query_fts(query SidecarFtsQueryRequest) !SidecarFtsQueryResult {
 	response := client.post_json('/v1/query-fts', json.encode(SidecarFtsQueryRequestDto{
 		repo_name:      client.repo_name
 		branch_name:    query.branch_name
@@ -4766,7 +4771,7 @@ pub fn (client PollyLinkClient) query_fts(query SidecarFtsQueryRequest) !Sidecar
 	}
 }
 
-pub fn (client PollyLinkClient) general_query_fts_preview(query SidecarGeneralFtsQueryRequest) !SidecarGeneralFtsQueryPreview {
+fn (client PollyLinkClient) general_query_fts_preview(query SidecarGeneralFtsQueryRequest) !SidecarGeneralFtsQueryPreview {
 	response := client.post_json('/v1/general-query-fts-preview', json.encode(SidecarGeneralFtsQueryRequestDto{
 		repo_name:      client.repo_name
 		branch_name:    query.branch_name
@@ -4796,7 +4801,7 @@ pub fn (client PollyLinkClient) general_query_fts_preview(query SidecarGeneralFt
 	}
 }
 
-pub fn (client PollyLinkClient) general_query_fts(query SidecarGeneralFtsQueryRequest) !SidecarGeneralFtsQueryResult {
+fn (client PollyLinkClient) general_query_fts(query SidecarGeneralFtsQueryRequest) !SidecarGeneralFtsQueryResult {
 	response := client.post_json('/v1/general-query-fts', json.encode(SidecarGeneralFtsQueryRequestDto{
 		repo_name:      client.repo_name
 		branch_name:    query.branch_name
@@ -4841,7 +4846,249 @@ pub fn (client PollyLinkClient) general_query_fts(query SidecarGeneralFtsQueryRe
 	}
 }
 
-pub fn (client PollyLinkClient) query_plan_preview(query SidecarQueryRowsPostRequest) !SidecarQueryPlanPreview {
+type PollyHubRepoRole = pollyhub.RepoRole
+type PollyHubTokenRecord = pollyhub.TokenRecord
+type PollyHubRepoMembership = pollyhub.RepoMembership
+type PollyHubRepoPolicy = pollyhub.RepoPolicy
+type PollyHubBranchPolicy = pollyhub.BranchPolicy
+type PollyHubRateLimitPolicy = pollyhub.RateLimitPolicy
+type PollyHubGovernanceFile = pollyhub.GovernanceFile
+type PollyHubAuditEntry = pollyhub.AuditEntry
+type PollyHubActionAuditSummary = pollyhub.ActionAuditSummary
+type PollyHubAuditCategorySummary = pollyhub.AuditCategorySummary
+type PollyHubActorAuditSummary = pollyhub.ActorAuditSummary
+type PollyHubRequestIdentity = pollyhub.RequestIdentity
+
+fn pollyhub_governance_from_module(governance pollyhub.GovernanceFile) PollyHubGovernanceFile {
+	return PollyHubGovernanceFile{
+		tokens:          governance.tokens.clone()
+		memberships:     governance.memberships.clone()
+		policies:        governance.policies.clone()
+		branch_policies: governance.branch_policies.clone()
+		rate_limit:      governance.rate_limit
+	}
+}
+
+fn pollyhub_governance_to_module(governance PollyHubGovernanceFile) pollyhub.GovernanceFile {
+	return pollyhub.GovernanceFile{
+		tokens:          governance.tokens.clone()
+		memberships:     governance.memberships.clone()
+		policies:        governance.policies.clone()
+		branch_policies: governance.branch_policies.clone()
+		rate_limit:      governance.rate_limit
+	}
+}
+
+fn pollyhub_repo_policy_from_module(policy pollyhub.RepoPolicy) PollyHubRepoPolicy {
+	return PollyHubRepoPolicy{
+		repo_name:             policy.repo_name
+		allow_push_to_default: policy.allow_push_to_default
+		require_auto_merge:    policy.require_auto_merge
+		default_sync_policy:   policy.default_sync_policy
+	}
+}
+
+fn pollyhub_branch_policy_from_module(policy pollyhub.BranchPolicy) PollyHubBranchPolicy {
+	return PollyHubBranchPolicy{
+		repo_name:           policy.repo_name
+		branch_name:         policy.branch_name
+		allow_push:          policy.allow_push
+		require_auto_merge:  policy.require_auto_merge
+		default_sync_policy: policy.default_sync_policy
+	}
+}
+
+fn pollyhub_rate_limit_policy_from_module(policy pollyhub.RateLimitPolicy) PollyHubRateLimitPolicy {
+	return PollyHubRateLimitPolicy{
+		requests_per_minute: policy.requests_per_minute
+	}
+}
+
+fn pollyhub_request_identity_from_module(identity pollyhub.RequestIdentity) PollyHubRequestIdentity {
+	return PollyHubRequestIdentity{
+		auth_enabled: identity.auth_enabled
+		actor:        identity.actor
+		global_admin: identity.global_admin
+	}
+}
+
+fn pollyhub_audit_entry_from_module(entry pollyhub.AuditEntry) PollyHubAuditEntry {
+	return PollyHubAuditEntry{
+		timestamp:   entry.timestamp
+		actor:       entry.actor
+		action:      entry.action
+		repo_name:   entry.repo_name
+		branch_name: entry.branch_name
+		allowed:     entry.allowed
+		detail:      entry.detail
+	}
+}
+
+fn pollyhub_action_summary_from_module(row pollyhub.ActionAuditSummary) PollyHubActionAuditSummary {
+	return PollyHubActionAuditSummary{
+		action: row.action
+		total:  row.total
+		denies: row.denies
+	}
+}
+
+fn pollyhub_category_summary_from_module(row pollyhub.AuditCategorySummary) PollyHubAuditCategorySummary {
+	return PollyHubAuditCategorySummary{
+		category: row.category
+		total:    row.total
+		denies:   row.denies
+	}
+}
+
+fn pollyhub_actor_summary_from_module(row pollyhub.ActorAuditSummary) PollyHubActorAuditSummary {
+	return PollyHubActorAuditSummary{
+		actor:  row.actor
+		total:  row.total
+		denies: row.denies
+	}
+}
+
+fn pollyhub_layout_dir(root_dir string) string {
+	return pollyhub.layout_dir(root_dir)
+}
+
+fn pollyhub_normalize_repo_name(repo_name string) string {
+	return pollyhub.normalize_repo_name(repo_name)
+}
+
+fn load_pollyhub_governance(root_dir string) !PollyHubGovernanceFile {
+	return pollyhub_governance_from_module(pollyhub.load_governance(root_dir)!)
+}
+
+fn save_pollyhub_governance(root_dir string, governance PollyHubGovernanceFile) ! {
+	return pollyhub.save_governance(root_dir, pollyhub_governance_to_module(governance))
+}
+
+fn pollyhub_auth_enabled(root_dir string) !bool {
+	return pollyhub.auth_enabled(root_dir)
+}
+
+fn init_pollyhub_governance(root_dir string, actor string, token string) ! {
+	return pollyhub.init_governance(root_dir, actor, token)
+}
+
+fn grant_pollyhub_repo_access(root_dir string, repo_name string, actor string, role PollyHubRepoRole) ! {
+	return pollyhub.grant_repo_access(root_dir, repo_name, actor, role)
+}
+
+fn pollyhub_repo_policy(root_dir string, repo_name string) !PollyHubRepoPolicy {
+	return pollyhub_repo_policy_from_module(pollyhub.repo_policy(root_dir, repo_name)!)
+}
+
+fn set_pollyhub_repo_policy(root_dir string, repo_name string, allow_push_to_default bool, require_auto_merge bool, default_sync_policy string) ! {
+	return pollyhub.set_repo_policy(root_dir, repo_name, allow_push_to_default, require_auto_merge,
+		default_sync_policy)
+}
+
+fn find_pollyhub_branch_policy(root_dir string, repo_name string, branch_name string) ?PollyHubBranchPolicy {
+	policy := pollyhub.find_branch_policy(root_dir, repo_name, branch_name) or { return none }
+	return pollyhub_branch_policy_from_module(policy)
+}
+
+fn set_pollyhub_branch_policy(root_dir string, repo_name string, branch_name string, allow_push bool, require_auto_merge bool, default_sync_policy string) ! {
+	return pollyhub.set_branch_policy(root_dir, repo_name, branch_name, allow_push, require_auto_merge,
+		default_sync_policy)
+}
+
+fn pollyhub_rate_limit_policy(root_dir string) !PollyHubRateLimitPolicy {
+	return pollyhub_rate_limit_policy_from_module(pollyhub.rate_limit_policy(root_dir)!)
+}
+
+fn set_pollyhub_rate_limit_policy(root_dir string, requests_per_minute int) ! {
+	return pollyhub.set_rate_limit_policy(root_dir, requests_per_minute)
+}
+
+fn pollyhub_extract_bearer_token(authorization string) string {
+	return pollyhub.extract_bearer_token(authorization)
+}
+
+fn authenticate_pollyhub_request(root_dir string, authorization string) !PollyHubRequestIdentity {
+	return pollyhub_request_identity_from_module(pollyhub.authenticate_request(root_dir,
+		authorization)!)
+}
+
+fn authorize_pollyhub_repo_access(root_dir string, identity PollyHubRequestIdentity, repo_name string, action PollyHubRepoRole) ! {
+	return pollyhub.authorize_repo_access(root_dir, identity, repo_name, action)
+}
+
+fn list_pollyhub_authorized_repositories(root_dir string, identity PollyHubRequestIdentity) ![]string {
+	names := list_sidecar_repositories(root_dir)!
+	if !identity.auth_enabled || identity.global_admin {
+		return names
+	}
+	governance := load_pollyhub_governance(root_dir)!
+	mut allowed := []string{}
+	for name in names {
+		normalized_name := pollyhub_normalize_repo_name(name)
+		for membership in governance.memberships {
+			if membership.actor == identity.actor && membership.repo_name == normalized_name {
+				allowed << name
+				break
+			}
+		}
+	}
+	allowed.sort()
+	return allowed
+}
+
+fn append_pollyhub_audit_entry(root_dir string, entry PollyHubAuditEntry) ! {
+	return pollyhub.append_audit_entry(root_dir, entry)
+}
+
+fn read_pollyhub_audit_entries(root_dir string, limit int) ![]PollyHubAuditEntry {
+	entries := pollyhub.read_audit_entries(root_dir, limit)!
+	mut out := []PollyHubAuditEntry{cap: entries.len}
+	for entry in entries {
+		out << pollyhub_audit_entry_from_module(entry)
+	}
+	return out
+}
+
+fn summarize_pollyhub_audit_since(root_dir string, since i64) ! (int, int) {
+	return pollyhub.summarize_audit_since(root_dir, since)
+}
+
+fn summarize_pollyhub_actor_audit_since(root_dir string, actor string, since i64) ! (int, int) {
+	return pollyhub.summarize_actor_audit_since(root_dir, actor, since)
+}
+
+fn summarize_pollyhub_audit_by_action_since(root_dir string, since i64) ![]PollyHubActionAuditSummary {
+	rows := pollyhub.summarize_audit_by_action_since(root_dir, since)!
+	mut out := []PollyHubActionAuditSummary{cap: rows.len}
+	for row in rows {
+		out << pollyhub_action_summary_from_module(row)
+	}
+	return out
+}
+
+fn summarize_pollyhub_audit_by_category_since(root_dir string, since i64) ![]PollyHubAuditCategorySummary {
+	rows := pollyhub.summarize_audit_by_category_since(root_dir, since)!
+	mut out := []PollyHubAuditCategorySummary{cap: rows.len}
+	for row in rows {
+		out << pollyhub_category_summary_from_module(row)
+	}
+	return out
+}
+
+fn summarize_pollyhub_audit_by_actor_since(root_dir string, since i64) ![]PollyHubActorAuditSummary {
+	rows := pollyhub.summarize_audit_by_actor_since(root_dir, since)!
+	mut out := []PollyHubActorAuditSummary{cap: rows.len}
+	for row in rows {
+		out << pollyhub_actor_summary_from_module(row)
+	}
+	return out
+}
+
+fn pollyhub_now_unix() i64 {
+	return time.now().unix()
+}
+
+fn (client PollyLinkClient) query_plan_preview(query SidecarQueryRowsPostRequest) !SidecarQueryPlanPreview {
 	mut filters := []SidecarQueryFilterDto{cap: query.filters.len}
 	for filter in query.filters {
 		filters << SidecarQueryFilterDto{
@@ -4917,7 +5164,7 @@ pub fn (client PollyLinkClient) query_plan_preview(query SidecarQueryRowsPostReq
 	}
 }
 
-pub fn (client PollyLinkClient) markdown_metric(branch_name string, table_name string, column_name string, selector string) !SidecarMarkdownMetric {
+fn (client PollyLinkClient) markdown_metric(branch_name string, table_name string, column_name string, selector string) !SidecarMarkdownMetric {
 	path := if client.repo_name.len == 0 {
 		'/v1/markdown-metric?branch=${branch_name}&table=${table_name}&column=${column_name}&selector=${selector}'
 	} else {
@@ -4934,7 +5181,7 @@ pub fn (client PollyLinkClient) markdown_metric(branch_name string, table_name s
 	}
 }
 
-pub fn (client PollyLinkClient) index_lookup(branch_name string, table_name string, index_name string, value string, limit int) !SidecarIndexLookup {
+fn (client PollyLinkClient) index_lookup(branch_name string, table_name string, index_name string, value string, limit int) !SidecarIndexLookup {
 	path := if client.repo_name.len == 0 {
 		'/v1/index-lookup?branch=${branch_name}&table=${table_name}&index=${index_name}&value=${value}&limit=${limit}'
 	} else {
@@ -4965,7 +5212,7 @@ pub fn (client PollyLinkClient) index_lookup(branch_name string, table_name stri
 	}
 }
 
-pub fn (client PollyLinkClient) index_lookup_prefix(branch_name string, table_name string, index_name string, value string, limit int) !SidecarIndexLookup {
+fn (client PollyLinkClient) index_lookup_prefix(branch_name string, table_name string, index_name string, value string, limit int) !SidecarIndexLookup {
 	path := if client.repo_name.len == 0 {
 		'/v1/index-lookup-prefix?branch=${branch_name}&table=${table_name}&index=${index_name}&value=${value}&limit=${limit}'
 	} else {
@@ -4996,7 +5243,7 @@ pub fn (client PollyLinkClient) index_lookup_prefix(branch_name string, table_na
 	}
 }
 
-pub fn (client PollyLinkClient) markdown_query(query SidecarMarkdownQueryRequest) !SidecarMarkdownQuery {
+fn (client PollyLinkClient) markdown_query(query SidecarMarkdownQueryRequest) !SidecarMarkdownQuery {
 	mut path := if client.repo_name.len == 0 {
 		'/v1/markdown-query?branch=${query.branch_name}&table=${query.table_name}&kind=${query.query_kind}'
 	} else {
@@ -5159,12 +5406,12 @@ fn sidecar_query_compat_rows_from_post_request(query SidecarQueryRowsPostRequest
 }
 
 // query_rows is the compatibility client helper. Prefer query_page for new code.
-pub fn (client PollyLinkClient) query_rows(query SidecarQueryRowsRequest) !SidecarQueryRows {
+fn (client PollyLinkClient) query_rows(query SidecarQueryRowsRequest) !SidecarQueryRows {
 	return sidecar_query_compat_rows_from_request(query, client.query_page(query)!)
 }
 
 // query_page is the preferred client helper for paged query results.
-pub fn (client PollyLinkClient) query_page(query SidecarQueryRowsRequest) !SidecarQueryPage {
+fn (client PollyLinkClient) query_page(query SidecarQueryRowsRequest) !SidecarQueryPage {
 	mut path := if client.repo_name.len == 0 {
 		'/v1/query-rows?branch=${query.branch_name}&table=${query.table_name}&column=${query.column_name}&kind=${query.query_kind}'
 	} else {
@@ -5198,12 +5445,12 @@ pub fn (client PollyLinkClient) query_page(query SidecarQueryRowsRequest) !Sidec
 }
 
 // query_rows_post is the compatibility client helper. Prefer query_page_post.
-pub fn (client PollyLinkClient) query_rows_post(query SidecarQueryRowsPostRequest) !SidecarQueryRows {
+fn (client PollyLinkClient) query_rows_post(query SidecarQueryRowsPostRequest) !SidecarQueryRows {
 	return sidecar_query_compat_rows_from_post_request(query, client.query_page_post(query)!)
 }
 
 // query_page_post is the preferred client helper for paged POST query results.
-pub fn (client PollyLinkClient) query_page_post(query SidecarQueryRowsPostRequest) !SidecarQueryPage {
+fn (client PollyLinkClient) query_page_post(query SidecarQueryRowsPostRequest) !SidecarQueryPage {
 	mut filters := []SidecarQueryFilterDto{cap: query.filters.len}
 	for filter in query.filters {
 		filters << SidecarQueryFilterDto{
@@ -5231,7 +5478,7 @@ pub fn (client PollyLinkClient) query_page_post(query SidecarQueryRowsPostReques
 	return sidecar_query_page_from_dto(dto)
 }
 
-pub fn (rows SidecarQueryRows) page() SidecarQueryPage {
+fn (rows SidecarQueryRows) page() SidecarQueryPage {
 	return SidecarQueryPage{
 		rows:                rows.rows.clone()
 		plan:                rows.plan
@@ -5241,7 +5488,7 @@ pub fn (rows SidecarQueryRows) page() SidecarQueryPage {
 	}
 }
 
-pub fn (client PollyLinkClient) open_repository(default_branch string) !SidecarRepositoryInfo {
+fn (client PollyLinkClient) open_repository(default_branch string) !SidecarRepositoryInfo {
 	response := client.post_json('/v1/repos/open', json.encode(SidecarRepoOpenRequestDto{
 		repo_name:      client.repo_name
 		default_branch: default_branch
@@ -5262,7 +5509,7 @@ pub fn (client PollyLinkClient) open_repository(default_branch string) !SidecarR
 	}
 }
 
-pub fn (client PollyLinkClient) branch_activity(branch_name string) !SidecarBranchActivity {
+fn (client PollyLinkClient) branch_activity(branch_name string) !SidecarBranchActivity {
 	path := if client.repo_name.len == 0 {
 		'/v1/branch-activity?branch=${branch_name}'
 	} else {
@@ -5280,7 +5527,7 @@ pub fn (client PollyLinkClient) branch_activity(branch_name string) !SidecarBran
 	}
 }
 
-pub fn (client PollyLinkClient) branch_log(branch_name string, limit int) ![]SidecarBranchLogEntry {
+fn (client PollyLinkClient) branch_log(branch_name string, limit int) ![]SidecarBranchLogEntry {
 	path := if client.repo_name.len == 0 {
 		'/v1/branch-log?branch=${branch_name}&limit=${limit}'
 	} else {
@@ -5302,7 +5549,7 @@ pub fn (client PollyLinkClient) branch_log(branch_name string, limit int) ![]Sid
 	return commits
 }
 
-pub fn (client PollyLinkClient) repo_activity(limit int) ![]SidecarRepoActivityEntry {
+fn (client PollyLinkClient) repo_activity(limit int) ![]SidecarRepoActivityEntry {
 	path := if client.repo_name.len == 0 {
 		'/v1/repo-activity?limit=${limit}'
 	} else {
@@ -5325,7 +5572,7 @@ pub fn (client PollyLinkClient) repo_activity(limit int) ![]SidecarRepoActivityE
 	return entries
 }
 
-pub fn (client PollyLinkClient) global_activity(limit int) ![]SidecarRepoActivityEntry {
+fn (client PollyLinkClient) global_activity(limit int) ![]SidecarRepoActivityEntry {
 	response := client.get('/v1/global-activity?limit=${limit}')!
 	payload := json.decode(SidecarGlobalActivityDto, response.body)!
 	mut entries := []SidecarRepoActivityEntry{cap: payload.entries.len}
@@ -5350,35 +5597,6 @@ fn fetch_remote_branch_into_repo(mut repo PersistentRepository, client PollyLink
 	return envelope.offer
 }
 
-pub fn build_auto_merge_offer_for_remote_offer(mut source_repo PersistentRepository, source_branch string, target_branch string, remote_offer SyncOffer) !SyncOffer {
-	source_branch_head := source_repo.branch(source_branch)!
-	source_commit := source_repo.commit_store.get(source_branch_head.commit_cid)!
-	base_commit := source_repo.repo.merge_base_commit(source_commit.cid, remote_offer.target_commit_cid, mut
-		source_repo.commit_store)!
-	merge_result := auto_merge_by_roots(base_commit.root_cid, source_commit.root_cid,
-		remote_offer.target_root_cid, ChunkConfig.default(), mut source_repo.node_store)!
-	if merge_result.conflicts.len > 0 {
-		return error('auto-merge required manual resolution: ${merge_result.conflicts.len} conflicts')
-	}
-	merge_meta := CommitMeta{
-		author:    'pollylink'
-		message:   'auto-merge ${source_branch} into ${target_branch}'
-		timestamp: 0
-	}
-	snapshot := Snapshot.new(merge_result.tree, [source_commit.cid, remote_offer.target_commit_cid],
-		merge_meta)
-	snapshot.persist(mut source_repo.node_store, mut source_repo.commit_store)!
-	return SyncOffer{
-		request:                 SyncRequest{
-			local_root_hash: snapshot.commit.root_cid
-			branch_name:     target_branch
-		}
-		expected_old_commit_cid: remote_offer.target_commit_cid
-		target_commit_cid:       snapshot.commit.cid
-		target_root_cid:         snapshot.commit.root_cid
-	}
-}
-
 fn build_auto_merge_sidecar_exchange(mut source_repo PersistentRepository, source_branch string, client PollyLinkClient, target_branch string) !SyncExchange {
 	remote_offer := fetch_remote_branch_into_repo(mut source_repo, client, target_branch)!
 	merged_offer := build_auto_merge_offer_for_remote_offer(mut source_repo, source_branch,
@@ -5386,7 +5604,7 @@ fn build_auto_merge_sidecar_exchange(mut source_repo PersistentRepository, sourc
 	return full_sync_exchange_for_offer(mut source_repo, merged_offer)
 }
 
-pub fn push_branch_to_sidecar(mut source_repo PersistentRepository, source_branch string, client PollyLinkClient, target_branch string, policy SyncNegotiationPolicy) !SyncPushResult {
+fn push_branch_to_sidecar(mut source_repo PersistentRepository, source_branch string, client PollyLinkClient, target_branch string, policy SyncNegotiationPolicy) !SyncPushResult {
 	prediction_depth := match policy {
 		.manifest_depth1, .auto { 1 }
 		.manifest_depth2 { 2 }
@@ -5419,7 +5637,7 @@ pub fn push_branch_to_sidecar(mut source_repo PersistentRepository, source_branc
 	}
 }
 
-pub fn pull_branch_from_sidecar(mut target_repo PersistentRepository, target_branch string, client PollyLinkClient, source_branch string, policy SyncNegotiationPolicy) !SyncPullResult {
+fn pull_branch_from_sidecar(mut target_repo PersistentRepository, target_branch string, client PollyLinkClient, source_branch string, policy SyncNegotiationPolicy) !SyncPullResult {
 	prediction_depth := match policy {
 		.manifest_depth1, .auto { 1 }
 		.manifest_depth2 { 2 }

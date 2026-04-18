@@ -1,7 +1,18 @@
 module main
 
+import memory
+import memorydb
 import os
 import storage
+
+struct ReplayOverviewGenerator {
+	output string
+}
+
+fn (mut generator ReplayOverviewGenerator) generate(prompt string) !string {
+	_ = prompt
+	return generator.output
+}
 
 fn main() {
 	run() or { panic(err) }
@@ -21,7 +32,7 @@ fn run() ! {
 	defer {
 		db.close() or {}
 	}
-	mut engine := storage.new_llama_embedding_engine(storage.LlamaEmbeddingConfig{
+	mut engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
 		model_path:   model_path
 		n_ctx:        512
 		n_batch:      512
@@ -29,6 +40,9 @@ fn run() ! {
 	})!
 	defer {
 		engine.close()
+	}
+	mut generator := ReplayOverviewGenerator{
+		output: 'TOPIC: db-optimization\nSUMMARY_MD:\n# Summary\n\n我们集中讨论了数据库查询优化以及本地优先约束。\n\nINSIGHT_MD:\n## Insight\n\n保留可回放证据，再做语义蒸馏。\nEND_REFLECTION'
 	}
 
 	spec := storage.TypedTableSpec.new(storage.TableDef.new('docs', [
@@ -39,8 +53,8 @@ fn run() ! {
 			'bge-small')!,
 	])!
 	db.register_table(spec)!
-	db.register_memory_capability(storage.MemoryCapabilityDef.reflective_field('docs',
-		'body', storage.ReflectionOptions{
+	memorydb.register_capability(mut db, memory.MemoryCapabilityDef.reflective_field('docs',
+		'body', memory.ReflectionOptions{
 		embedding_index: 'body_path_vec_idx'
 		reflection_kind: 'summary'
 	})!)!
@@ -70,30 +84,25 @@ fn run() ! {
 		timestamp: 1
 	})!
 
-	db.index_reflective_markdown_fields('main', 'docs', 'doc-1'.bytes(), mut engine)!
-	db.index_reflective_markdown_fields('main', 'docs', 'doc-2'.bytes(), mut engine)!
-	db.index_reflective_markdown_fields('main', 'docs', 'doc-3'.bytes(), mut engine)!
-
-	job := db.build_markdown_reflection_job('main', 'docs', 'doc-1'.bytes(), 'body', mut
-		engine, 2)!
-	_ = db.persist_reflection_job(job, storage.ReflectionPersistInput{
-		title:      '数据库优化讨论'
-		summary_md: '# Summary\n\n我们集中讨论了数据库查询优化以及本地优先约束。\n'
-		insight_md: '## Insight\n\n保留可回放证据，再做语义蒸馏。\n'
-		topic_key:  'db-optimization'
+	_ = memorydb.reflect_memory_persistent(mut db, 'main', 2, mut engine, mut generator,
+		memory.ReflectorScheduleOptions{
+		write_threshold: 2
+		neighbor_limit:  2
+		max_jobs:        1
 	}, storage.ChunkConfig.default(), storage.CommitMeta{
 		author:    'gwg'
 		message:   'persist replay reflection'
 		timestamp: 2
 	})!
 
-	overview := db.replay_overview(mut engine, storage.ReplayQueryRequest{
+	replay := memorydb.replay_query(mut db, mut engine, memory.ReplayQueryRequest{
 		branch_name:      'main'
 		text:             query_text
 		seed_limit:       3
 		neighbor_limit:   6
 		reflection_limit: 3
 	})!
+	overview := memory.replay_overview('main', replay.evidence_hits, replay.reflections)
 
 	println('root_dir=${root_dir}')
 	println('query=${query_text}')

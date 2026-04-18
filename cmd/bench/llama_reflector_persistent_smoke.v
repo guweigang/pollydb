@@ -1,5 +1,7 @@
 module main
 
+import memory
+import memorydb
 import os
 import storage
 
@@ -26,8 +28,8 @@ fn run() ! {
 	}
 	spec := memory_entries_spec()!
 	db.register_table(spec)!
-	db.register_memory_capability(storage.MemoryCapabilityDef.reflective_field('memory_entries',
-		'content_md', storage.ReflectionOptions{
+	memorydb.register_capability(mut db, memory.MemoryCapabilityDef.reflective_field('memory_entries',
+		'content_md', memory.ReflectionOptions{
 		embedding_index: 'content_path_vec_idx'
 		reflection_kind: 'summary'
 	})!)!
@@ -55,12 +57,7 @@ fn run() ! {
 		author:  'bench'
 		message: 'seed memory entries'
 	})!
-	_ = db.note_reflector_writes('main', 2, storage.ChunkConfig.default(), storage.CommitMeta{
-		author:  'bench'
-		message: 'note reflector writes'
-	})!
-
-	mut embedding_engine := storage.new_llama_embedding_engine(storage.LlamaEmbeddingConfig{
+	mut embedding_engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
 		model_path:   embedding_model_path
 		n_ctx:        512
 		n_batch:      512
@@ -69,7 +66,7 @@ fn run() ! {
 	defer {
 		embedding_engine.close()
 	}
-	mut generator := storage.new_llama_generation_engine(storage.LlamaGenerationConfig{
+	mut generator := memory.new_llama_generation_engine(memory.LlamaGenerationConfig{
 		model_path:       generation_model_path
 		n_ctx:            2048
 		n_batch:          512
@@ -81,37 +78,28 @@ fn run() ! {
 		generator.close()
 	}
 
-	mut scheduler := storage.ReflectorScheduler.new(storage.ReflectorScheduleOptions{
+	options := memory.ReflectorScheduleOptions{
 		write_threshold: 2
 		neighbor_limit:  4
 		max_jobs:        1
 		min_evidence:    1
-	})
-	persisted := scheduler.maybe_reflect_persistent(mut db, 'main', mut embedding_engine, mut
-		generator, storage.ChunkConfig.default(), storage.CommitMeta{
+	}
+	persisted := memorydb.reflect_memory_persistent(mut db, 'main', 2, mut embedding_engine, mut
+		generator, options, storage.ChunkConfig.default(), storage.CommitMeta{
 		author:  'bench'
 		message: 'persistent reflector smoke'
 	})!
-	state := db.load_reflector_state('main')!
 	println('root_dir=${root_dir}')
 	println('reflections=${persisted.len}')
-	println('pending_writes=${state.pending_writes}')
-	println('last_reflected_root_hash=${state.last_reflected_root_hash}')
 	for reflection in persisted {
-		summary := db.load_markdown(reflection.summary_ref)!
-		insight := if reflection.insight_ref.doc_root_id.len > 0 {
-			db.load_markdown(reflection.insight_ref)!
-		} else {
-			''
-		}
 		println('reflection_id=${reflection.reflection_id}')
 		println('title=${reflection.title}')
 		println('topic=${reflection.topic_key}')
 		println('sources=${reflection.source_refs.len}')
 		println('SUMMARY_MD:')
-		println(summary)
+		println(reflection.summary_md)
 		println('INSIGHT_MD:')
-		println(insight)
+		println(reflection.insight_md)
 	}
 }
 

@@ -16,8 +16,9 @@ Planned contents:
 
 Current state:
 
-- source of truth still lives in `storage/`
-- this directory is intentionally documentation-only for now
-- it intentionally has no `.v` files yet because V's directory/module layout
-  makes early splitting expensive and cycle-prone
-- callers should continue importing `storage`
+- source of truth still mostly lives in `storage/`
+- this directory now hosts a very small set of cycle-safe shared helpers used by
+  both `storage/` and `query/`
+- larger backend/data-structure migrations are still intentionally postponed
+  until the package boundaries are stable enough
+- callers should continue importing `storage` or `query` rather than `core`

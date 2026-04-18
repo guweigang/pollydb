@@ -374,7 +374,7 @@ pub fn (mut database PersistentDatabase) rebuild_fts_indexes_at_branch(branch_na
 	}
 }
 
-fn fts_sidecar_document_text(database &PersistentDatabase, table TableDef, row TypedSchemaRow, index SchemaIndexDef) !string {
+pub fn fts_sidecar_document_text(database &PersistentDatabase, table TableDef, row TypedSchemaRow, index SchemaIndexDef) !string {
 	return fts_text_for_row_data(database, table, row.data, index)
 }
 

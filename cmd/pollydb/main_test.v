@@ -335,10 +335,8 @@ fn test_cli_looks_like_url() {
 
 fn test_cli_render_sync_result_includes_auto_merged_status() {
 	output := cli_render_sync_result('Sync Push (Sidecar)', 'push', '/tmp/source', 'main',
-		'http://127.0.0.1:19191', 'main', 'manifest_depth1', 5, 1024, storage.Branch{
-		name:       'main'
-		commit_cid: 'commit-123'
-	}, 'auto_merged')
+		'http://127.0.0.1:19191', 'main', 'manifest_depth1', 5, 1024, 'main', 'commit-123',
+		'auto_merged')
 	assert term.strip_ansi(output).contains('auto_merged')
 }
 

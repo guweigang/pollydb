@@ -239,7 +239,7 @@ fn persist_markdown_source(root_dir string, root_id string, raw string) ! {
 	os.write_file(markdown_source_path(root_dir, root_id), raw)!
 }
 
-fn load_markdown_source(root_dir string, root_id string) !string {
+pub fn load_markdown_source(root_dir string, root_id string) !string {
 	return os.read_file(markdown_source_path(root_dir, root_id))!
 }
 

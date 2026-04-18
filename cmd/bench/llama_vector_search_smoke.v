@@ -1,5 +1,6 @@
 module main
 
+import memory
 import os
 import storage
 
@@ -20,7 +21,7 @@ fn run() ! {
 	defer {
 		db.close() or {}
 	}
-	mut engine := storage.new_llama_embedding_engine(storage.LlamaEmbeddingConfig{
+	mut engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
 		model_path:   model_path
 		n_ctx:        512
 		n_batch:      512

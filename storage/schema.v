@@ -1,5 +1,7 @@
 module storage
 
+import memory
+
 pub struct RowData {
 mut:
 	values map[string][]u8
@@ -49,22 +51,9 @@ pub:
 	prefix_lengths []int
 }
 
-pub struct ReflectionOptions {
-pub:
-	enabled                 bool = true
-	embedding_index         string
-	reflection_kind         string = 'summary'
-	replay_anchor           bool   = true
-	link_evidence_blocks    bool   = true
-	link_semantic_neighbors bool   = true
-}
+type ReflectionOptions = memory.ReflectionOptions
 
-pub struct MemoryCapabilityDef {
-pub:
-	table_name  string
-	column_name string
-	options     ReflectionOptions
-}
+type MemoryCapabilityDef = memory.MemoryCapabilityDef
 
 pub struct SchemaView {
 pub:
@@ -646,7 +635,7 @@ pub fn SchemaIndexDef.embedding_text(name string, column string, profile string)
 	}
 }
 
-pub fn SchemaIndexDef.embedding_markdown(name string, column string, scope MarkdownEmbeddingScope, profile string) !SchemaIndexDef {
+pub fn SchemaIndexDef.embedding_markdown(name string, column string, scope memory.MarkdownEmbeddingScope, profile string) !SchemaIndexDef {
 	if name.len == 0 {
 		return error('schema index name cannot be empty')
 	}
@@ -670,30 +659,6 @@ pub fn SchemaIndexDef.embedding_markdown(name string, column string, scope Markd
 		embedding_profile:       profile.trim_space()
 		json_field_type:         .string_
 		stores_row:              false
-	}
-}
-
-pub fn MemoryCapabilityDef.reflective_field(table_name string, column_name string, options ReflectionOptions) !MemoryCapabilityDef {
-	if table_name.len == 0 {
-		return error('memory capability table name cannot be empty')
-	}
-	if column_name.len == 0 {
-		return error('memory capability column name cannot be empty')
-	}
-	if options.reflection_kind.trim_space().len == 0 {
-		return error('memory capability reflection kind cannot be empty')
-	}
-	return MemoryCapabilityDef{
-		table_name:  table_name
-		column_name: column_name
-		options:     ReflectionOptions{
-			enabled:                 options.enabled
-			embedding_index:         options.embedding_index.trim_space()
-			reflection_kind:         options.reflection_kind.trim_space()
-			replay_anchor:           options.replay_anchor
-			link_evidence_blocks:    options.link_evidence_blocks
-			link_semantic_neighbors: options.link_semantic_neighbors
-		}
 	}
 }
 
@@ -779,13 +744,13 @@ pub fn (index SchemaIndexDef) field_selector_ref() ?FieldSelectorRef {
 	}
 }
 
-pub fn (index SchemaIndexDef) field_selector_meta() ?FieldSelectorMeta {
+pub fn (index SchemaIndexDef) field_selector_meta() ?FieldSelectorRef {
 	plugin_name := index.field_selector_plugin()
 	selector := index.field_selector()
 	if plugin_name.len == 0 || selector.len == 0 {
 		return none
 	}
-	return FieldSelectorMeta{
+	return FieldSelectorRef{
 		plugin_name: plugin_name
 		selector:    selector
 		value_type:  index.json_field_type
@@ -1088,8 +1053,8 @@ pub fn validate_embedding_index(column ColumnDef, index SchemaIndexDef) ! {
 			if index.embedding_source_plugin != 'markdown' {
 				return error('markdown embedding index requires markdown source plugin: ${index.name}')
 			}
-			if index.embedding_scope !in [MarkdownEmbeddingScope.block.str(),
-				MarkdownEmbeddingScope.path.str()] {
+			if index.embedding_scope !in [memory.MarkdownEmbeddingScope.block.str(),
+				memory.MarkdownEmbeddingScope.path.str()] {
 				return error('markdown embedding index requires block or path scope: ${index.name}')
 			}
 		}

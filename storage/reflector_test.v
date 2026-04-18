@@ -1,5 +1,6 @@
 module storage
 
+import memory
 import os
 
 struct ReflectorTestEmbeddingEngine {
@@ -47,7 +48,7 @@ fn reflector_docs_spec() !TypedTableSpec {
 		ColumnDef.new('id', .string_, false)!,
 		ColumnDef.new('body', .markdown_, false)!,
 	], ['id'])!, [
-		SchemaIndexDef.embedding_markdown('body_path_vec_idx', 'body', .path, 'bge-small')!,
+		SchemaIndexDef.embedding_markdown('body_path_vec_idx', 'body', memory.MarkdownEmbeddingScope.path, 'bge-small')!,
 	])!
 }
 
@@ -153,7 +154,8 @@ fn test_index_reflective_markdown_fields_and_build_reflection_job() {
 	assert hits[0].column_name == 'body'
 	assert hits[0].primary_key.len > 0
 
-	persisted := db.persist_reflection_job(job, ReflectionPersistInput{
+	persisted := db.persist_markdown_reflection('main', 'docs', 'doc-1'.bytes(), 'body', mut
+		engine, 2, memory.ReflectionPersistInput{
 		title:      '数据库优化讨论'
 		summary_md: '# Summary\n\n我们集中讨论了数据库查询优化。\n'
 		insight_md: '## Insight\n\n优先保留本地优先和可回放证据。\n'
@@ -165,6 +167,8 @@ fn test_index_reflective_markdown_fields_and_build_reflection_job() {
 	}) or { panic(err) }
 	assert persisted.reflection_id.len > 0
 	assert persisted.derived_from_root_hash.len > 0
+	assert persisted.summary_md == '# Summary\n\n我们集中讨论了数据库查询优化。\n'
+	assert persisted.insight_md == '## Insight\n\n优先保留本地优先和可回放证据。\n'
 	assert persisted.source_refs.len == 2
 	assert persisted.links.len == 4
 
@@ -184,7 +188,7 @@ fn test_index_reflective_markdown_fields_and_build_reflection_job() {
 	stored_source_refs := stored.data.get('source_refs') or { panic(err) }
 	match stored_source_refs {
 		string {
-			refs := decode_reflection_source_refs(stored_source_refs) or { panic(err) }
+			refs := memory.decode_reflection_source_refs(stored_source_refs) or { panic(err) }
 			assert refs.len == 2
 			assert refs[0].table_name == 'docs'
 			assert refs[0].column_name == 'body'
@@ -245,7 +249,7 @@ fn test_index_reflective_markdown_fields_and_build_reflection_job() {
 	assert derived_from_count == 2
 	assert semantic_neighbor_count == 2
 
-	replay := db.replay_query(mut engine, ReplayQueryRequest{
+	replay := db.replay_query(mut engine, memory.ReplayQueryRequest{
 		branch_name:      'main'
 		text:             '数据库优化'
 		seed_limit:       2
@@ -261,13 +265,14 @@ fn test_index_reflective_markdown_fields_and_build_reflection_job() {
 	assert replay.reflections[0].summary_md.contains('数据库查询优化')
 	assert replay.reflections[0].source_refs.len == 2
 
-	overview := db.replay_overview(mut engine, ReplayQueryRequest{
+	overview_replay := db.replay_query(mut engine, memory.ReplayQueryRequest{
 		branch_name:      'main'
 		text:             '数据库优化'
 		seed_limit:       2
 		neighbor_limit:   4
 		reflection_limit: 2
 	}) or { panic(err) }
+	overview := memory.replay_overview('main', overview_replay.evidence_hits, overview_replay.reflections)
 	assert overview.topics.len == 1
 	assert overview.topics[0].title == '数据库优化讨论'
 	assert overview.topics[0].evidence_count == 2
@@ -379,7 +384,7 @@ END_REFLECTION'
 }
 
 fn test_reflector_scheduler_threshold_decision() {
-	mut scheduler := ReflectorScheduler.new(ReflectorScheduleOptions{
+	mut scheduler := memory.ReflectorScheduler.new(memory.ReflectorScheduleOptions{
 		write_threshold: 3
 	})
 	assert scheduler.decision().should_reflect == false
@@ -424,15 +429,14 @@ fn test_reflector_state_persists_pending_writes() {
 	state := db.load_reflector_state('main') or { panic(err) }
 	assert state.branch_name == 'main'
 	assert state.pending_writes == 0
-	updated := db.note_reflector_writes('main', 5, ChunkConfig.default(), CommitMeta{
+	db.record_reflector_writes('main', 5, ChunkConfig.default(), CommitMeta{
 		author:    'gwg'
 		message:   'note writes'
 		timestamp: 1
 	}) or { panic(err) }
-	assert updated.pending_writes == 5
-	assert updated.updated_at.len > 0
 	reloaded := db.load_reflector_state('main') or { panic(err) }
 	assert reloaded.pending_writes == 5
+	assert reloaded.updated_at.len > 0
 	assert reloaded.last_reflected_root_hash.len == 0
 }
 
@@ -476,7 +480,7 @@ fn test_reflector_scheduler_persistent_reflect_resets_state() {
 		message:   'seed docs'
 		timestamp: 1
 	}) or { panic(err) }
-	_ = db.note_reflector_writes('main', 3, ChunkConfig.default(), CommitMeta{
+	db.record_reflector_writes('main', 3, ChunkConfig.default(), CommitMeta{
 		author:    'gwg'
 		message:   'note writes'
 		timestamp: 2
@@ -505,12 +509,12 @@ INSIGHT_MD:
 - 写入阈值触发反思。
 END_REFLECTION'
 	}
-	mut scheduler := ReflectorScheduler.new(ReflectorScheduleOptions{
+	options := memory.ReflectorScheduleOptions{
 		write_threshold: 3
 		neighbor_limit:  2
 		max_jobs:        1
-	})
-	persisted := scheduler.maybe_reflect_persistent(mut db, 'main', mut engine, mut generator,
+	}
+	persisted := db.reflect_memory_persistent('main', 3, mut engine, mut generator, options,
 		ChunkConfig.default(), CommitMeta{
 		author:    'gwg'
 		message:   'scheduled reflect'

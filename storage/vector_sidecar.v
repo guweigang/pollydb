@@ -9,7 +9,7 @@ pub struct VectorSearchQuery {
 pub:
 	branch_name string
 	limit       int = 10
-	scope       MarkdownEmbeddingScope
+	scope       memory.MarkdownEmbeddingScope
 	scope_set   bool
 }
 
@@ -22,7 +22,7 @@ pub:
 	column_name   string
 	primary_key   []u8
 	score         f64
-	scope         MarkdownEmbeddingScope
+	scope         memory.MarkdownEmbeddingScope
 	kind          string
 	content_id    string
 	occurrence_id string
@@ -46,7 +46,7 @@ struct VectorSidecarRow {
 	table_name    string
 	column_name   string
 	primary_key   []u8
-	scope         MarkdownEmbeddingScope
+	scope         memory.MarkdownEmbeddingScope
 	kind          string
 	content_id    string
 	occurrence_id string
@@ -164,13 +164,13 @@ pub fn (mut database PersistentDatabase) vector_target_id_for_int(branch_name st
 	return required_typed_row_string(row, 'target_id')
 }
 
-pub fn (mut database PersistentDatabase) ensure_vector_target_bindings(branch_name string, targets []MarkdownEmbeddingTarget) !map[string]i64 {
+pub fn (mut database PersistentDatabase) ensure_vector_target_bindings(branch_name string, targets []memory.MarkdownEmbeddingTarget) !map[string]i64 {
 	if targets.len == 0 {
 		return map[string]i64{}
 	}
 	database.ensure_vector_binding_tables()!
 	mut ids_by_target := map[string]i64{}
-	mut missing := []MarkdownEmbeddingTarget{}
+	mut missing := []memory.MarkdownEmbeddingTarget{}
 	mut next_id := i64(1)
 	mut branch_exists := false
 	mut session := DatabaseSession{}
@@ -254,12 +254,12 @@ pub fn (mut database PersistentDatabase) ensure_vector_target_bindings(branch_na
 	return ids_by_target
 }
 
-pub fn (mut database PersistentDatabase) upsert_markdown_embedding_targets(branch_name string, targets []MarkdownEmbeddingTarget, vectors [][]f32) ! {
+pub fn (mut database PersistentDatabase) upsert_markdown_embedding_targets(branch_name string, targets []memory.MarkdownEmbeddingTarget, vectors [][]f32) ! {
 	return database.upsert_markdown_embedding_targets_for_source(branch_name, '', []u8{},
 		'', targets, vectors)
 }
 
-pub fn (mut database PersistentDatabase) upsert_markdown_embedding_targets_for_source(branch_name string, table_name string, primary_key []u8, column_name string, targets []MarkdownEmbeddingTarget, vectors [][]f32) ! {
+pub fn (mut database PersistentDatabase) upsert_markdown_embedding_targets_for_source(branch_name string, table_name string, primary_key []u8, column_name string, targets []memory.MarkdownEmbeddingTarget, vectors [][]f32) ! {
 	if targets.len != vectors.len {
 		return error('embedding targets and vectors length mismatch')
 	}
@@ -300,14 +300,14 @@ pub fn (mut database PersistentDatabase) upsert_markdown_embedding_targets_for_s
 	database.upsert_vector_index(branch_name, targets, vectors, backend_kind)!
 }
 
-pub fn (mut database PersistentDatabase) index_markdown_ref_embeddings(branch_name string, ref MarkdownRef, mut engine EmbeddingEngine) ![]MarkdownEmbeddingTarget {
+pub fn (mut database PersistentDatabase) index_markdown_ref_embeddings(branch_name string, ref MarkdownRef, mut engine memory.EmbeddingEngine) ![]memory.MarkdownEmbeddingTarget {
 	return database.index_markdown_ref_embeddings_for_source(branch_name, '', []u8{},
 		'', ref, mut engine)
 }
 
-pub fn (mut database PersistentDatabase) index_markdown_ref_embeddings_for_source(branch_name string, table_name string, primary_key []u8, column_name string, ref MarkdownRef, mut engine EmbeddingEngine) ![]MarkdownEmbeddingTarget {
+pub fn (mut database PersistentDatabase) index_markdown_ref_embeddings_for_source(branch_name string, table_name string, primary_key []u8, column_name string, ref MarkdownRef, mut engine memory.EmbeddingEngine) ![]memory.MarkdownEmbeddingTarget {
 	targets := markdown_embedding_targets_from_ref(database, ref)!
-	vectors := engine.embed_batch(markdown_embedding_texts(targets))!
+	vectors := engine.embed_batch(memory.markdown_embedding_texts(targets))!
 	dims := engine.dimensions()
 	for vector in vectors {
 		if vector.len != dims {
@@ -319,7 +319,7 @@ pub fn (mut database PersistentDatabase) index_markdown_ref_embeddings_for_sourc
 	return targets
 }
 
-pub fn (mut database PersistentDatabase) query_markdown_text_embeddings(mut engine EmbeddingEngine, text string, query VectorSearchQuery) ![]VectorSearchHit {
+pub fn (mut database PersistentDatabase) query_markdown_text_embeddings(mut engine memory.EmbeddingEngine, text string, query VectorSearchQuery) ![]VectorSearchHit {
 	query_vector := engine.embed(text)!
 	return database.query_markdown_embedding_vector(query_vector, query)
 }
@@ -413,8 +413,8 @@ fn (mut database PersistentDatabase) vector_rows_by_int_ids(query VectorSearchQu
 fn vector_row_from_typed(branch_name string, row TypedSchemaRow) !VectorSidecarRow {
 	scope_raw := required_typed_row_string(row, 'scope')
 	scope := match scope_raw {
-		'path' { MarkdownEmbeddingScope.path }
-		else { MarkdownEmbeddingScope.block }
+		'path' { memory.MarkdownEmbeddingScope.path }
+		else { memory.MarkdownEmbeddingScope.block }
 	}
 	vector := decode_vector_text(required_typed_row_string(row, 'vector_text'))!
 	dims := required_typed_row_i64(row, 'dims')
@@ -520,7 +520,7 @@ fn (database PersistentDatabase) ensure_vector_index_backend_ready(kind VectorIn
 	}
 }
 
-fn (database PersistentDatabase) upsert_vector_index(branch_name string, targets []MarkdownEmbeddingTarget, vectors [][]f32, kind VectorIndexBackendKind) ! {
+fn (database PersistentDatabase) upsert_vector_index(branch_name string, targets []memory.MarkdownEmbeddingTarget, vectors [][]f32, kind VectorIndexBackendKind) ! {
 	match kind {
 		.polly_scan {}
 		.usearch {

@@ -1,4 +1,4 @@
-module storage
+module memory
 
 #flag -I @VMODROOT/storage/c
 #flag darwin -I/opt/homebrew/include

@@ -1,4 +1,4 @@
-module storage
+module memory
 
 fn test_markdown_embedding_targets_emit_block_and_path_layers() {
 	targets := markdown_embedding_targets('# Intro\n\nHello PollyDB memory.\n\n```v\nprintln("ok")\n```\n\n## Next\n\nShip vectors.\n') or {
