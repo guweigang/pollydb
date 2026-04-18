@@ -17,6 +17,7 @@ It shows:
 module main
 
 import os
+import query as queryapi
 import storage
 
 fn main() ! {
@@ -47,11 +48,7 @@ fn main() ! {
 	mut seed_row := storage.TypedRowData.new()
 	seed_row.set('id', 'note-1')
 	seed_row.set('title', 'Roadmap')
-	seed_row.set('body', storage.MarkdownRef{
-		doc_root_id: 'seed-note-1'
-		source_hash: 'seed-note-1'
-		source_len: 0
-	})
+	seed_row.set('body', db.ingest_markdown('# Roadmap\n\nSeed note for embedding demo.\n')!)
 	seed_tree := storage.Tree.build([
 		storage.KVPair{
 			key: storage.TableView.new(storage.Tree{}, 'notes').key_for('note-1'.bytes())
@@ -79,10 +76,10 @@ fn main() ! {
 		},
 	)!
 
-	page := session.query_page(mut db, storage.QueryRequest{
+	page := queryapi.query_page(session, mut db, queryapi.Request{
 		table_name: 'notes'
 		filters: [
-			storage.QueryFilter.field_prefix('body', 'markdown', 'heading_text:2', 'Road')
+			queryapi.Filter.field_prefix('body', 'markdown', 'heading_text:2', 'Road')
 		]
 		select_columns: ['title']
 		limit: 10
@@ -92,7 +89,7 @@ fn main() ! {
 	println('strategy=${page.plan.strategy}')
 	println('index=${page.plan.index_name}')
 
-	fts := session.query_fts(mut db, storage.FtsQuery{
+	fts := queryapi.query_fts(session, mut db, queryapi.FtsRequest{
 		table_name: 'notes'
 		column_name: 'body'
 		kind: .all
@@ -105,11 +102,11 @@ fn main() ! {
 	println('fts_strategy=${fts.plan.strategy}')
 	println('fts_index=${fts.plan.index_name}')
 
-	preview := db.preview_query_plan_details(storage.QueryRequest{
+	preview := queryapi.preview_plan_details(db, queryapi.Request{
 		table_name: 'notes'
 		filters: [
-			storage.QueryFilter.field_prefix('body', 'markdown', 'heading_text:2', 'Road')
-			storage.QueryFilter.eq('title', 'Roadmap')
+			queryapi.Filter.field_prefix('body', 'markdown', 'heading_text:2', 'Road')
+			queryapi.Filter.eq('title', 'Roadmap')
 		]
 		select_columns: ['title']
 		limit: 10
@@ -129,16 +126,16 @@ The most important APIs are:
 - `TypedTableSpec.new(...)`
 - `SchemaIndexDef.markdown_value(...)`
 - `DatabaseSession.put_markdown(...)`
-- `DatabaseSession.query_page(...)`
-- `DatabaseSession.query_fts(...)`
-- `PersistentDatabase.preview_query_plan_details(...)`
+- `query.query_page(...)`
+- `query.query_fts(...)`
+- `query.preview_plan_details(...)`
 
 ## Lightweight FTS Example
 
 The same Markdown row can also be queried through the lightweight lexical FTS layer:
 
 ```v
-preview := session.preview_fts_query_details(storage.FtsQuery{
+preview := queryapi.preview_fts_details_in_session(session, queryapi.FtsRequest{
 	table_name: 'notes'
 	column_name: 'body'
 	scope: .any
@@ -150,7 +147,7 @@ preview := session.preview_fts_query_details(storage.FtsQuery{
 println(preview.plan.strategy)
 println(preview.notes)
 
-result := session.query_fts(mut db, storage.FtsQuery{
+result := queryapi.query_fts(session, mut db, queryapi.FtsRequest{
 	table_name: 'notes'
 	column_name: 'body'
 	scope: .heading
@@ -181,11 +178,24 @@ Supported Markdown FTS scopes today:
 If you do not want to build `QueryRequest` directly, PollyDB now also exposes
 two intermediate lowering layers:
 
-- `SqlFilterFragment`
-- `NormalizedQueryPredicate`
+- `query.SqlFilterFragment`
+- `query.NormalizedPredicate`
 
 Those are intended for future `vsql`, but they are also usable directly from V
 if you want a more builder-like query construction path.
+
+For example, in-process callers can now stay on the `query` surface:
+
+```v
+request := queryapi.lower_sql_filter_request(db, queryapi.SqlLoweringRequest{
+	table_name: 'notes'
+	filters: [
+		queryapi.SqlFilterFragment.column_eq('title', storage.ColumnValue('Roadmap')),
+	]
+	select_columns: ['id', 'title']
+	limit: 10
+})!
+```
 
 ## When This Is Enough
 

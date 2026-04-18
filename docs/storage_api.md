@@ -55,7 +55,7 @@ Current Sidecar control-plane endpoints:
 - `POST /v1/query-plan-preview`
 - `POST /v1/query-rows`
 
-These endpoints are implemented in the current Sidecar handler and used by `PollyLinkClient`.
+These endpoints are implemented in the current Sidecar handler and used by `pollylink.Client`.
 They represent the first service shape for Polly-Link and Polly-Hub, while leaving room for a future RPC or streaming transport if packet streaming and high-RTT behavior become the dominant concern.
 
 ### Schema and Type System
@@ -178,25 +178,25 @@ Current planner behavior:
 
 Preferred paged read entrypoints:
 
-- `(session DatabaseSession).query_page(...)`
-- `(session TransactionSession).query_page(...)`
+- `query.query_page(...)`
+- `query.query_page_in_transaction(...)`
 
 Compatibility entrypoints that still work:
 
 - `(session DatabaseSession).query_rows(...)`
 - `(session TransactionSession).query_rows(...)`
 
-`query_page(...)` is now the canonical public API for paged queries.
+`query.query_page(...)` is now the canonical in-process API for paged queries.
 `query_rows(...)` is retained as a compatibility wrapper that returns the same data plus duplicated legacy cursor fields.
 
 Preferred planner/explain entrypoints:
 
-- `(db PersistentDatabase).preview_query_plan(...)`
-- `(db PersistentDatabase).preview_query_plan_details(...)`
-- `(session TransactionSession).preview_query_plan(...)`
-- `(session TransactionSession).preview_query_plan_details(...)`
+- `query.preview_plan(...)`
+- `query.preview_plan_details(...)`
+- `query.preview_plan_in_transaction(...)`
+- `query.preview_plan_details_in_transaction(...)`
 
-`preview_query_plan_details(...)` is the canonical explain entrypoint.
+`query.preview_plan_details(...)` is the canonical in-process explain entrypoint.
 Its `QueryPlanPreview.sample_explain()` payload intentionally matches the `sample_explain` object exposed by `table_query_schema(...).columns[*].filter_shapes[*]` and `field_selectors[*].filter_shapes[*]`.
 That shared explain shape is the intended planner-facing metadata contract for future `vsql`.
 
@@ -206,10 +206,10 @@ For lexical retrieval over large text and Markdown, PollyDB now exposes a
 general FTS surface:
 
 - `QueryRequest.general_fts`
-- `(db PersistentDatabase).preview_general_fts_query(...)`
-- `(session DatabaseSession).preview_general_fts_query(...)`
-- `(mut database PersistentDatabase).query_general_fts(...)`
-- `(session DatabaseSession).query_general_fts(...)`
+- `query.preview_general_fts(...)`
+- `query.preview_general_fts_in_session(...)`
+- `query.query_general_fts(...)`
+- `query.query_general_fts_in_session(...)`
 
 Current supported FTS kinds:
 
@@ -385,12 +385,12 @@ The recommended storage-layer entrypoints are:
 - `PersistentDatabase.recovery_status(...)`
 - `(mut db PersistentDatabase).status_report()`
 - `PersistentDatabase.inspect(...)`
-- `PollyLinkClient`
-- `PollyLinkSidecarHandler`
-- `push_branch_to_sidecar(...)`
-- `pull_branch_from_sidecar(...)`
-- `(client PollyLinkClient).query_fts_preview(...)`
-- `(client PollyLinkClient).query_fts(...)`
+- `pollylink.Client`
+- `pollylink.SidecarHandler`
+- `pollylink.push_branch_to_sidecar(...)`
+- `pollylink.pull_branch_from_sidecar(...)`
+- `(client pollylink.Client).query_fts_preview(...)`
+- `(client pollylink.Client).query_fts(...)`
 - `(session DatabaseSession).begin_transaction(...)`
 - `(session DatabaseSession).begin_working_set(...)`
 - `(session DatabaseSession).apply_write_set(...)`
@@ -418,17 +418,17 @@ The recommended storage-layer entrypoints are:
 
 Current Polly-Link and Sidecar-facing helpers:
 
-- `(client PollyLinkClient).offer(...)`
-- `(client PollyLinkClient).negotiate_missing(...)`
-- `(client PollyLinkClient).fetch_exchange(...)`
-- `(client PollyLinkClient).fetch_full_exchange(...)`
-- `(client PollyLinkClient).apply_exchange(...)`
-- `(client PollyLinkClient).list_repositories()`
-- `(client PollyLinkClient).open_repository(...)`
-- `(client PollyLinkClient).list_branches()`
-- `(client PollyLinkClient).repo_activity(...)`
-- `(client PollyLinkClient).branch_activity(...)`
-- `(client PollyLinkClient).branch_log(...)`
+- `(client pollylink.Client).offer(...)`
+- `(client pollylink.Client).negotiate_missing(...)`
+- `(client pollylink.Client).fetch_exchange(...)`
+- `(client pollylink.Client).fetch_full_exchange(...)`
+- `(client pollylink.Client).apply_exchange(...)`
+- `(client pollylink.Client).list_repositories()`
+- `(client pollylink.Client).open_repository(...)`
+- `(client pollylink.Client).list_branches()`
+- `(client pollylink.Client).repo_activity(...)`
+- `(client pollylink.Client).branch_activity(...)`
+- `(client pollylink.Client).branch_log(...)`
 - `(session TransactionSession).scan_table(...)`
 - `(session TransactionSession).lookup_index(...)`
 - `(session TransactionSession).query_page(...)`
@@ -453,15 +453,15 @@ Current query/planner and Sidecar-facing helpers:
 - `(result QueryResult).page()`
 - `(result QueryResult).cursor_page()`
 - `(page QueryCursorPage).result()`
-- `(db PersistentDatabase).table_query_schema(...)`
-- `(db PersistentDatabase).preview_query_plan(...)`
-- `(db PersistentDatabase).preview_query_plan_details(...)`
-- `(client PollyLinkClient).query_page(...)`
-- `(client PollyLinkClient).query_rows(...)`
-- `(client PollyLinkClient).query_page_post(...)`
-- `(client PollyLinkClient).query_rows_post(...)`
-- `(client PollyLinkClient).query_schema(...)`
-- `(client PollyLinkClient).query_plan_preview(...)`
+- `query.table_schema(...)`
+- `query.preview_plan(...)`
+- `query.preview_plan_details(...)`
+- `(client pollylink.Client).query_page(...)`
+- `(client pollylink.Client).query_rows(...)`
+- `(client pollylink.Client).query_page_post(...)`
+- `(client pollylink.Client).query_rows_post(...)`
+- `(client pollylink.Client).query_schema(...)`
+- `(client pollylink.Client).query_plan_preview(...)`
 
 For point reads and secondary-index reads:
 

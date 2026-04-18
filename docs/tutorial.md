@@ -357,10 +357,12 @@ Its default return shape is a page with rows, planner metadata, and cursor state
 Storage-layer example:
 
 ```v
-page := session.query_page(mut db, storage.QueryRequest{
+import query as queryapi
+
+page := queryapi.query_page(session, mut db, queryapi.Request{
 	table_name: 'users'
 	filters: [
-		storage.QueryFilter.eq('email', storage.ColumnValue('ada@example.com')),
+		queryapi.Filter.eq('email', storage.ColumnValue('ada@example.com')),
 	]
 	select_columns: ['id', 'name']
 	limit: 10
@@ -374,10 +376,12 @@ assert !page.cursor.has_more
 Field-selector example for Markdown-derived indexes:
 
 ```v
-page := session.query_page(mut db, storage.QueryRequest{
+import query as queryapi
+
+page := queryapi.query_page(session, mut db, queryapi.Request{
 	table_name: 'notes'
 	filters: [
-		storage.QueryFilter.field_prefix('body', 'markdown', 'heading_text:2',
+		queryapi.Filter.field_prefix('body', 'markdown', 'heading_text:2',
 			storage.ColumnValue('Road')),
 	]
 	limit: 10
@@ -386,17 +390,17 @@ page := session.query_page(mut db, storage.QueryRequest{
 
 Compatibility note:
 
-- `query_page(...)` is the preferred API
+- `query.query_page(...)` is the preferred API for in-process callers
 - `query_rows(...)` still works, but mainly as a compatibility wrapper around the same cursor-page result
 
 Sidecar example:
 
 ```v
-page := client.query_page_post(storage.SidecarQueryRowsPostRequest{
+page := client.query_page_post(pollylink.QueryRowsPostRequest{
 	branch_name: 'main'
 	table_name: 'notes'
 	filters: [
-		storage.SidecarQueryFilter{
+		pollylink.QueryFilter{
 			column_name: 'body'
 			plugin_name: 'markdown'
 			selector: 'heading_text:2'

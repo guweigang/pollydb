@@ -142,19 +142,19 @@ pub:
 pub fn MemoryCapabilityDef.reflective_field(table_name string, column_name string, options ReflectionOptions) !MemoryCapabilityDef
 ```
 
-This can later grow into a table-level registry:
+This can later grow into a table-level registry host bridge:
 
 ```v
-pub fn (mut db PersistentDatabase) register_memory_capability(def MemoryCapabilityDef) !
+pub fn register_capability(mut db storage.PersistentDatabase, def memory.MemoryCapabilityDef) !
 ```
 
 ### Example
 
 ```v
-db.register_memory_capability(storage.MemoryCapabilityDef.reflective_field(
+memorydb.register_capability(mut db, memory.MemoryCapabilityDef.reflective_field(
 	'memory_entries',
 	'content_md',
-	storage.ReflectionOptions{
+	memory.ReflectionOptions{
 		embedding_index: 'content_md_path_vec_idx'
 		reflection_kind: 'summary'
 		replay_anchor: true

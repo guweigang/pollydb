@@ -75,7 +75,7 @@ Use:
 
 ## Discovering FTS Capability
 
-Use `table_query_schema(...)` or `GET /v1/query-schema`.
+Use `query.table_schema(...)` or `GET /v1/query-schema`.
 
 General FTS indexes show up as normal index capabilities with:
 
@@ -98,9 +98,9 @@ metadata, not by hard-coding application-specific search rules.
 The preferred query path is the unified request shape:
 
 ```v
-QueryRequest{
+query.Request{
 	table_name: 'docs'
-	general_fts: QueryGeneralFtsClause{
+	general_fts: query.GeneralFtsClause{
 		index_name: 'content_text_fts_idx'
 		kind: .all
 		terms: ['sqlite', 'fts5']

@@ -29,16 +29,16 @@ This layer is not for:
 
 ## Core Objects
 
-The current storage-facing objects are:
+The current query-facing objects are:
 
-- `TableQuerySchema`
-- `QueryColumnCapability`
-- `QueryIndexCapability`
-- `QueryFieldSelectorCapability`
-- `QueryProjectionCapability`
-- `QueryFilterShapeCapability`
-- `QuerySamplePlanExplain`
-- `QueryPlanPreview`
+- `query.TableSchema`
+- `query.ColumnCapability`
+- `query.IndexCapability`
+- `query.FieldSelectorCapability`
+- `query.ProjectionCapability`
+- `query.FilterShapeCapability`
+- `query.SamplePlanExplain`
+- `query.PlanPreview`
 
 Together they describe:
 
@@ -64,7 +64,7 @@ PollyDB now exposes two related explain surfaces.
 
 ### 1. Schema-Time Explain
 
-`table_query_schema(...)` returns a stable capability view.
+`query.table_schema(...)` returns a stable capability view.
 
 For each `filter_shape`, it includes:
 
@@ -93,8 +93,8 @@ This is the preferred metadata surface for future `vsql` capability checks.
 
 ### 2. Request-Time Explain
 
-`preview_query_plan_details(...)` and `POST /v1/query-plan-preview` return a
-request-specific `QueryPlanPreview`.
+`query.preview_plan_details(...)` and `POST /v1/query-plan-preview` return a
+request-specific `query.PlanPreview`.
 
 That object contains:
 
@@ -110,7 +110,7 @@ It also exposes:
 - `sample_explain()`
 
 `sample_explain()` intentionally matches the same shape used by
-`QueryFilterShapeCapability.sample_explain`.
+`query.FilterShapeCapability.sample_explain`.
 
 This means:
 
@@ -177,10 +177,10 @@ For new integrations:
 
 For future `vsql`:
 
-- use `TableQuerySchema` for validation
+- use `query.TableSchema` for validation
 - use `filter_shapes` for legal-op checks
 - use `sample_explain` for planner-facing hints in diagnostics
-- use `preview_query_plan_details(...)` only when planning a concrete request
+- use `query.preview_plan_details(...)` only when planning a concrete request
 
 ## Current Limits
 
