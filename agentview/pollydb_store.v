@@ -99,6 +99,51 @@ pub mut:
 	candidates_by_type          map[string]int
 }
 
+pub struct MemoryListRequest {
+pub:
+	query              string
+	limit              int = 20
+	offset             int
+	include_superseded bool
+}
+
+pub struct MemoryCard {
+pub:
+	reflection_id            string
+	reflection_kind          string
+	title                    string
+	summary_md               string
+	insight_md               string
+	topic_key                string
+	derived_from_root_hash   string
+	supersedes_reflection_id string
+	created_at               string
+	source_count             int
+	active                   bool
+	score                    int
+}
+
+pub struct MemoryListResult {
+pub:
+	total    int
+	memories []MemoryCard
+	strategy string
+}
+
+pub struct MemoryContextRequest {
+pub:
+	query           string
+	limit           int = 6
+	include_sources bool
+}
+
+pub struct MemoryContextResult {
+pub:
+	query    string
+	memories []MemoryCard
+	markdown string
+}
+
 struct MemorySalienceDecision {
 	memory_worthy  bool
 	candidate_type string
@@ -242,6 +287,88 @@ pub fn (store PollyDbStore) preview_recent_memory_heuristic(mut embedding_engine
 pub fn (store PollyDbStore) preview_recent_memory(mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options MemoryDistillOptions) ![]MemoryDistillPreviewCard {
 	return store.preview_recent_memory_with_mode(mut embedding_engine, mut generator, options,
 		false)
+}
+
+pub fn (store PollyDbStore) list_memory(request MemoryListRequest) !MemoryListResult {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	if !db.has_table('memory_reflections') {
+		return MemoryListResult{
+			strategy: 'no_memory_table'
+		}
+	}
+	all_rows := session.scan_table(mut db, 'memory_reflections', 0)!
+	superseded := superseded_memory_reflection_ids(all_rows)
+	mut candidate_rows := memory_list_candidate_rows(mut db, session, all_rows, superseded,
+		request)!
+	terms := normalized_search_terms(request.query)
+	mut cards := []MemoryCard{cap: candidate_rows.len}
+	for row in candidate_rows {
+		card := memory_card_from_row(mut db, row, superseded, terms)!
+		if request.query.len > 0 && card.score <= 0 {
+			continue
+		}
+		if !request.include_superseded && !card.active {
+			continue
+		}
+		if terms.len > 0 && request.query.len > 0 && card.score <= 0 {
+			continue
+		}
+		cards << card
+	}
+	if request.query.len > 0 {
+		cards.sort_with_compare(fn (a &MemoryCard, b &MemoryCard) int {
+			if a.score > b.score {
+				return -1
+			}
+			if a.score < b.score {
+				return 1
+			}
+			if a.created_at > b.created_at {
+				return -1
+			}
+			if a.created_at < b.created_at {
+				return 1
+			}
+			return 0
+		})
+	} else {
+		cards.sort_with_compare(fn (a &MemoryCard, b &MemoryCard) int {
+			if a.created_at > b.created_at {
+				return -1
+			}
+			if a.created_at < b.created_at {
+				return 1
+			}
+			return 0
+		})
+	}
+	total := cards.len
+	start := clamp_offset(request.offset, total)
+	limit := if request.limit > 0 { request.limit } else { 20 }
+	end := min_int(start + limit, total)
+	return MemoryListResult{
+		total:    total
+		memories: if start < end { cards[start..end].clone() } else { []MemoryCard{} }
+		strategy: if request.query.len > 0 { 'memory_fts_or_scan' } else { 'memory_recent' }
+	}
+}
+
+pub fn (store PollyDbStore) memory_context(request MemoryContextRequest) !MemoryContextResult {
+	result := store.list_memory(MemoryListRequest{
+		query:  request.query
+		limit:  if request.limit > 0 { request.limit } else { 6 }
+		offset: 0
+	})!
+	markdown := render_memory_context_markdown(request, result.memories)
+	return MemoryContextResult{
+		query:    request.query
+		memories: result.memories
+		markdown: markdown
+	}
 }
 
 fn (store PollyDbStore) distill_recent_memory_with_mode(mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options MemoryDistillOptions, use_heuristic bool) ![]memory.PersistedReflection {
@@ -566,12 +693,153 @@ fn active_memory_reflection_rows(rows []storage.TypedSchemaRow) []storage.TypedS
 	return active
 }
 
+fn superseded_memory_reflection_ids(rows []storage.TypedSchemaRow) map[string]bool {
+	mut superseded := map[string]bool{}
+	for row in rows {
+		old_id := agentview_optional_row_string(row, 'supersedes_reflection_id')
+		if old_id.len > 0 {
+			superseded[old_id] = true
+		}
+	}
+	return superseded
+}
+
+fn memory_list_candidate_rows(mut db storage.PersistentDatabase, session storage.DatabaseSession, all_rows []storage.TypedSchemaRow, superseded map[string]bool, request MemoryListRequest) ![]storage.TypedSchemaRow {
+	if request.query.trim_space().len == 0 {
+		return all_rows
+	}
+	spec := session.table_spec('memory_reflections') or { storage.TypedTableSpec{} }
+	mut candidates := map[string]storage.TypedSchemaRow{}
+	if table_has_index(spec, agentview_memory_reflections_title_fts_index)
+		|| table_has_index(spec, agentview_memory_reflections_summary_fts_index) {
+		for term in normalized_search_terms(request.query) {
+			for index_name in [agentview_memory_reflections_title_fts_index,
+				agentview_memory_reflections_summary_fts_index] {
+				if !table_has_index(spec, index_name) {
+					continue
+				}
+				rows := session.lookup_index_prefix_projected(mut db, 'memory_reflections',
+					index_name, term, 32, ['reflection_id', 'reflection_kind', 'title',
+					'summary_md', 'insight_md', 'source_refs', 'parent_ref', 'topic_key',
+					'derived_from_root_hash', 'supersedes_reflection_id',
+					'created_at']) or { []storage.TypedSchemaRow{} }
+				for row in rows {
+					reflection_id := agentview_optional_row_string(row, 'reflection_id')
+					if reflection_id.len == 0 {
+						continue
+					}
+					if !request.include_superseded && reflection_id in superseded {
+						continue
+					}
+					candidates[reflection_id] = row
+				}
+			}
+		}
+	}
+	if candidates.len == 0 {
+		return all_rows
+	}
+	mut out := []storage.TypedSchemaRow{cap: candidates.len}
+	for _, row in candidates {
+		out << row
+	}
+	return out
+}
+
+fn memory_card_from_row(mut db storage.PersistentDatabase, row storage.TypedSchemaRow, superseded map[string]bool, terms []string) !MemoryCard {
+	reflection_id := agentview_optional_row_string(row, 'reflection_id')
+	summary_md := load_memory_reflection_summary(mut db, row) or { '' }
+	insight_md := load_memory_reflection_markdown(mut db, row, 'insight_md') or { '' }
+	title := agentview_optional_row_string(row, 'title')
+	source_refs_raw := agentview_optional_row_string(row, 'source_refs')
+	source_refs := memory.decode_reflection_source_refs(source_refs_raw) or { []memory.ReflectionSourceRef{} }
+	active := reflection_id.len > 0 && reflection_id !in superseded
+	score := score_memory_card(title, summary_md, terms)
+	return MemoryCard{
+		reflection_id:            reflection_id
+		reflection_kind:          agentview_optional_row_string(row, 'reflection_kind')
+		title:                    title
+		summary_md:               summary_md
+		insight_md:               insight_md
+		topic_key:                agentview_optional_row_string(row, 'topic_key')
+		derived_from_root_hash:   agentview_optional_row_string(row, 'derived_from_root_hash')
+		supersedes_reflection_id: agentview_optional_row_string(row, 'supersedes_reflection_id')
+		created_at:               agentview_optional_row_string(row, 'created_at')
+		source_count:             source_refs.len
+		active:                   active
+		score:                    score
+	}
+}
+
 fn load_memory_reflection_summary(mut db storage.PersistentDatabase, row storage.TypedSchemaRow) !string {
 	value := row.data.get('summary_md') or { return '' }
 	return match value {
 		storage.MarkdownRef { db.load_markdown(value)! }
 		else { '' }
 	}
+}
+
+fn load_memory_reflection_markdown(mut db storage.PersistentDatabase, row storage.TypedSchemaRow, column string) !string {
+	value := row.data.get(column) or { return '' }
+	return match value {
+		storage.MarkdownRef { db.load_markdown(value)! }
+		else { '' }
+	}
+}
+
+fn score_memory_card(title string, summary_md string, terms []string) int {
+	if terms.len == 0 {
+		return 0
+	}
+	haystack := '${title}\n${summary_md}'.to_lower()
+	mut score := 0
+	for term in terms {
+		lower := term.to_lower()
+		if lower.len == 0 {
+			continue
+		}
+		if title.to_lower().contains(lower) {
+			score += 8
+		}
+		if haystack.contains(lower) {
+			score += 3
+		}
+	}
+	return score
+}
+
+fn render_memory_context_markdown(request MemoryContextRequest, memories []MemoryCard) string {
+	mut lines := []string{}
+	lines << '# Agent Memory Context'
+	if request.query.len > 0 {
+		lines << ''
+		lines << 'Query: ${request.query}'
+	}
+	if memories.len == 0 {
+		lines << ''
+		lines << 'No matching distilled memory was found.'
+		return lines.join('\n') + '\n'
+	}
+	for idx, card in memories {
+		lines << ''
+		lines << '## ${idx + 1}. ${card.title}'
+		if card.summary_md.trim_space().len > 0 {
+			lines << ''
+			lines << card.summary_md.trim_space()
+		}
+		if request.include_sources {
+			lines << ''
+			lines << '- memory_id: `${card.reflection_id}`'
+			if card.topic_key.len > 0 {
+				lines << '- topic_key: `${card.topic_key}`'
+			}
+			lines << '- source_refs: ${card.source_count}'
+			if card.derived_from_root_hash.len > 0 {
+				lines << '- source_root: `${card.derived_from_root_hash}`'
+			}
+		}
+	}
+	return lines.join('\n') + '\n'
 }
 
 fn memory_card_write_decision(input memory.ReflectionPersistInput) MemoryCardWriteDecision {

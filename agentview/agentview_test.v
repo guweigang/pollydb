@@ -339,9 +339,6 @@ fn test_pollydb_store_distills_memory_from_seeded_entries() {
 	assert persisted[0].source_refs.len >= 1
 
 	db = storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
-	defer {
-		db.close() or {}
-	}
 	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
 	reflection_spec := session.table_spec('memory_reflections') or { panic(err) }
 	assert reflection_spec.indexes.any(it.name == agentview_memory_reflections_title_fts_index)
@@ -350,6 +347,24 @@ fn test_pollydb_store_distills_memory_from_seeded_entries() {
 	link_rows := session.scan_table(mut db, 'memory_links', 0) or { panic(err) }
 	assert reflection_rows.len == 1
 	assert link_rows.len >= 2
+	db.close() or { panic(err) }
+
+	listed := store.list_memory(MemoryListRequest{
+		query: 'vjsx'
+		limit: 5
+	}) or { panic(err) }
+	assert listed.total == 1
+	assert listed.memories[0].active
+	assert listed.memories[0].title.len > 0
+	assert listed.memories[0].source_count >= 1
+	context := store.memory_context(MemoryContextRequest{
+		query: 'vjsx'
+		limit: 3
+		include_sources: true
+	}) or { panic(err) }
+	assert context.memories.len == 1
+	assert context.markdown.contains('# Agent Memory Context')
+	assert context.markdown.contains('source_refs:')
 }
 
 fn test_should_skip_markdown_index_skips_environment_context_blocks() {

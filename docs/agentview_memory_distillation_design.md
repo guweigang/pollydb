@@ -3,6 +3,55 @@
 This note captures the current design direction for turning AgentView session
 history into durable `pollydb` memory.
 
+## Delivery Goals
+
+The final delivery has two product surfaces.
+
+### 1. Versioned Database
+
+`pollydb` is the durable versioned database layer. It should be useful outside
+AgentView and should provide:
+
+- branch, commit, and root-hash based history
+- typed tables with schema evolution
+- replayable writes and auditable derived data
+- FTS and vector indexes as database capabilities
+- memory records stored as versioned derived records with source provenance
+
+Acceptance criteria:
+
+- raw source records are not overwritten by derived memory
+- every memory can be traced back to source refs and a source root hash
+- memory updates preserve older versions through supersedes/reinforces links
+- database indexes can be rebuilt or migrated without rewriting application
+  logic
+
+### 2. Codex Session Application
+
+`agentview` is the Codex session application built on `pollydb`. Its job is to
+turn local Codex transcripts into a browseable, searchable, memory-aware product
+surface.
+
+Required capabilities:
+
+- migrate Codex sessions into `pollydb`
+- browse sessions in a TUI
+- search sessions and entries through indexed paths
+- view distilled memory
+- provide memory context that can be passed to a large language model
+
+Acceptance criteria:
+
+- `agentview sync-codex` imports Codex sessions into the default store
+- `agentview browse` can inspect sessions, transcripts, and search results
+- `agentview memory list` shows active distilled memories
+- `agentview memory search <query>` retrieves relevant memories
+- `agentview context <query>` emits compact Markdown context for model prompts
+
+The application should keep raw transcript browsing and model-facing memory
+context as separate surfaces. Browsing is for humans; context output is for
+agents.
+
 The main lesson from the first real-session experiments is simple:
 
 - do not embed every raw entry first

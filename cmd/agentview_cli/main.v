@@ -215,6 +215,18 @@ fn main() {
 				println('')
 			}
 		}
+		'memory' {
+			run_memory_command(args, store) or {
+				eprintln(err.msg())
+				exit(1)
+			}
+		}
+		'context' {
+			run_context_command(args, store) or {
+				eprintln(err.msg())
+				exit(1)
+			}
+		}
 		'browse' {
 			agentview.browse_store(store, agentview.BrowserOptions{
 				query: parse_flag_value(args, '--query')
@@ -253,6 +265,10 @@ fn usage() string {
 		+ 'agentview show <session_id> [--offset N] [--limit N] [--store-root <path>]\n'
 		+ 'agentview search <query> [limit] [--offset N] [--session-id ID] [--cwd-prefix PATH] [--source NAME] [--kind KIND] [--store-root <path>]\n'
 		+ 'agentview browse [--query TEXT] [--cwd-prefix PATH] [--source NAME] [--no-archived] [--list-limit N] [--transcript-limit N] [--store-root <path>]\n'
+		+ 'agentview memory list [--query TEXT] [--limit N] [--offset N] [--include-superseded] [--store-root <path>]\n'
+		+ 'agentview memory search <query> [--limit N] [--offset N] [--include-superseded] [--store-root <path>]\n'
+		+ 'agentview memory context <query> [--limit N] [--sources] [--store-root <path>]\n'
+		+ 'agentview context <query> [--limit N] [--sources] [--store-root <path>]\n'
 		+ 'default codex root: ~/.codex\n'
 		+ 'default store root: ~/.agentview/pollydb\n'
 		+ 'note: sessions/show/search/browse will auto-sync from ~/.codex when the store is empty\n'
@@ -265,6 +281,103 @@ fn usage() string {
 		+ 'note: bench-write-matrix runs insert/update/delete/mixed across index-count presets\n'
 		+ 'note: explain-browser shows whether browser list/transcript/search use indexes or scans\n'
 		+ 'note: bench-browser measures the real browser-facing list/transcript/search calls against your store'
+}
+
+fn run_memory_command(args []string, store agentview.PollyDbStore) ! {
+	subcommand := if args.len > 1 { args[1] } else { 'list' }
+	match subcommand {
+		'list' {
+			result := store.list_memory(agentview.MemoryListRequest{
+				query: parse_flag_value(args, '--query')
+				limit: parse_limit(args, 20)
+				offset: parse_flag_int(args, '--offset', 0)
+				include_superseded: has_flag(args, '--include-superseded')
+			})!
+			print_memory_list(result)
+		}
+		'search' {
+			query := memory_query_arg(args)!
+			result := store.list_memory(agentview.MemoryListRequest{
+				query: query
+				limit: parse_limit(args, 20)
+				offset: parse_flag_int(args, '--offset', 0)
+				include_superseded: has_flag(args, '--include-superseded')
+			})!
+			print_memory_list(result)
+		}
+		'context' {
+			query := memory_query_arg(args)!
+			context := store.memory_context(agentview.MemoryContextRequest{
+				query: query
+				limit: parse_limit(args, 6)
+				include_sources: has_flag(args, '--sources')
+			})!
+			print(context.markdown)
+		}
+		else {
+			return error('unknown memory command: ${subcommand}; expected list|search|context')
+		}
+	}
+}
+
+fn run_context_command(args []string, store agentview.PollyDbStore) ! {
+	if args.len < 2 && parse_flag_value(args, '--query').len == 0 {
+		return error('context requires <query>')
+	}
+	query := if parse_flag_value(args, '--query').len > 0 {
+		parse_flag_value(args, '--query')
+	} else {
+		args[1]
+	}
+	context := store.memory_context(agentview.MemoryContextRequest{
+		query: query
+		limit: parse_limit(args, 6)
+		include_sources: has_flag(args, '--sources')
+	})!
+	print(context.markdown)
+}
+
+fn memory_query_arg(args []string) !string {
+	flag_query := parse_flag_value(args, '--query')
+	if flag_query.len > 0 {
+		return flag_query
+	}
+	if args.len > 2 {
+		return args[2]
+	}
+	return error('memory ${if args.len > 1 { args[1] } else { '' }} requires <query> or --query')
+}
+
+fn print_memory_list(result agentview.MemoryListResult) {
+	eprintln('memories total=${result.total} strategy=${result.strategy}')
+	for card in result.memories {
+		active := if card.active { 'active' } else { 'superseded' }
+		score := if card.score > 0 { ' score=${card.score}' } else { '' }
+		println('${card.reflection_id} | ${active}${score} | ${card.created_at} | sources=${card.source_count}')
+		println(card.title)
+		summary := first_memory_summary_line(card.summary_md)
+		if summary.len > 0 {
+			println(summary)
+		}
+		if card.topic_key.len > 0 {
+			println('topic=${card.topic_key}')
+		}
+		if card.supersedes_reflection_id.len > 0 {
+			println('supersedes=${card.supersedes_reflection_id}')
+		}
+		println('')
+	}
+}
+
+fn first_memory_summary_line(summary_md string) string {
+	for line in summary_md.split_into_lines() {
+		cleaned := line.trim_space()
+		if cleaned.len == 0 || cleaned.starts_with('#') {
+			continue
+		}
+		return cleaned
+	}
+	return ''
 }
 
 fn run_explain_browser(args []string) ! {
@@ -1274,7 +1387,7 @@ fn left_pad(value string, width int) string {
 }
 
 fn ensure_store_ready(command string, store agentview.PollyDbStore, codex_root string) ! {
-	if command !in ['sessions', 'show', 'search', 'browse'] {
+	if command !in ['sessions', 'show', 'search', 'browse', 'memory', 'context'] {
 		return
 	}
 	result := store.list_sessions_page(agentview.SessionListRequest{
