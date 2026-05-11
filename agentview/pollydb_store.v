@@ -1,5 +1,8 @@
 module agentview
 
+import crypto.sha256
+import math
+import memory
 import os
 import query as queryapi
 import storage
@@ -9,6 +12,11 @@ const store_branch = 'main'
 const session_list_min_updated_at = '0001-01-01T00:00:00.000000Z'
 const session_list_max_updated_at = '9999-12-31T23:59:59.999999Z'
 const search_index_version = 'search-v7-content-text-fts'
+const agentview_memory_capability_table = 'entries'
+const agentview_memory_capability_column = 'content_md'
+const agentview_memory_path_index = 'entries_content_path_vec_idx'
+const agentview_memory_reflections_title_fts_index = 'memory_reflections_title_fts_idx'
+const agentview_memory_reflections_summary_fts_index = 'memory_reflections_summary_fts_idx'
 const agentview_general_fts_indexes = ['entries_content_text_fts_idx']
 const session_summary_select_columns = ['id', 'title', 'updated_at', 'started_at', 'cwd', 'source',
 	'originator', 'cli_version', 'path', 'archived', 'entry_count', 'user_turns', 'tool_calls']
@@ -20,10 +28,106 @@ pub:
 	root_dir string
 }
 
+fn memory_distill_progress_enabled() bool {
+	return os.getenv('POLLYDB_MEMORY_PROGRESS') == '1'
+}
+
+fn memory_distill_progress(message string) {
+	if memory_distill_progress_enabled() {
+		eprintln('agentview memory: ${message}')
+	}
+}
+
 pub struct BrowserStoreSession {
 mut:
 	db      storage.PersistentDatabase
 	session storage.DatabaseSession
+}
+
+pub struct MemoryDistillOptions {
+pub:
+	recent_sessions  int = 12
+	max_jobs         int = 4
+	neighbor_limit   int = 8
+	min_evidence     int = 1
+	candidate_limit  int
+	candidate_offset int
+}
+
+pub struct MemoryDistillPreviewCard {
+pub:
+	source_key     string
+	title          string
+	topic_key      string
+	summary_md     string
+	insight_md     string
+	decision       MemoryCardWriteDecision
+	write_plan     MemoryWritePlan
+	evidence_count int
+	supersedes_id  string
+}
+
+pub struct MemoryReasoningTrace {
+pub:
+	evidence_count           int
+	candidate_title          string
+	candidate_summary_points []string
+	durable_points           int
+	signals                  []string
+	blockers                 []string
+	inference                string
+	confidence               string
+}
+
+pub struct MemoryWritePlan {
+pub:
+	action        string
+	reason        string
+	score         int
+	topic_key     string
+	supersedes_id string
+	trace         MemoryReasoningTrace
+}
+
+pub struct MemorySalienceReport {
+pub mut:
+	raw_entries                 int
+	candidate_entries           int
+	embedding_candidate_entries int
+	skipped_by_reason           map[string]int
+	discarded_before_embedding  map[string]int
+	candidates_by_type          map[string]int
+}
+
+struct MemorySalienceDecision {
+	memory_worthy  bool
+	candidate_type string
+	skip_reason    string
+	score          int
+}
+
+struct MemoryCandidate {
+	row        storage.TypedSchemaRow
+	entry      SessionEntry
+	decision   MemorySalienceDecision
+	session_id string
+}
+
+struct MemoryCardWriteDecision {
+pub:
+	keep   bool
+	reason string
+	score  int
+}
+
+struct MemoryCardQualityProfile {
+	title          string
+	summary_points []string
+mut:
+	durable_points  int
+	score           int
+	blocking_reason string
+	title_reason    string
 }
 
 pub fn PollyDbStore.open(root_dir string) !PollyDbStore {
@@ -32,6 +136,12 @@ pub fn PollyDbStore.open(root_dir string) !PollyDbStore {
 	}
 	store.init_schema()!
 	return store
+}
+
+pub fn PollyDbStore.open_existing(root_dir string) PollyDbStore {
+	return PollyDbStore{
+		root_dir: normalize_root_dir(root_dir)
+	}
 }
 
 pub fn (store PollyDbStore) begin_browser_session() !BrowserStoreSession {
@@ -95,9 +205,2043 @@ fn (store PollyDbStore) init_schema() ! {
 		changed_tables << 'entries'
 	}
 	if changed_tables.len > 0 && store_branch in db.branch_names() {
-		_ = db.rebuild_indexes_at_branch(store_branch, changed_tables, storage.ChunkConfig.default())!
+		_ = db.rebuild_indexes_at_branch(store_branch, changed_tables,
+			storage.ChunkConfig.default())!
 	}
 	db.checkpoint()!
+}
+
+pub fn (store PollyDbStore) ensure_memory_schema() !bool {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	mut changed := db.register_or_update_table(entries_memory_spec(false)!)!
+	changed = ensure_agentview_memory_capability(mut db)! || changed
+	if changed {
+		db.checkpoint()!
+	}
+	return changed
+}
+
+pub fn (store PollyDbStore) distill_recent_memory(mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options MemoryDistillOptions) ![]memory.PersistedReflection {
+	return store.distill_recent_memory_with_mode(mut embedding_engine, mut generator, options,
+		false)
+}
+
+pub fn (store PollyDbStore) distill_recent_memory_heuristic(mut embedding_engine memory.EmbeddingEngine, options MemoryDistillOptions) ![]memory.PersistedReflection {
+	mut noop := AgentViewNoopReflectionGenerator{}
+	return store.distill_recent_memory_with_mode(mut embedding_engine, mut noop, options, true)
+}
+
+pub fn (store PollyDbStore) preview_recent_memory_heuristic(mut embedding_engine memory.EmbeddingEngine, options MemoryDistillOptions) ![]MemoryDistillPreviewCard {
+	mut noop := AgentViewNoopReflectionGenerator{}
+	return store.preview_recent_memory_with_mode(mut embedding_engine, mut noop, options, true)
+}
+
+pub fn (store PollyDbStore) preview_recent_memory(mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options MemoryDistillOptions) ![]MemoryDistillPreviewCard {
+	return store.preview_recent_memory_with_mode(mut embedding_engine, mut generator, options,
+		false)
+}
+
+fn (store PollyDbStore) distill_recent_memory_with_mode(mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options MemoryDistillOptions, use_heuristic bool) ![]memory.PersistedReflection {
+	_ = store.ensure_memory_schema()!
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	recent_sessions := if options.recent_sessions > 0 { options.recent_sessions } else { 12 }
+	mut entry_rows := recent_entry_rows(mut db, session, recent_sessions)!
+	memory_distill_progress('loaded recent sessions=${recent_sessions} entries=${entry_rows.len}')
+	if entry_rows.len == 0 {
+		return []memory.PersistedReflection{}
+	}
+	candidates, _ := memory_candidates_for_embedding(mut db, session, entry_rows,
+		options.candidate_limit, options.candidate_offset)!
+	memory_distill_progress('embedding candidates=${candidates.len}')
+	if candidates.len == 0 {
+		return []memory.PersistedReflection{}
+	}
+	mut segment_anchors := build_memory_segment_anchors(candidates, mut embedding_engine,
+		options.candidate_limit) or { []MemorySegmentAnchor{} }
+	memory_distill_progress('segment anchors=${segment_anchors.len}')
+	if segment_anchors.len == 0 {
+		return []memory.PersistedReflection{}
+	}
+	mut reflected_sources := db.reflected_source_keys(store_branch) or {
+		map[string]bool{}
+	}
+	max_jobs := if options.max_jobs > 0 { options.max_jobs } else { 4 }
+	neighbor_limit := if options.neighbor_limit > 0 { options.neighbor_limit } else { 8 }
+	min_evidence := if options.min_evidence > 0 { options.min_evidence } else { 1 }
+	mut persisted := []memory.PersistedReflection{}
+	for anchor_idx, anchor in segment_anchors {
+		primary_key := anchor.primary_key.clone()
+		source_key := memory.reflection_source_key('entries', primary_key, 'content_md')
+		if source_key in reflected_sources {
+			memory_distill_progress('skip reflected anchor ${anchor_idx + 1}/${segment_anchors.len} key=${primary_key.bytestr()}')
+			continue
+		}
+		memory_distill_progress('build reflection ${anchor_idx + 1}/${segment_anchors.len} key=${primary_key.bytestr()} persisted=${persisted.len}/${max_jobs}')
+		job := build_in_memory_agentview_reflection_job(anchor, neighbor_limit)
+		if job.evidence.len < min_evidence {
+			memory_distill_progress('skip weak evidence key=${primary_key.bytestr()} evidence=${job.evidence.len}/${min_evidence}')
+			continue
+		}
+		distill_options := memory.ReflectionDistillOptions{
+			max_evidence: neighbor_limit
+		}
+		if !memory.reflection_job_has_distillable_outline(job, distill_options) {
+			memory_distill_progress('skip empty reflection outline key=${primary_key.bytestr()}')
+			reflected_sources[source_key] = true
+			continue
+		}
+		memory_distill_progress('distill reflection card key=${primary_key.bytestr()} evidence=${job.evidence.len}')
+		raw_input := if use_heuristic {
+			memory.heuristic_reflection_persist_input(job, distill_options)
+		} else {
+			memory.generate_reflection_persist_input(job, mut generator, distill_options)!
+		}
+		card_topic_key := memory_card_topic_key(raw_input)
+		mut input := memory.ReflectionPersistInput{
+			...raw_input
+			topic_key: card_topic_key
+		}
+		memory_distill_progress('quality gate key=${primary_key.bytestr()} title=${input.title}')
+		write_decision := memory_card_write_decision(input)
+		if !write_decision.keep {
+			eprintln('agentview memory: discard reflection card for ${primary_key.bytestr()}: ${write_decision.reason}')
+			reflected_sources[source_key] = true
+			continue
+		}
+		memory_distill_progress('dedupe reflection key=${primary_key.bytestr()} topic=${input.topic_key}')
+		if existing_reflection_id := find_existing_reflection_for_memory_card(mut db, session,
+			input, mut embedding_engine)
+		{
+			input = memory.ReflectionPersistInput{
+				...input
+				supersedes_reflection_id: existing_reflection_id
+			}
+		}
+		memory_distill_progress('persist reflection key=${primary_key.bytestr()} sources=${job.evidence.len}')
+		reflection := db.persist_prebuilt_reflection_job(job, input, storage.ChunkConfig.default(), storage.CommitMeta{
+			author:  'pollydb-cli'
+			message: 'distill agentview memory'
+		}) or {
+			eprintln('agentview memory: skip persisting reflection for ${primary_key.bytestr()}: ${err}')
+			continue
+		}
+		persisted << reflection
+		memory_distill_progress('persisted reflection ${persisted.len}/${max_jobs} id=${reflection.reflection_id} title=${reflection.title}')
+		reflected_sources[source_key] = true
+		if persisted.len >= max_jobs {
+			break
+		}
+	}
+	return persisted
+}
+
+fn (store PollyDbStore) preview_recent_memory_with_mode(mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options MemoryDistillOptions, use_heuristic bool) ![]MemoryDistillPreviewCard {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	recent_sessions := if options.recent_sessions > 0 { options.recent_sessions } else { 12 }
+	mut entry_rows := recent_entry_rows(mut db, session, recent_sessions)!
+	memory_distill_progress('loaded recent sessions=${recent_sessions} entries=${entry_rows.len}')
+	if entry_rows.len == 0 {
+		return []MemoryDistillPreviewCard{}
+	}
+	candidates, _ := memory_candidates_for_embedding(mut db, session, entry_rows,
+		options.candidate_limit, options.candidate_offset)!
+	memory_distill_progress('embedding candidates=${candidates.len}')
+	if candidates.len == 0 {
+		return []MemoryDistillPreviewCard{}
+	}
+	mut segment_anchors := build_memory_segment_anchors(candidates, mut embedding_engine,
+		options.candidate_limit) or { []MemorySegmentAnchor{} }
+	memory_distill_progress('segment anchors=${segment_anchors.len}')
+	if segment_anchors.len == 0 {
+		return []MemoryDistillPreviewCard{}
+	}
+	reflected_sources := db.reflected_source_keys(store_branch) or {
+		map[string]bool{}
+	}
+	max_jobs := if options.max_jobs > 0 { options.max_jobs } else { 4 }
+	neighbor_limit := if options.neighbor_limit > 0 { options.neighbor_limit } else { 8 }
+	min_evidence := if options.min_evidence > 0 { options.min_evidence } else { 1 }
+	mut previews := []MemoryDistillPreviewCard{}
+	for anchor_idx, anchor in segment_anchors {
+		primary_key := anchor.primary_key.clone()
+		source_key := memory.reflection_source_key('entries', primary_key, 'content_md')
+		if source_key in reflected_sources {
+			memory_distill_progress('skip reflected anchor ${anchor_idx + 1}/${segment_anchors.len} key=${primary_key.bytestr()}')
+			continue
+		}
+		memory_distill_progress('preview reflection ${anchor_idx + 1}/${segment_anchors.len} key=${primary_key.bytestr()} cards=${previews.len}/${max_jobs}')
+		job := build_in_memory_agentview_reflection_job(anchor, neighbor_limit)
+		if job.evidence.len < min_evidence {
+			continue
+		}
+		distill_options := memory.ReflectionDistillOptions{
+			max_evidence: neighbor_limit
+		}
+		if !memory.reflection_job_has_distillable_outline(job, distill_options) {
+			memory_distill_progress('skip empty preview outline key=${primary_key.bytestr()}')
+			continue
+		}
+		raw_input := if use_heuristic {
+			memory.heuristic_reflection_persist_input(job, distill_options)
+		} else {
+			memory.generate_reflection_persist_input(job, mut generator, distill_options)!
+		}
+		card_topic_key := memory_card_topic_key(raw_input)
+		mut input := memory.ReflectionPersistInput{
+			...raw_input
+			topic_key: card_topic_key
+		}
+		profile := memory_card_quality_profile(input)
+		decision := memory_card_write_decision_from_profile(profile)
+		mut supersedes_id := ''
+		if decision.keep {
+			if existing_reflection_id := find_existing_reflection_for_memory_card(mut db, session,
+				input, mut embedding_engine)
+			{
+				supersedes_id = existing_reflection_id
+			}
+		}
+		write_plan := memory_card_write_plan(input, profile, decision, job.evidence.len,
+			supersedes_id)
+		previews << MemoryDistillPreviewCard{
+			source_key:     source_key
+			title:          input.title
+			topic_key:      input.topic_key
+			summary_md:     input.summary_md
+			insight_md:     input.insight_md
+			decision:       decision
+			write_plan:     write_plan
+			evidence_count: job.evidence.len
+			supersedes_id:  supersedes_id
+		}
+		if previews.len >= max_jobs {
+			break
+		}
+	}
+	return previews
+}
+
+struct MemoryCardMatch {
+	reflection_id string
+	vector_score  f64
+	lexical_score f64
+}
+
+fn find_existing_reflection_for_memory_card(mut db storage.PersistentDatabase, session storage.DatabaseSession, input memory.ReflectionPersistInput, mut embedding_engine memory.EmbeddingEngine) ?string {
+	if !db.has_table('memory_reflections') {
+		return none
+	}
+	if input.topic_key.len > 0 {
+		rows := session.lookup_index_projected(mut db, 'memory_reflections', 'topic_key_idx',
+			input.topic_key, 1, ['reflection_id']) or { []storage.TypedSchemaRow{} }
+		if rows.len > 0 {
+			reflection_id := agentview_optional_row_string(rows[0], 'reflection_id')
+			if reflection_id.len > 0 {
+				return reflection_id
+			}
+		}
+	}
+	if best := best_existing_reflection_match(mut db, session, input, mut embedding_engine) {
+		if best.vector_score >= 0.75 && best.lexical_score >= 0.18 {
+			return best.reflection_id
+		}
+	}
+	return none
+}
+
+fn best_existing_reflection_match(mut db storage.PersistentDatabase, session storage.DatabaseSession, input memory.ReflectionPersistInput, mut embedding_engine memory.EmbeddingEngine) ?MemoryCardMatch {
+	rows := memory_reflection_match_candidate_rows(mut db, session, input) or { return none }
+	if rows.len == 0 {
+		return none
+	}
+	new_text := memory_card_match_text(input.title, input.summary_md)
+	if new_text.len == 0 {
+		return none
+	}
+	new_vec := embedding_engine.embed(new_text) or { []f32{} }
+	mut best := MemoryCardMatch{}
+	for row in rows {
+		reflection_id := agentview_optional_row_string(row, 'reflection_id')
+		if reflection_id.len == 0 {
+			continue
+		}
+		title := agentview_optional_row_string(row, 'title')
+		summary_md := load_memory_reflection_summary(mut db, row) or { '' }
+		old_text := memory_card_match_text(title, summary_md)
+		if old_text.len == 0 {
+			continue
+		}
+		old_vec := if new_vec.len > 0 {
+			embedding_engine.embed(old_text) or { []f32{} }
+		} else {
+			[]f32{}
+		}
+		vector_score := cosine_similarity(new_vec, old_vec)
+		lexical_score := memory_card_lexical_guard_score(input.title, input.summary_md, title,
+			summary_md)
+		if vector_score > best.vector_score {
+			best = MemoryCardMatch{
+				reflection_id: reflection_id
+				vector_score:  vector_score
+				lexical_score: lexical_score
+			}
+		}
+	}
+	return if best.reflection_id.len > 0 { best } else { none }
+}
+
+fn memory_reflection_match_candidate_rows(mut db storage.PersistentDatabase, session storage.DatabaseSession, input memory.ReflectionPersistInput) ![]storage.TypedSchemaRow {
+	all_rows := session.scan_table(mut db, 'memory_reflections', 0)!
+	if all_rows.len == 0 {
+		return []storage.TypedSchemaRow{}
+	}
+	active_rows := active_memory_reflection_rows(all_rows)
+	mut active_by_id := map[string]storage.TypedSchemaRow{}
+	for row in active_rows {
+		reflection_id := agentview_optional_row_string(row, 'reflection_id')
+		if reflection_id.len > 0 {
+			active_by_id[reflection_id] = row
+		}
+	}
+	mut candidates := map[string]storage.TypedSchemaRow{}
+	spec := session.table_spec('memory_reflections') or { storage.TypedTableSpec{} }
+	if table_has_index(spec, agentview_memory_reflections_title_fts_index)
+		|| table_has_index(spec, agentview_memory_reflections_summary_fts_index) {
+		for term in memory_card_match_terms(input.title, input.summary_md) {
+			for index_name in [agentview_memory_reflections_title_fts_index,
+				agentview_memory_reflections_summary_fts_index] {
+				if !table_has_index(spec, index_name) {
+					continue
+				}
+				rows := session.lookup_index_prefix_projected(mut db, 'memory_reflections',
+					index_name, term, 12, ['reflection_id', 'title', 'summary_md',
+					'supersedes_reflection_id']) or { []storage.TypedSchemaRow{} }
+				for row in rows {
+					reflection_id := agentview_optional_row_string(row, 'reflection_id')
+					if reflection_id.len == 0 || reflection_id !in active_by_id {
+						continue
+					}
+					candidates[reflection_id] = active_by_id[reflection_id]
+				}
+			}
+		}
+	}
+	if candidates.len == 0 {
+		return active_rows
+	}
+	mut out := []storage.TypedSchemaRow{}
+	for _, row in candidates {
+		out << row
+	}
+	return out
+}
+
+fn active_memory_reflection_rows(rows []storage.TypedSchemaRow) []storage.TypedSchemaRow {
+	mut superseded := map[string]bool{}
+	for row in rows {
+		old_id := agentview_optional_row_string(row, 'supersedes_reflection_id')
+		if old_id.len > 0 {
+			superseded[old_id] = true
+		}
+	}
+	mut active := []storage.TypedSchemaRow{}
+	for row in rows {
+		reflection_id := agentview_optional_row_string(row, 'reflection_id')
+		if reflection_id.len == 0 || reflection_id in superseded {
+			continue
+		}
+		active << row
+	}
+	return active
+}
+
+fn load_memory_reflection_summary(mut db storage.PersistentDatabase, row storage.TypedSchemaRow) !string {
+	value := row.data.get('summary_md') or { return '' }
+	return match value {
+		storage.MarkdownRef { db.load_markdown(value)! }
+		else { '' }
+	}
+}
+
+fn memory_card_write_decision(input memory.ReflectionPersistInput) MemoryCardWriteDecision {
+	profile := memory_card_quality_profile(input)
+	return memory_card_write_decision_from_profile(profile)
+}
+
+fn memory_card_write_decision_from_profile(profile MemoryCardQualityProfile) MemoryCardWriteDecision {
+	if profile.title.len == 0 {
+		return memory_card_discard_decision('empty_title', 0)
+	}
+	if profile.summary_points.len == 0 {
+		return memory_card_discard_decision('empty_summary', 0)
+	}
+	if profile.title_reason.len > 0 {
+		return memory_card_discard_decision(profile.title_reason, profile.score)
+	}
+	if profile.blocking_reason.len > 0 {
+		return memory_card_discard_decision(profile.blocking_reason, profile.score)
+	}
+	if profile.durable_points == 0 {
+		return memory_card_discard_decision('no_durable_points', profile.score)
+	}
+	if memory_card_is_title_replay_only(profile) {
+		return memory_card_discard_decision('title_replay_only', profile.score)
+	}
+	if profile.score < 3 {
+		return memory_card_discard_decision('low_card_value', profile.score)
+	}
+	return MemoryCardWriteDecision{
+		keep:   true
+		reason: 'keep'
+		score:  profile.score
+	}
+}
+
+fn memory_card_write_plan(input memory.ReflectionPersistInput, profile MemoryCardQualityProfile, decision MemoryCardWriteDecision, evidence_count int, supersedes_id string) MemoryWritePlan {
+	mut action := 'discard'
+	mut reason := decision.reason
+	if decision.keep {
+		if supersedes_id.len > 0 {
+			action = 'update'
+			reason = 'similar_existing_memory'
+		} else {
+			action = 'add'
+		}
+	}
+	trace := memory_card_reasoning_trace(input, profile, decision, evidence_count, supersedes_id,
+		action)
+	return MemoryWritePlan{
+		action:        action
+		reason:        reason
+		score:         decision.score
+		topic_key:     input.topic_key
+		supersedes_id: supersedes_id
+		trace:         trace
+	}
+}
+
+fn memory_card_reasoning_trace(input memory.ReflectionPersistInput, profile MemoryCardQualityProfile, decision MemoryCardWriteDecision, evidence_count int, supersedes_id string, action string) MemoryReasoningTrace {
+	mut signals := []string{}
+	if evidence_count > 1 {
+		signals << 'multi_evidence'
+	} else if evidence_count == 1 {
+		signals << 'single_evidence'
+	}
+	if profile.durable_points > 0 {
+		signals << 'durable_points:${profile.durable_points}'
+	}
+	if profile.score >= 3 {
+		signals << 'score_pass'
+	}
+	if input.topic_key.len > 0 {
+		signals << 'topic_key'
+	}
+	if input.insight_md.trim_space().len > 0 {
+		signals << 'has_insight'
+	}
+	if supersedes_id.len > 0 {
+		signals << 'matched_existing_memory'
+	}
+
+	mut blockers := []string{}
+	if profile.title.len == 0 {
+		blockers << 'empty_title'
+	}
+	if profile.summary_points.len == 0 {
+		blockers << 'empty_summary'
+	}
+	if profile.title_reason.len > 0 {
+		blockers << profile.title_reason
+	}
+	if profile.blocking_reason.len > 0 {
+		blockers << profile.blocking_reason
+	}
+	if profile.durable_points == 0 && profile.summary_points.len > 0 {
+		blockers << 'no_durable_points'
+	}
+	if memory_card_is_title_replay_only(profile) {
+		blockers << 'title_replay_only'
+	}
+	if profile.score < 3 && decision.keep == false && decision.reason == 'low_card_value' {
+		blockers << 'low_card_value'
+	}
+
+	inference := memory_card_plan_inference(action)
+	confidence := memory_card_plan_confidence(profile.score, evidence_count, blockers.len)
+	return MemoryReasoningTrace{
+		evidence_count:           evidence_count
+		candidate_title:          profile.title
+		candidate_summary_points: profile.summary_points.clone()
+		durable_points:           profile.durable_points
+		signals:                  signals
+		blockers:                 blockers
+		inference:                inference
+		confidence:               confidence
+	}
+}
+
+fn memory_card_plan_inference(action string) string {
+	if action == 'discard' {
+		return 'candidate failed the durable-memory quality gate'
+	}
+	if action == 'update' {
+		return 'candidate is durable and should revise a matching existing memory'
+	}
+	return 'candidate is durable and should become a new memory'
+}
+
+fn memory_card_plan_confidence(score int, evidence_count int, blocker_count int) string {
+	if blocker_count > 0 {
+		return 'high'
+	}
+	if score >= 5 && evidence_count > 1 {
+		return 'high'
+	}
+	if score >= 3 {
+		return 'medium'
+	}
+	return 'low'
+}
+
+fn memory_card_discard_decision(reason string, score int) MemoryCardWriteDecision {
+	return MemoryCardWriteDecision{
+		keep:   false
+		reason: reason
+		score:  score
+	}
+}
+
+fn memory_card_quality_profile(input memory.ReflectionPersistInput) MemoryCardQualityProfile {
+	title := input.title.trim_space()
+	summary_points := memory_card_summary_points(input.summary_md)
+	mut profile := MemoryCardQualityProfile{
+		title:          title
+		summary_points: summary_points
+	}
+	profile.title_reason = memory_card_title_blocking_reason(title)
+	for point in summary_points {
+		if reason := memory_card_point_blocking_reason(point) {
+			profile.blocking_reason = reason
+			return profile
+		}
+		if memory_card_point_is_discardable(point) {
+			continue
+		}
+		profile.durable_points++
+		profile.score += memory_card_point_score(point)
+	}
+	return profile
+}
+
+fn memory_card_title_blocking_reason(title string) string {
+	if title.len == 0 {
+		return ''
+	}
+	if memory_card_title_is_boilerplate(title) {
+		return 'boilerplate_title'
+	}
+	if memory_looks_like_hypothesis_validation_for_card(title) {
+		return 'hypothesis_validation_title'
+	}
+	if memory_looks_like_vague_resolution_title_for_card(title) {
+		return 'vague_title'
+	}
+	if memory_looks_like_unresolved_question_for_card(title) {
+		return 'question_title'
+	}
+	if memory_looks_like_future_action_process_for_card(title) {
+		return 'process_title'
+	}
+	if memory_looks_like_corrupt_or_truncated_fragment_for_card(title) {
+		return 'corrupt_title'
+	}
+	return ''
+}
+
+fn memory_card_point_blocking_reason(point string) ?string {
+	cleaned := point.trim_space()
+	if memory_card_point_has_blocking_noise(cleaned) {
+		return 'bad_summary_point'
+	}
+	return none
+}
+
+fn memory_card_is_title_replay_only(profile MemoryCardQualityProfile) bool {
+	if profile.durable_points != 1 {
+		return false
+	}
+	title_key := memory_card_canonical_text(profile.title)
+	for point in profile.summary_points {
+		if memory_card_point_is_discardable(point) {
+			continue
+		}
+		if memory_card_single_replay_is_strong(profile, point) {
+			return false
+		}
+		return memory_card_canonical_text(point) == title_key
+	}
+	return false
+}
+
+fn memory_card_single_replay_is_strong(profile MemoryCardQualityProfile, point string) bool {
+	if profile.score < 6 {
+		return false
+	}
+	return reflection_like_durable_artifact(point)
+		&& (memory_looks_like_decision_text(point) || memory_looks_like_unresolved_issue_text(point)
+		|| memory_looks_like_constraint_text(point))
+}
+
+fn memory_card_summary_points(summary_md string) []string {
+	mut points := []string{}
+	for line in summary_md.split_into_lines() {
+		trimmed := line.trim_space()
+		if trimmed.starts_with('- ') || trimmed.starts_with('* ') {
+			points << trimmed[2..].trim_space()
+		}
+	}
+	return points
+}
+
+fn memory_card_title_is_boilerplate(title string) bool {
+	key := memory_card_canonical_text(title)
+	if key.len == 0 {
+		return true
+	}
+	for marker in ['未命名记忆复盘', '记忆复盘',
+		'当前主题已从seed与近邻证据中完成一次可回放蒸馏',
+		'后续查询应优先命中这条主题标题'] {
+		if key.contains(memory_card_canonical_text(marker)) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_card_point_is_discardable(point string) bool {
+	cleaned := point.trim_space()
+	if cleaned.len == 0 {
+		return true
+	}
+	key := memory_card_canonical_text(cleaned)
+	for marker in [
+		'当前主题已从seed与近邻证据中完成一次可回放蒸馏',
+		'后续查询应优先命中这条主题标题',
+		'保留这次复盘的证据链',
+		'回到原始证据',
+		'适合先累计更多同类entry',
+		'这条反思必须保留source_refs',
+	] {
+		if key.contains(memory_card_canonical_text(marker)) {
+			return true
+		}
+	}
+	return memory_looks_like_shell_prompt(cleaned) || memory_looks_like_raw_log(cleaned)
+		|| memory_looks_like_context_dependent_short_note_for_card(cleaned)
+		|| memory_looks_like_ascii_label_for_card(cleaned)
+		|| memory_looks_like_isolated_artifact_for_card(cleaned)
+		|| memory_looks_like_transient_card_point(cleaned)
+}
+
+fn memory_card_point_has_blocking_noise(point string) bool {
+	cleaned := point.trim_space()
+	return memory_looks_like_malformed_inline_code_for_card(cleaned)
+		|| memory_looks_like_command_line_for_card(cleaned)
+		|| memory_looks_like_regression_confirmation_for_card(cleaned)
+		|| memory_looks_like_hypothesis_validation_for_card(cleaned)
+		|| memory_looks_like_unresolved_question_for_card(cleaned)
+		|| memory_looks_like_future_action_process_for_card(cleaned)
+		|| memory_looks_like_raw_schema_fragment_for_card(cleaned)
+		|| memory_looks_like_corrupt_or_truncated_fragment_for_card(cleaned)
+}
+
+fn memory_card_point_score(point string) int {
+	mut score := 0
+	if memory_looks_like_decision_text(point) {
+		score += 3
+	}
+	if memory_looks_like_unresolved_issue_text(point) || point.contains('根因')
+		|| point.contains('原因') || point.contains('触发点') || point.contains('说明') {
+		score += 2
+	}
+	if point.contains('不要') || point.contains('不能') || point.contains('必须')
+		|| point.contains('不要求') || point.contains('约束') || point.contains('限制')
+		|| memory_looks_like_constraint_text(point) {
+		score += 3
+	}
+	if reflection_like_durable_artifact(point) {
+		score += 2
+	}
+	if point.runes().len >= 18 {
+		score += 1
+	}
+	return score
+}
+
+fn reflection_like_durable_artifact(text string) bool {
+	return text.contains('`') || text.contains('/') || text.contains('.v') || text.contains('.js')
+		|| text.contains('.ts') || text.contains('.json') || text.contains('.md')
+		|| text.contains('_ROOT') || text.contains('_PATH') || text.contains('@')
+}
+
+fn memory_looks_like_isolated_artifact_for_card(text string) bool {
+	cleaned := text.trim_space().trim('- *`，。:： ')
+	if cleaned.runes().len > 32 {
+		return false
+	}
+	if cleaned.contains(' ') || cleaned.contains('/') {
+		return false
+	}
+	if memory_looks_like_decision_text(cleaned) || memory_looks_like_unresolved_issue_text(cleaned) {
+		return false
+	}
+	return cleaned.contains('.') || cleaned.contains('_') || cleaned.contains('-')
+}
+
+fn memory_looks_like_ascii_label_for_card(text string) bool {
+	cleaned := text.trim_space().trim('- *`，。:： ')
+	if cleaned.len == 0 || cleaned.runes().len > 40 {
+		return false
+	}
+	if memory_looks_like_decision_text(cleaned) || memory_looks_like_unresolved_issue_text(cleaned)
+		|| memory_looks_like_constraint_text(cleaned) {
+		return false
+	}
+	mut has_ascii_word := false
+	mut has_separator := false
+	for ch in cleaned.bytes() {
+		if ch > 127 {
+			return false
+		}
+		if (ch >= `a` && ch <= `z`) || (ch >= `A` && ch <= `Z`) {
+			has_ascii_word = true
+		}
+		if ch == `+` || ch == `/` || ch == `,` {
+			has_separator = true
+		}
+		if !((ch >= `a` && ch <= `z`) || (ch >= `A` && ch <= `Z`)
+			|| (ch >= `0` && ch <= `9`) || ch == `_` || ch == `-` || ch == `+`
+			|| ch == `/` || ch == `,` || ch == ` `) {
+			return false
+		}
+	}
+	return has_ascii_word && has_separator
+}
+
+fn memory_looks_like_context_dependent_short_note_for_card(text string) bool {
+	cleaned := text.trim_space().trim('- *，。:： ')
+	if cleaned.runes().len > 24 {
+		return false
+	}
+	if reflection_like_durable_artifact(cleaned) || memory_looks_like_decision_text(cleaned) {
+		return false
+	}
+	lower := cleaned.to_lower()
+	for marker in ['传一遍', '走一遍', '做一遍', '调一下', '看一下', '这一块',
+		'这个点', '那一块', '这种方式', '没带回去', '没带回来'] {
+		if lower.contains(marker) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_looks_like_malformed_inline_code_for_card(text string) bool {
+	first_tick := text.index('`') or { return false }
+	if first_tick == 0 {
+		return false
+	}
+	before := text[..first_tick].trim_space()
+	if before.len == 0 {
+		return false
+	}
+	parts := before.split(' ')
+	token := parts[parts.len - 1].trim_space()
+	if token.len == 0 {
+		return false
+	}
+	if token.contains('_') || token.contains('.') || token.contains('__') || token.contains('(')
+		|| token.contains(')') || token.contains('\\') {
+		return true
+	}
+	mut ascii_word := token.len > 1 && token.len <= 32
+	for ch in token.bytes() {
+		if !((ch >= `a` && ch <= `z`) || (ch >= `A` && ch <= `Z`)
+			|| (ch >= `0` && ch <= `9`) || ch == `_` || ch == `-`) {
+			ascii_word = false
+		}
+		if ch >= `A` && ch <= `Z` {
+			return true
+		}
+	}
+	return ascii_word
+}
+
+fn memory_looks_like_command_line_for_card(text string) bool {
+	lower := text.to_lower().trim_space()
+	for prefix in ['php ', 'make ', 'npm ', 'cargo ', 'v test ', 'v run ', './', '../', 'sudo ',
+		'cd '] {
+		if lower.starts_with(prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_looks_like_regression_confirmation_for_card(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('确认这个') || lower.contains('确认回归')
+		|| lower.contains('正式跑法') || lower.contains('确认没有漏掉')
+}
+
+fn memory_looks_like_hypothesis_validation_for_card(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('不是最终') || lower.contains('不一定是最终')
+		|| lower.contains('如果它能') || lower.contains('如果能立刻')
+		|| lower.contains('说明崩点') || lower.contains('碰到正确层')
+		|| lower.contains('刚才那条改动') || lower.contains('如果成立')
+		|| lower.contains('如果真是') || lower.contains('不是我们要的')
+		|| lower.contains('还不是我们要的') || lower.contains('有信息量')
+}
+
+fn memory_looks_like_vague_resolution_title_for_card(text string) bool {
+	lower := text.to_lower().trim_space().trim('，。:： ')
+	for marker in ['定位到了', '已经定位到', '定位到原因了', '原因清楚了',
+		'这下原因清楚了', '表结构已经说明原因了', '已经说明原因了',
+		'又抓到一条很像根因', '有新信号', '编译这边有新信号',
+		'编译已经起了'] {
+		if lower == marker || lower.contains(marker) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_looks_like_raw_schema_fragment_for_card(text string) bool {
+	lower := text.to_lower().trim_space()
+	for prefix in ['add column ', 'alter table ', 'create table ', 'drop table ', 'create index ',
+		'drop index '] {
+		if lower.starts_with(prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_looks_like_unresolved_question_for_card(text string) bool {
+	cleaned := text.trim_space().trim('- *，。:： ')
+	lower := cleaned.to_lower()
+	for prefix in ['是不是', '是否', '为什么', '怎么', '哪里', '哪一层'] {
+		if lower.starts_with(prefix) {
+			return true
+		}
+	}
+	return cleaned.ends_with('?') || cleaned.ends_with('？')
+}
+
+fn memory_looks_like_future_action_process_for_card(text string) bool {
+	lower := text.to_lower()
+	if lower.contains('接下来就把') || lower.contains('接下来我会')
+		|| lower.contains('接下来再') || lower.contains('然后再')
+		|| lower.contains('下一步我要') || lower.contains('下一步我会')
+		|| lower.contains('这轮要等') || lower.contains('我再确认一次')
+		|| lower.contains('如果是，我会') || lower.contains('如果是我会') {
+		return true
+	}
+	if lower.starts_with('我要去') || lower.starts_with('我去把')
+		|| lower.starts_with('我会把') || lower.starts_with('我准备把')
+		|| lower.starts_with('我要先') || lower.starts_with('我要重新')
+		|| lower.starts_with('我就直接') || lower.starts_with('我准备直接') {
+		return true
+	}
+	if lower.contains('一次性补') || lower.contains('后面再补') {
+		return true
+	}
+	if (lower.contains('确认') || lower.contains('验证'))
+		&& (lower.contains('能直接用') || lower.contains('可以直接用')) {
+		return true
+	}
+	if lower.contains('把范围压到') && lower.contains('这条链') {
+		return true
+	}
+	return false
+}
+
+fn memory_looks_like_corrupt_or_truncated_fragment_for_card(text string) bool {
+	cleaned := text.trim_space()
+	if cleaned.contains('�') {
+		return true
+	}
+	if cleaned.contains('](') && !cleaned.contains(')') {
+		return true
+	}
+	if memory_has_unbalanced_cjk_quotes(cleaned) {
+		return true
+	}
+	if cleaned.ends_with('...') || cleaned.ends_with('..') || cleaned.ends_with('……') {
+		return true
+	}
+	if cleaned.ends_with('.') && cleaned.len >= 2 {
+		prev := cleaned.bytes()[cleaned.len - 2]
+		return prev > 127
+	}
+	return false
+}
+
+fn memory_has_unbalanced_cjk_quotes(text string) bool {
+	if text.count('“') != text.count('”') {
+		return true
+	}
+	close_idx := text.index('”') or { return false }
+	open_idx := text.index('“') or { return false }
+	return close_idx < open_idx
+}
+
+fn memory_looks_like_transient_card_point(text string) bool {
+	lower := text.to_lower()
+	for marker in ['我先', '我会先', '我准备', '我去看', '我要开始', '我要动',
+		'我再看一下', '我顺手', '我同意', '随后会', '现在把', '我在等',
+		'会直接指出', '找到具体 workflow', '我再确认一次'] {
+		if lower.contains(marker) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_card_topic_key(input memory.ReflectionPersistInput) string {
+	material := memory_card_match_text(input.title, input.summary_md)
+	if material.len == 0 {
+		return ''
+	}
+	return 'agentview-card:' + sha256.sum(memory_card_canonical_text(material).bytes()).hex()[..16]
+}
+
+fn memory_card_match_text(title string, summary_md string) string {
+	return '${title}\n${memory_card_summary_points_text(summary_md)}'.trim_space()
+}
+
+fn memory_card_summary_points_text(summary_md string) string {
+	return memory_card_summary_points(summary_md).join('\n')
+}
+
+fn memory_card_match_terms(title string, summary_md string) []string {
+	text := memory_card_match_text(title, summary_md)
+	mut terms := []string{}
+	mut current := ''
+	for r in text.runes() {
+		ch := r.str()
+		if ch.len == 1 && ((ch[0] >= `a` && ch[0] <= `z`)
+			|| (ch[0] >= `A` && ch[0] <= `Z`) || (ch[0] >= `0` && ch[0] <= `9`)
+			|| ch[0] == `_` || ch[0] == `-`) {
+			current += ch.to_lower()
+			continue
+		}
+		if current.len >= 2 {
+			terms << current
+		}
+		current = ''
+	}
+	if current.len >= 2 {
+		terms << current
+	}
+	mut scored := []string{}
+	mut seen := map[string]bool{}
+	for term in terms {
+		cleaned := term.trim('-_')
+		if cleaned.len < 2 || cleaned in seen || cleaned in ['the', 'and', 'with'] {
+			continue
+		}
+		seen[cleaned] = true
+		scored << cleaned
+	}
+	scored.sort_with_compare(fn (a &string, b &string) int {
+		if a.len > b.len {
+			return -1
+		}
+		if a.len < b.len {
+			return 1
+		}
+		if *a < *b {
+			return -1
+		}
+		if *a > *b {
+			return 1
+		}
+		return 0
+	})
+	return if scored.len > 8 { scored[..8] } else { scored }
+}
+
+fn memory_card_canonical_text(text string) string {
+	mut out :=
+		text.to_lower().replace('\r', '').replace('\n', '').replace('\t', '').replace(' ', '')
+	for marker in ['-', '*', '#', '`', '"', "'", '“', '”', '，', '。', ':', '：', '(', ')',
+		'[', ']'] {
+		out = out.replace(marker, '')
+	}
+	return out
+}
+
+fn memory_card_lexical_guard_score(new_title string, new_summary string, old_title string, old_summary string) f64 {
+	title_score := memory_card_text_similarity(new_title, old_title)
+	summary_score := memory_card_text_similarity(memory_card_summary_points_text(new_summary),
+		memory_card_summary_points_text(old_summary))
+	return title_score * 0.45 + summary_score * 0.55
+}
+
+fn memory_card_text_similarity(left string, right string) f64 {
+	left_key := memory_card_canonical_text(left)
+	right_key := memory_card_canonical_text(right)
+	if left_key.len == 0 || right_key.len == 0 {
+		return 0.0
+	}
+	if left_key == right_key {
+		return 1.0
+	}
+	if left_key.contains(right_key) || right_key.contains(left_key) {
+		return 0.82
+	}
+	return memory_card_ngram_jaccard(left_key, right_key)
+}
+
+fn memory_card_ngram_jaccard(left string, right string) f64 {
+	left_grams := memory_card_char_ngrams(left, 2)
+	right_grams := memory_card_char_ngrams(right, 2)
+	if left_grams.len == 0 || right_grams.len == 0 {
+		return 0.0
+	}
+	mut left_set := map[string]bool{}
+	for gram in left_grams {
+		left_set[gram] = true
+	}
+	mut right_set := map[string]bool{}
+	for gram in right_grams {
+		right_set[gram] = true
+	}
+	mut intersection := 0
+	for gram, _ in left_set {
+		if gram in right_set {
+			intersection++
+		}
+	}
+	union_count := left_set.len + right_set.len - intersection
+	return if union_count > 0 { f64(intersection) / f64(union_count) } else { 0.0 }
+}
+
+fn memory_card_char_ngrams(text string, n int) []string {
+	chars := text.runes()
+	if chars.len == 0 {
+		return []string{}
+	}
+	if chars.len <= n {
+		return [text]
+	}
+	mut out := []string{}
+	for idx := 0; idx <= chars.len - n; idx++ {
+		mut gram := ''
+		for offset := 0; offset < n; offset++ {
+			gram += chars[idx + offset].str()
+		}
+		out << gram
+	}
+	return out
+}
+
+fn cosine_similarity(left []f32, right []f32) f64 {
+	if left.len == 0 || right.len == 0 || left.len != right.len {
+		return 0.0
+	}
+	mut dot := f64(0)
+	mut left_norm := f64(0)
+	mut right_norm := f64(0)
+	for idx, value in left {
+		l := f64(value)
+		r := f64(right[idx])
+		dot += l * r
+		left_norm += l * l
+		right_norm += r * r
+	}
+	if left_norm == 0 || right_norm == 0 {
+		return 0.0
+	}
+	return dot / (math.sqrt(left_norm) * math.sqrt(right_norm))
+}
+
+pub fn (store PollyDbStore) inspect_recent_memory_salience(recent_sessions int) !MemorySalienceReport {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	session_limit := if recent_sessions > 0 { recent_sessions } else { 12 }
+	entry_rows := recent_entry_rows(mut db, session, session_limit)!
+	_, report := memory_candidates_for_embedding(mut db, session, entry_rows, 0, 0)!
+	return report
+}
+
+struct MemorySegmentEntry {
+	primary_key []u8
+	session_id  string
+	timestamp   string
+	score       int
+	entry       SessionEntry
+	vector      []f32
+}
+
+struct MemorySegmentAnchor {
+	primary_key     []u8
+	session_id      string
+	timestamp       string
+	score           int
+	segment_score   int
+	entry_count     int
+	segment_kind    string
+	segment_horizon string
+	entries         []MemorySegmentEntry
+}
+
+struct MemorySegmentState {
+mut:
+	entries  []MemorySegmentEntry
+	centroid []f32
+}
+
+fn build_memory_segment_anchors(candidates []MemoryCandidate, mut engine memory.EmbeddingEngine, candidate_limit int) ![]MemorySegmentAnchor {
+	mut entries_by_session := map[string][]MemorySegmentEntry{}
+	for idx, candidate in candidates {
+		full_row := candidate.row
+		entry := candidate.entry
+		if should_skip_markdown_index(entry, entry.text) {
+			continue
+		}
+		text := memory_segment_text(entry)
+		if text.len == 0 {
+			continue
+		}
+		memory_distill_progress('embed segment candidate ${idx + 1}/${candidates.len} key=${full_row.primary_key.bytestr()}')
+		vector := engine.embed(text) or { continue }
+		session_id := candidate.session_id
+		entries_by_session[session_id] << MemorySegmentEntry{
+			primary_key: full_row.primary_key.clone()
+			session_id:  session_id
+			timestamp:   entry.timestamp
+			score:       memory_seed_entry_score(entry)
+			entry:       entry
+			vector:      vector
+		}
+	}
+	mut anchors := []MemorySegmentAnchor{}
+	for _, mut session_entries in entries_by_session {
+		if session_entries.len == 0 {
+			continue
+		}
+		session_entries.sort_with_compare(fn (a &MemorySegmentEntry, b &MemorySegmentEntry) int {
+			if a.timestamp < b.timestamp {
+				return -1
+			}
+			if a.timestamp > b.timestamp {
+				return 1
+			}
+			a_key := a.primary_key.bytestr()
+			b_key := b.primary_key.bytestr()
+			if a_key < b_key {
+				return -1
+			}
+			if a_key > b_key {
+				return 1
+			}
+			return 0
+		})
+		mut current := MemorySegmentState{}
+		for entry in session_entries {
+			if current.entries.len == 0 {
+				current = start_memory_segment(entry)
+				continue
+			}
+			if memory_segment_accepts(current, entry) {
+				append_memory_segment(mut current, entry)
+				continue
+			}
+			anchors << current.anchor()
+			current = start_memory_segment(entry)
+		}
+		if current.entries.len > 0 {
+			anchors << current.anchor()
+		}
+	}
+	mut preferred := []MemorySegmentAnchor{}
+	mut deferred := []MemorySegmentAnchor{}
+	for anchor in anchors {
+		if anchor.segment_horizon == 'transient' {
+			deferred << anchor
+		} else {
+			preferred << anchor
+		}
+	}
+	if preferred.len > 0 {
+		anchors = preferred.clone()
+		anchors << deferred
+	}
+	anchors.sort_with_compare(fn (a &MemorySegmentAnchor, b &MemorySegmentAnchor) int {
+		a_horizon := memory_segment_horizon_rank(a.segment_horizon)
+		b_horizon := memory_segment_horizon_rank(b.segment_horizon)
+		if a_horizon > b_horizon {
+			return -1
+		}
+		if a_horizon < b_horizon {
+			return 1
+		}
+		a_rank := memory_segment_kind_rank(a.segment_kind)
+		b_rank := memory_segment_kind_rank(b.segment_kind)
+		if a_rank > b_rank {
+			return -1
+		}
+		if a_rank < b_rank {
+			return 1
+		}
+		if a.segment_score > b.segment_score {
+			return -1
+		}
+		if a.segment_score < b.segment_score {
+			return 1
+		}
+		if a.timestamp > b.timestamp {
+			return -1
+		}
+		if a.timestamp < b.timestamp {
+			return 1
+		}
+		a_key := a.primary_key.bytestr()
+		b_key := b.primary_key.bytestr()
+		if a_key < b_key {
+			return -1
+		}
+		if a_key > b_key {
+			return 1
+		}
+		return 0
+	})
+	limit := if candidate_limit > 0 { candidate_limit } else { 0 }
+	if limit > 0 && anchors.len > limit {
+		return anchors[..limit].clone()
+	}
+	return anchors
+}
+
+fn build_in_memory_agentview_reflection_job(anchor MemorySegmentAnchor, neighbor_limit int) memory.ReflectionJob {
+	limit := if neighbor_limit > 0 { neighbor_limit } else { 8 }
+	seed := memory_segment_seed_entry(anchor)
+	mut evidence := memory_segment_evidence(anchor, seed, limit)
+	return memory.ReflectionJob{
+		branch_name:     store_branch
+		table_name:      agentview_memory_capability_table
+		primary_key:     anchor.primary_key.clone()
+		column_name:     agentview_memory_capability_column
+		reflection_kind: 'summary'
+		seed_scope:      .block
+		seed_anchor:     memory_segment_anchor(seed)
+		seed_text:       memory_segment_text(seed.entry)
+		evidence:        evidence
+	}
+}
+
+fn memory_segment_seed_entry(anchor MemorySegmentAnchor) MemorySegmentEntry {
+	for entry in anchor.entries {
+		if entry.primary_key == anchor.primary_key {
+			return entry
+		}
+	}
+	if anchor.entries.len > 0 {
+		return anchor.entries[0]
+	}
+	return MemorySegmentEntry{}
+}
+
+fn memory_segment_evidence(anchor MemorySegmentAnchor, seed MemorySegmentEntry, limit int) []memory.ReflectionEvidence {
+	mut evidence := []memory.ReflectionEvidence{}
+	for entry in anchor.entries {
+		if entry.primary_key == seed.primary_key {
+			continue
+		}
+		if !memory_entries_same_pure_topic(seed, entry) {
+			continue
+		}
+		text := memory_segment_text(entry.entry)
+		if text.len == 0 {
+			continue
+		}
+		evidence << memory.ReflectionEvidence{
+			table_name:  agentview_memory_capability_table
+			primary_key: entry.primary_key.clone()
+			column_name: agentview_memory_capability_column
+			target_id:   memory_segment_target_id(entry)
+			score:       storage.vector_cosine_similarity(seed.vector, entry.vector)
+			scope:       .block
+			kind:        entry.entry.kind.str()
+			anchor:      memory_segment_anchor(entry)
+			path_hint:   'session=${entry.session_id} seq=${entry.entry.seq}'
+			text:        text
+		}
+	}
+	evidence.sort_with_compare(fn (a &memory.ReflectionEvidence, b &memory.ReflectionEvidence) int {
+		if a.score > b.score {
+			return -1
+		}
+		if a.score < b.score {
+			return 1
+		}
+		a_key := a.primary_key.bytestr()
+		b_key := b.primary_key.bytestr()
+		if a_key < b_key {
+			return -1
+		}
+		if a_key > b_key {
+			return 1
+		}
+		return 0
+	})
+	if limit > 0 && evidence.len > limit {
+		return evidence[..limit].clone()
+	}
+	return evidence
+}
+
+fn memory_segment_target_id(entry MemorySegmentEntry) string {
+	return '${entry.session_id}:${entry.entry.seq}:content_md'
+}
+
+fn memory_segment_anchor(entry MemorySegmentEntry) string {
+	return 'entry:${entry.entry.seq}'
+}
+
+fn memory_candidates_for_embedding(mut db storage.PersistentDatabase, session storage.DatabaseSession, entry_rows []storage.TypedSchemaRow, candidate_limit int, candidate_offset int) !([]MemoryCandidate, MemorySalienceReport) {
+	mut report := MemorySalienceReport{
+		skipped_by_reason:          map[string]int{}
+		discarded_before_embedding: map[string]int{}
+		candidates_by_type:         map[string]int{}
+	}
+	mut candidates := []MemoryCandidate{}
+	for row in entry_rows {
+		report.raw_entries++
+		entry_id := agentview_required_row_string(row, 'id') or {
+			memory_salience_count(mut report.skipped_by_reason, 'missing_id')
+			continue
+		}
+		full_row := session.get_row(mut db, 'entries', entry_id.bytes()) or {
+			memory_salience_count(mut report.skipped_by_reason, 'missing_row')
+			continue
+		}
+		entry := decode_session_entry(full_row) or {
+			memory_salience_count(mut report.skipped_by_reason, 'decode_error')
+			continue
+		}
+		decision := classify_memory_salience(entry)
+		if !decision.memory_worthy {
+			memory_salience_count(mut report.skipped_by_reason, decision.skip_reason)
+			continue
+		}
+		session_id := entry_session_id(full_row) or {
+			memory_salience_count(mut report.skipped_by_reason, 'missing_session')
+			continue
+		}
+		candidates << MemoryCandidate{
+			row:        full_row
+			entry:      entry
+			decision:   decision
+			session_id: session_id
+		}
+		report.candidate_entries++
+		memory_salience_count(mut report.candidates_by_type, decision.candidate_type)
+	}
+	selected := memory_select_embedding_candidates(candidates, candidate_limit, candidate_offset, mut
+		report)
+	report.embedding_candidate_entries = selected.len
+	return selected, report
+}
+
+fn memory_salience_count(mut counts map[string]int, key string) {
+	label := if key.len > 0 { key } else { 'unknown' }
+	counts[label] = counts[label] + 1
+}
+
+fn memory_select_embedding_candidates(candidates []MemoryCandidate, candidate_limit int, candidate_offset int, mut report MemorySalienceReport) []MemoryCandidate {
+	mut selected := []MemoryCandidate{}
+	mut deferred := []MemoryCandidate{}
+	for candidate in candidates {
+		if candidate.horizon() == 'transient' {
+			memory_salience_count(mut report.discarded_before_embedding,
+				candidate.embedding_discard_reason())
+			continue
+		}
+		if !candidate.has_distillable_seed_outline() {
+			memory_salience_count(mut report.discarded_before_embedding,
+				'undistillable_outline_before_embedding')
+			continue
+		}
+		if candidate.should_embed_directly() {
+			selected << candidate
+			continue
+		}
+		if candidate.can_be_rescued_later() {
+			deferred << candidate
+			continue
+		}
+		memory_salience_count(mut report.discarded_before_embedding,
+			candidate.embedding_discard_reason())
+	}
+	for candidate in deferred {
+		if candidate.has_durable_neighbor(candidates) {
+			selected << candidate
+		} else {
+			memory_salience_count(mut report.discarded_before_embedding,
+				candidate.embedding_discard_reason())
+		}
+	}
+	selected.sort_with_compare(fn (a &MemoryCandidate, b &MemoryCandidate) int {
+		a_rank := a.embedding_rank()
+		b_rank := b.embedding_rank()
+		if a_rank > b_rank {
+			return -1
+		}
+		if a_rank < b_rank {
+			return 1
+		}
+		if a.decision.score > b.decision.score {
+			return -1
+		}
+		if a.decision.score < b.decision.score {
+			return 1
+		}
+		if a.entry.timestamp > b.entry.timestamp {
+			return -1
+		}
+		if a.entry.timestamp < b.entry.timestamp {
+			return 1
+		}
+		a_key := a.primary_key().bytestr()
+		b_key := b.primary_key().bytestr()
+		if a_key < b_key {
+			return -1
+		}
+		if a_key > b_key {
+			return 1
+		}
+		return 0
+	})
+	offset := if candidate_offset > 0 { candidate_offset } else { 0 }
+	if offset >= selected.len {
+		return []MemoryCandidate{}
+	}
+	mut window := selected[offset..].clone()
+	if candidate_limit > 0 && window.len > candidate_limit {
+		window = window[..candidate_limit].clone()
+	}
+	return window
+}
+
+fn (candidate MemoryCandidate) has_distillable_seed_outline() bool {
+	return memory.reflection_job_has_distillable_outline(memory.ReflectionJob{
+		branch_name:     store_branch
+		table_name:      agentview_memory_capability_table
+		primary_key:     candidate.primary_key()
+		column_name:     agentview_memory_capability_column
+		reflection_kind: 'summary'
+		seed_scope:      .block
+		seed_anchor:     'entry:${candidate.entry.seq}'
+		seed_text:       candidate.entry.text
+	}, memory.ReflectionDistillOptions{})
+}
+
+fn (candidate MemoryCandidate) primary_key() []u8 {
+	return candidate.row.primary_key.clone()
+}
+
+fn (candidate MemoryCandidate) horizon() string {
+	match candidate.decision.candidate_type {
+		'decision', 'root_cause', 'constraint', 'unresolved_issue' {
+			return 'durable'
+		}
+		'artifact', 'fact' {
+			return 'situational'
+		}
+		'execution_context' {
+			return 'transient'
+		}
+		else {
+			return 'situational'
+		}
+	}
+}
+
+fn (candidate MemoryCandidate) should_embed_directly() bool {
+	horizon := candidate.horizon()
+	if horizon == 'durable' {
+		return true
+	}
+	if horizon == 'situational' {
+		return candidate.decision.score >= 24
+	}
+	return false
+}
+
+fn (candidate MemoryCandidate) can_be_rescued_later() bool {
+	if candidate.horizon() == 'transient' {
+		return false
+	}
+	return candidate.decision.score >= 12
+}
+
+fn (candidate MemoryCandidate) has_durable_neighbor(candidates []MemoryCandidate) bool {
+	for other in candidates {
+		if other.primary_key() == candidate.primary_key() {
+			continue
+		}
+		if other.session_id != candidate.session_id {
+			continue
+		}
+		if other.horizon() != 'durable' {
+			continue
+		}
+		if memory_topic_hint_overlap(candidate.entry.text, other.entry.text) {
+			return true
+		}
+	}
+	return false
+}
+
+fn (candidate MemoryCandidate) embedding_discard_reason() string {
+	horizon := candidate.horizon()
+	if horizon == 'transient' {
+		return 'transient_before_embedding'
+	}
+	if horizon == 'situational' {
+		return 'weak_situational_before_embedding'
+	}
+	return 'low_priority_before_embedding'
+}
+
+fn (candidate MemoryCandidate) embedding_rank() int {
+	match candidate.decision.candidate_type {
+		'decision' { return 60 }
+		'root_cause' { return 58 }
+		'constraint' { return 56 }
+		'unresolved_issue' { return 50 }
+		'artifact' { return 40 }
+		'fact' { return 36 }
+		else { return 10 }
+	}
+}
+
+fn classify_memory_salience(entry SessionEntry) MemorySalienceDecision {
+	text := entry.text.trim_space()
+	if text.len == 0 {
+		return memory_skip_decision('empty', -1000)
+	}
+	if should_skip_markdown_index(entry, text) {
+		return memory_skip_decision('non_memory_markup', -900)
+	}
+	if entry.kind in [.tool_call, .tool_result, .meta] {
+		return memory_skip_decision('tool_or_meta', -800)
+	}
+	if text.len > 32768 {
+		return memory_skip_decision('large_output', -700)
+	}
+	if memory_looks_like_shell_prompt(text) {
+		return memory_skip_decision('shell_prompt', -650)
+	}
+	if memory_looks_like_raw_log(text) {
+		return memory_skip_decision('raw_log', -620)
+	}
+	if reflection_like_execution_context_text(text) {
+		return memory_candidate_decision('execution_context', memory_seed_entry_score(entry))
+	}
+	if reflection_like_root_cause_text(text) {
+		return memory_candidate_decision('root_cause', memory_seed_entry_score(entry))
+	}
+	if reflection_like_constraint_text(text) {
+		return memory_candidate_decision('constraint', memory_seed_entry_score(entry))
+	}
+	if memory_looks_like_decision_text(text) {
+		return memory_candidate_decision('decision', memory_seed_entry_score(entry))
+	}
+	if memory_looks_like_unresolved_issue_text(text) {
+		return memory_candidate_decision('unresolved_issue', memory_seed_entry_score(entry))
+	}
+	if reflection_like_process_status_text(text) || reflection_like_execution_update_text(text) {
+		return memory_skip_decision('transient_status', memory_seed_entry_score(entry))
+	}
+	if reflection_like_artifact_text(text) {
+		return memory_candidate_decision('artifact', memory_seed_entry_score(entry))
+	}
+	score := memory_seed_entry_score(entry)
+	if score >= 30 {
+		return memory_candidate_decision('fact', score)
+	}
+	if text.len < 24 {
+		return memory_skip_decision('low_information', score)
+	}
+	return memory_skip_decision('low_salience', score)
+}
+
+fn memory_candidate_decision(candidate_type string, score int) MemorySalienceDecision {
+	return MemorySalienceDecision{
+		memory_worthy:  true
+		candidate_type: candidate_type
+		score:          score
+	}
+}
+
+fn memory_skip_decision(reason string, score int) MemorySalienceDecision {
+	return MemorySalienceDecision{
+		skip_reason: reason
+		score:       score
+	}
+}
+
+fn memory_looks_like_decision_text(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('决定') || lower.contains('确认') || lower.contains('同意')
+		|| lower.contains('采用') || lower.contains('改用') || lower.contains('选择')
+		|| lower.contains('最终') || lower.contains('定下来') || lower.contains('范围确认')
+}
+
+fn memory_looks_like_unresolved_issue_text(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('待解决') || lower.contains('还需要') || lower.contains('风险')
+		|| lower.contains('阻塞') || lower.contains('失败') || lower.contains('不通过')
+}
+
+fn memory_looks_like_constraint_text(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('不要') || lower.contains('不能') || lower.contains('不得')
+		|| lower.contains('必须') || lower.contains('不要求') || lower.contains('只服务于')
+		|| lower.contains('只用于') || lower.contains('仅用于') || lower.contains('不复用')
+		|| lower.contains('没有别的') || lower.contains('约束') || lower.contains('限制')
+}
+
+fn memory_looks_like_shell_prompt(text string) bool {
+	trimmed := text.trim_space()
+	return trimmed.starts_with('$ ') || trimmed.starts_with('% ') || trimmed.starts_with('> ')
+		|| trimmed.starts_with('# ') || trimmed.contains('\n$ ') || trimmed.contains('\n% ')
+}
+
+fn memory_looks_like_raw_log(text string) bool {
+	trimmed := text.trim_space()
+	if trimmed.count('\n') < 8 {
+		return false
+	}
+	lower := trimmed.to_lower()
+	if lower.contains('error:') || lower.contains('warning:') || lower.contains('stack trace') {
+		return true
+	}
+	mut log_like_lines := 0
+	for line in trimmed.split_into_lines() {
+		t := line.trim_space()
+		if t.starts_with('at ') || t.starts_with('[') || t.starts_with('INFO ')
+			|| t.starts_with('WARN ') || t.starts_with('ERROR ') || t.starts_with('+ ')
+			|| t.starts_with('- ') {
+			log_like_lines++
+		}
+	}
+	return log_like_lines >= 5
+}
+
+fn memory_segment_horizon_rank(horizon string) int {
+	return match horizon {
+		'durable' { 2 }
+		'situational' { 1 }
+		'transient' { 0 }
+		else { 1 }
+	}
+}
+
+fn memory_segment_kind_rank(kind string) int {
+	return match kind {
+		'root_cause' { 5 }
+		'technical_decision' { 4 }
+		'constraint' { 3 }
+		'technical_status' { 2 }
+		'execution_update' { 1 }
+		'workflow_status' { 0 }
+		'execution_context' { -1 }
+		else { 2 }
+	}
+}
+
+fn start_memory_segment(entry MemorySegmentEntry) MemorySegmentState {
+	return MemorySegmentState{
+		entries:  [entry]
+		centroid: entry.vector.clone()
+	}
+}
+
+fn append_memory_segment(mut segment MemorySegmentState, entry MemorySegmentEntry) {
+	prev_count := segment.entries.len
+	segment.entries << entry
+	if segment.centroid.len == 0 {
+		segment.centroid = entry.vector.clone()
+		return
+	}
+	for idx, value in entry.vector {
+		segment.centroid[idx] = f32((f64(segment.centroid[idx]) * prev_count + value) / f64(
+			prev_count + 1))
+	}
+}
+
+fn memory_segment_accepts(segment MemorySegmentState, entry MemorySegmentEntry) bool {
+	if segment.entries.len == 0 {
+		return true
+	}
+	last := segment.entries[segment.entries.len - 1]
+	if last.session_id != entry.session_id {
+		return false
+	}
+	sim_last := storage.vector_cosine_similarity(last.vector, entry.vector)
+	sim_centroid := storage.vector_cosine_similarity(segment.centroid, entry.vector)
+	mut threshold := 0.72
+	if last.entry.role == 'user' && entry.entry.role == 'assistant' {
+		threshold = 0.55
+	}
+	if last.entry.kind == .reasoning || entry.entry.kind == .reasoning {
+		threshold -= 0.05
+	}
+	if last.entry.role == 'user' && entry.entry.role == 'assistant' {
+		return sim_last >= threshold || memory_topic_hint_overlap(last.entry.text, entry.entry.text)
+	}
+	if memory_topic_hint_overlap(last.entry.text, entry.entry.text) {
+		return true
+	}
+	return sim_last >= threshold || sim_centroid >= threshold
+}
+
+fn memory_entries_same_pure_topic(left MemorySegmentEntry, right MemorySegmentEntry) bool {
+	if left.session_id != right.session_id {
+		return false
+	}
+	if memory_topic_hint_overlap(left.entry.text, right.entry.text) {
+		return true
+	}
+	similarity := storage.vector_cosine_similarity(left.vector, right.vector)
+	return similarity >= 0.86
+}
+
+fn (segment MemorySegmentState) anchor() MemorySegmentAnchor {
+	mut best := segment.entries[0]
+	for entry in segment.entries[1..] {
+		if entry.score > best.score {
+			best = entry
+			continue
+		}
+		if entry.score == best.score && entry.timestamp > best.timestamp {
+			best = entry
+		}
+	}
+	return MemorySegmentAnchor{
+		primary_key:     best.primary_key.clone()
+		session_id:      best.session_id
+		timestamp:       segment.entries[segment.entries.len - 1].timestamp
+		score:           best.score
+		segment_score:   best.score + (segment.entries.len - 1) * 8
+		entry_count:     segment.entries.len
+		segment_kind:    segment.kind()
+		segment_horizon: segment.horizon()
+		entries:         segment.entries.clone()
+	}
+}
+
+fn (segment MemorySegmentState) kind() string {
+	mut artifact_hits := 0
+	mut constraint_hits := 0
+	mut root_cause_hits := 0
+	mut workflow_hits := 0
+	mut update_hits := 0
+	mut execution_context_hits := 0
+	for entry in segment.entries {
+		text := entry.entry.text
+		if reflection_like_artifact_text(text) {
+			artifact_hits++
+		}
+		if reflection_like_constraint_text(text) {
+			constraint_hits++
+		}
+		if reflection_like_root_cause_text(text) {
+			root_cause_hits++
+		}
+		if reflection_like_process_status_text(text) {
+			workflow_hits++
+		}
+		if reflection_like_execution_update_text(text) {
+			update_hits++
+		}
+		if reflection_like_execution_context_text(text) {
+			execution_context_hits++
+		}
+	}
+	if root_cause_hits > 0 {
+		return 'root_cause'
+	}
+	if execution_context_hits >= segment.entries.len / 2 + 1 {
+		return 'execution_context'
+	}
+	if artifact_hits > 0 && constraint_hits > 0 {
+		return 'technical_decision'
+	}
+	if artifact_hits > 0 {
+		return 'technical_status'
+	}
+	if constraint_hits > 0 {
+		return 'constraint'
+	}
+	if workflow_hits >= segment.entries.len / 2 + 1 {
+		return 'workflow_status'
+	}
+	if update_hits > 0 {
+		return 'execution_update'
+	}
+	return 'technical_status'
+}
+
+fn (segment MemorySegmentState) horizon() string {
+	mut artifact_hits := 0
+	mut constraint_hits := 0
+	mut root_cause_hits := 0
+	mut workflow_hits := 0
+	mut update_hits := 0
+	mut execution_context_hits := 0
+	for entry in segment.entries {
+		text := entry.entry.text
+		if reflection_like_artifact_text(text) {
+			artifact_hits++
+		}
+		if reflection_like_constraint_text(text) {
+			constraint_hits++
+		}
+		if reflection_like_root_cause_text(text) {
+			root_cause_hits++
+		}
+		if reflection_like_process_status_text(text) {
+			workflow_hits++
+		}
+		if reflection_like_execution_update_text(text) {
+			update_hits++
+		}
+		if reflection_like_execution_context_text(text) {
+			execution_context_hits++
+		}
+	}
+	if execution_context_hits >= segment.entries.len / 2 + 1 {
+		return 'transient'
+	}
+	if root_cause_hits > 0 || (artifact_hits > 0 && constraint_hits > 0) {
+		return 'durable'
+	}
+	if artifact_hits > 0 && workflow_hits == 0 && update_hits == 0 {
+		return 'durable'
+	}
+	if workflow_hits > 0 || update_hits > 0 {
+		return 'situational'
+	}
+	return 'situational'
+}
+
+fn memory_segment_text(entry SessionEntry) string {
+	text := entry.text.trim_space()
+	if text.len <= 800 {
+		return text
+	}
+	return text[..800]
+}
+
+fn memory_topic_hint_overlap(left string, right string) bool {
+	left_hints := memory_topic_hints(left)
+	if left_hints.len == 0 {
+		return false
+	}
+	right_hints := memory_topic_hints(right)
+	for hint in left_hints {
+		if hint in right_hints {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_topic_hints(text string) []string {
+	mut hints := []string{}
+	mut seen := map[string]bool{}
+	for raw in text.replace('`', ' ').replace('\n', ' ').replace('\t', ' ').replace('(', ' ').replace(')',
+		' ').replace('[', ' ').replace(']', ' ').replace('{', ' ').replace('}', ' ').replace(',',
+		' ').replace('，', ' ').replace('。', ' ').replace(':', ' ').replace('：', ' ').replace(';',
+		' ').replace('；', ' ').replace('"', ' ').replace("'", ' ').split(' ') {
+		token := raw.trim_space().to_lower()
+		if token.len < 4 {
+			continue
+		}
+		if !token.bytes().all(it.is_letter() || it.is_digit() || it == `_` || it == `-` || it == `/`
+			|| it == `.`) {
+			continue
+		}
+		if token !in seen {
+			seen[token] = true
+			hints << token
+		}
+	}
+	return hints
+}
+
+fn memory_seed_row_score(row storage.TypedSchemaRow) int {
+	entry := decode_session_entry(row) or { return -1000 }
+	return memory_seed_entry_score(entry)
+}
+
+fn memory_seed_entry_score(entry SessionEntry) int {
+	mut score := 0
+	text := entry.text.trim_space()
+	if text.len == 0 {
+		return -1000
+	}
+	if likely_skip_memory_markdown_content(text) {
+		return -900
+	}
+	if entry.kind in [.tool_call, .tool_result, .meta] {
+		return -800
+	}
+	match entry.role {
+		'assistant' { score += 24 }
+		'user' { score += 4 }
+		else { score += 8 }
+	}
+
+	match entry.kind {
+		.reasoning { score += 14 }
+		.message { score += 10 }
+		else {}
+	}
+
+	content_len := text.len
+	if content_len >= 40 {
+		score += 10
+	}
+	if content_len >= 120 {
+		score += 10
+	}
+	if content_len > 1200 {
+		score -= 6
+	}
+	if content_len < 12 {
+		score -= 18
+	} else if content_len < 24 {
+		score -= 8
+	}
+	if entry.role == 'user' && content_len < 24 {
+		score -= 20
+	}
+	if reflection_like_instruction(text) {
+		score -= 18
+	}
+	if reflection_like_result(text) {
+		score += 18
+	}
+	if reflection_like_constraint_text(text) {
+		score += 12
+	}
+	if reflection_like_artifact_text(text) {
+		score += 12
+	}
+	if reflection_like_process_status_text(text) {
+		score -= 22
+	}
+	if reflection_like_execution_context_text(text) {
+		score -= 36
+	}
+	if text.contains('```') || text.contains('diff --git') {
+		score -= 10
+	}
+	if text.count('\n') >= 3 {
+		score += 6
+	}
+	return score
+}
+
+fn reflection_like_instruction(text string) bool {
+	lower := text.to_lower()
+	return lower.starts_with('提交') || lower.starts_with('修复') || lower.starts_with('增加')
+		|| lower.starts_with('更新') || lower.starts_with('实现') || lower.starts_with('帮我')
+		|| lower.starts_with('请') || lower.starts_with('继续') || lower.starts_with('先')
+		|| lower.starts_with('把') || lower.ends_with('吧')
+}
+
+fn reflection_like_result(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('已经') || lower.contains('改成') || lower.contains('改为')
+		|| lower.contains('修复了') || lower.contains('支持') || lower.contains('通过')
+		|| lower.contains('现在') || lower.contains('不再') || lower.contains('同步到')
+		|| lower.contains('增加了') || lower.contains('更新了')
+}
+
+fn reflection_like_constraint_text(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('不要') || lower.contains('不能') || lower.contains('不把')
+		|| lower.contains('不得') || lower.contains('必须') || lower.contains('不需要')
+}
+
+fn reflection_like_artifact_text(text string) bool {
+	return text.contains('`') || text.contains('@VMODROOT') || text.contains('::')
+		|| text.contains('/') || text.contains('.v') || text.contains('.js') || text.contains('.ts')
+		|| text.contains('.json') || text.contains('.md') || text.contains('_ROOT')
+		|| text.contains('_PATH') || text.contains('VJSX_')
+}
+
+fn reflection_like_process_status_text(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('验证通过') || lower.contains('测试已经启动')
+		|| lower.contains('继续整理提交') || lower.contains('开始分支')
+		|| lower.contains('推到远端') || lower.contains('提交并推')
+		|| lower.contains('等待目标用例') || lower.contains('当前在 main')
+		|| lower.contains('尚未推送的提交')
+}
+
+fn reflection_like_execution_update_text(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('我会先') || lower.contains('我准备') || lower.contains('我先')
+		|| lower.contains('接下来我会') || lower.contains('随后会')
+		|| lower.contains('现在把') || lower.contains('我在等')
+		|| lower.contains('我要开始') || lower.contains('准备直接')
+		|| lower.contains('先把')
+}
+
+fn reflection_like_root_cause_text(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('原因') || lower.contains('触发点')
+		|| lower.contains('解释为什么') || lower.contains('说明这台机器')
+		|| lower.contains('为什么你的') || lower.contains('定位到')
+}
+
+fn reflection_like_execution_context_text(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('受限沙箱') || lower.contains('提权') || lower.contains('sandbox')
+		|| lower.contains('git push 这一步需要提权') || lower.contains('申请权限')
+		|| lower.contains('访问远端') || lower.contains('当前分支状态')
+		|| lower.contains('当前在 main') || lower.contains('尚未推送的提交')
+		|| lower.contains('git push') || lower.contains('push 到远端')
+}
+
+struct AgentViewNoopReflectionGenerator {}
+
+fn (mut generator AgentViewNoopReflectionGenerator) generate(prompt string) !string {
+	return prompt
 }
 
 pub fn (store PollyDbStore) ensure_search_schema() !bool {
@@ -128,7 +2272,8 @@ pub fn (store PollyDbStore) ensure_search_indexes() !bool {
 }
 
 pub fn (store PollyDbStore) ensure_search_indexes_with_progress(reporter SearchIndexProgressReporter) !SearchIndexStats {
-	return store.ensure_search_indexes_with_progress_and_config(reporter, storage.ChunkConfig.default())
+	return store.ensure_search_indexes_with_progress_and_config(reporter,
+		storage.ChunkConfig.default())
 }
 
 pub fn (store PollyDbStore) ensure_search_indexes_with_progress_and_config(reporter SearchIndexProgressReporter, cfg storage.ChunkConfig) !SearchIndexStats {
@@ -220,8 +2365,8 @@ pub fn (store PollyDbStore) ensure_search_indexes_with_progress_and_config(repor
 		})
 	}
 	if target_entry_ids.len > 0 || stale_entry_search_ids.len > 0 {
-		write_entry_search_states(mut db, entry_ingest_states, target_entry_ids, stale_entry_search_ids,
-			effective_cfg)!
+		write_entry_search_states(mut db, entry_ingest_states, target_entry_ids,
+			stale_entry_search_ids, effective_cfg)!
 	}
 	if changed || force_rebuild || backfill.rows_backfilled > 0 || target_entry_ids.len > 0
 		|| stale_entry_search_ids.len > 0 {
@@ -278,8 +2423,8 @@ pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root strin
 }
 
 pub fn (store PollyDbStore) sync_codex_with_options_and_progress_and_config(codex_root string, options SyncOptions, reporter SyncProgressReporter, cfg storage.ChunkConfig) !SyncStats {
-	return store.sync_codex_single_pass_with_options_and_progress_and_config(codex_root,
-		options, reporter, cfg)
+	return store.sync_codex_single_pass_with_options_and_progress_and_config(codex_root, options,
+		reporter, cfg)
 }
 
 fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_config(codex_root string, options SyncOptions, reporter SyncProgressReporter, cfg storage.ChunkConfig) !SyncStats {
@@ -379,8 +2524,7 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 	if seeded {
 		if use_split_group_commit {
 			split_session = db.begin_split_group_commit_session(storage.SessionOptions.for_branch(store_branch),
-				storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512),
-				cfg)!
+				storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512), cfg)!
 		} else {
 			session = db.begin_group_commit_session(storage.SessionOptions.for_branch(store_branch),
 				storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
@@ -502,8 +2646,7 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 		if !active_group_commit {
 			if use_split_group_commit {
 				split_session = db.begin_split_group_commit_session(storage.SessionOptions.for_branch(store_branch),
-					storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512),
-					cfg)!
+					storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512), cfg)!
 			} else {
 				session = db.begin_group_commit_session(storage.SessionOptions.for_branch(store_branch),
 					storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
@@ -522,8 +2665,7 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 			read_ms:            read_ms
 		})
 		mut build_sw := time.new_stopwatch()
-		existing_entry_states := load_existing_entry_ingest_states_by_session(mut db,
-			summary.id) or {
+		existing_entry_states := load_existing_entry_ingest_states_by_session(mut db, summary.id) or {
 			map[string]EntryIngestState{}
 		}
 		mut session_rows := map[string]storage.TypedRowData{}
@@ -532,7 +2674,10 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 		mut entry_state_rows := map[string]storage.TypedRowData{}
 		mut seen_entry_ids := map[string]bool{}
 		for entry in transcript.entries {
-			entry_id, row := build_session_entry_row(transcript.summary, entry, empty_markdown)
+			entry_markdown := build_session_entry_markdown(mut db, entry, empty_markdown) or {
+				empty_markdown
+			}
+			entry_id, row := build_session_entry_row(transcript.summary, entry, entry_markdown)
 			entry_hash := fingerprint_session_entry_row(row)
 			seen_entry_ids[entry_id] = true
 			existing_entry_state := existing_entry_states[entry_id] or { EntryIngestState{} }
@@ -594,28 +2739,29 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 		mut flush_ms := i64(0)
 		if use_split_group_commit {
 			if stale_entry_ids.len > 0 {
-				delete_result := split_session.delete_rows(mut db, 'entries', stale_entry_ids,
-					cfg, sync_meta('delete stale entries ${summary.id}'))!
+				delete_result := split_session.delete_rows(mut db, 'entries', stale_entry_ids, cfg,
+					sync_meta('delete stale entries ${summary.id}'))!
 				tx_ms += delete_result.group_commit.transaction_ms
 				commit_ms += delete_result.group_commit.commit_ms
 				checkpoint_ms += delete_result.group_commit.checkpoint_ms
 				flush_ms += delete_result.group_commit.flush_ms
-				entry_state_delete_result := split_session.delete_rows(mut db, 'entry_ingest_state',
-					stale_entry_ids, cfg, sync_meta('delete stale entry ingest state ${summary.id}'))!
+				entry_state_delete_result := split_session.delete_rows(mut db,
+					'entry_ingest_state', stale_entry_ids, cfg,
+					sync_meta('delete stale entry ingest state ${summary.id}'))!
 				tx_ms += entry_state_delete_result.group_commit.transaction_ms
 				commit_ms += entry_state_delete_result.group_commit.commit_ms
 				checkpoint_ms += entry_state_delete_result.group_commit.checkpoint_ms
 				flush_ms += entry_state_delete_result.group_commit.flush_ms
 			}
-			session_result := split_session.put_rows(mut db, 'sessions', session_rows,
-				cfg, sync_meta('sync session ${summary.id}'))!
+			session_result := split_session.put_rows(mut db, 'sessions', session_rows, cfg,
+				sync_meta('sync session ${summary.id}'))!
 			tx_ms += session_result.group_commit.transaction_ms
 			commit_ms += session_result.group_commit.commit_ms
 			checkpoint_ms += session_result.group_commit.checkpoint_ms
 			flush_ms += session_result.group_commit.flush_ms
 			if entry_rows.len > 0 {
-				entry_result := split_session.put_rows(mut db, 'entries', entry_rows,
-					cfg, sync_meta('sync entries ${summary.id}'))!
+				entry_result := split_session.put_rows(mut db, 'entries', entry_rows, cfg,
+					sync_meta('sync entries ${summary.id}'))!
 				tx_ms += entry_result.group_commit.transaction_ms
 				commit_ms += entry_result.group_commit.commit_ms
 				checkpoint_ms += entry_result.group_commit.checkpoint_ms
@@ -631,8 +2777,8 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 			}
 		} else {
 			if stale_entry_ids.len > 0 {
-				delete_result := session.delete_rows(mut db, 'entries', stale_entry_ids,
-					cfg, sync_meta('delete stale entries ${summary.id}'))!
+				delete_result := session.delete_rows(mut db, 'entries', stale_entry_ids, cfg,
+					sync_meta('delete stale entries ${summary.id}'))!
 				tx_ms += delete_result.group_commit.transaction_ms
 				aggregate_ms += delete_result.timings.aggregate_ms
 				fast_update_ms += delete_result.timings.fast_update_ms
@@ -672,7 +2818,8 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 				checkpoint_ms += delete_result.group_commit.checkpoint_ms
 				flush_ms += delete_result.group_commit.flush_ms
 				entry_state_delete_result := session.delete_rows(mut db, 'entry_ingest_state',
-					stale_entry_ids, cfg, sync_meta('delete stale entry ingest state ${summary.id}'))!
+					stale_entry_ids, cfg,
+					sync_meta('delete stale entry ingest state ${summary.id}'))!
 				tx_ms += entry_state_delete_result.group_commit.transaction_ms
 				aggregate_ms += entry_state_delete_result.timings.aggregate_ms
 				fast_update_ms += entry_state_delete_result.timings.fast_update_ms
@@ -753,7 +2900,8 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 			checkpoint_ms += session_result.group_commit.checkpoint_ms
 			flush_ms += session_result.group_commit.flush_ms
 			if entry_rows.len > 0 {
-				entry_result := session.put_rows(mut db, 'entries', entry_rows, cfg, sync_meta('sync entries ${summary.id}'))!
+				entry_result := session.put_rows(mut db, 'entries', entry_rows, cfg,
+					sync_meta('sync entries ${summary.id}'))!
 				tx_ms += entry_result.group_commit.transaction_ms
 				aggregate_ms += entry_result.timings.aggregate_ms
 				fast_update_ms += entry_result.timings.fast_update_ms
@@ -794,8 +2942,8 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 				flush_ms += entry_result.group_commit.flush_ms
 			}
 			if entry_state_rows.len > 0 {
-				entry_state_result := session.put_rows(mut db, 'entry_ingest_state', entry_state_rows,
-					cfg, sync_meta('sync entry ingest state ${summary.id}'))!
+				entry_state_result := session.put_rows(mut db, 'entry_ingest_state',
+					entry_state_rows, cfg, sync_meta('sync entry ingest state ${summary.id}'))!
 				tx_ms += entry_state_result.group_commit.transaction_ms
 				aggregate_ms += entry_state_result.timings.aggregate_ms
 				fast_update_ms += entry_state_result.timings.fast_update_ms
@@ -1114,12 +3262,14 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 fn flush_sync_batch(mut db storage.PersistentDatabase, mut session storage.GroupCommitSession, mut split_session storage.SplitGroupCommitSession, use_split_group_commit bool, ingest_rows map[string]storage.TypedRowData, cfg storage.ChunkConfig) ! {
 	if use_split_group_commit {
 		if ingest_rows.len > 0 {
-			_ = split_session.put_rows(mut db, 'ingest_state', ingest_rows, cfg, sync_meta('sync ingest state'))!
+			_ = split_session.put_rows(mut db, 'ingest_state', ingest_rows, cfg,
+				sync_meta('sync ingest state'))!
 		}
 		split_session.finish(mut db)!
 	} else {
 		if ingest_rows.len > 0 {
-			_ = session.put_rows(mut db, 'ingest_state', ingest_rows, cfg, sync_meta('sync ingest state'))!
+			_ = session.put_rows(mut db, 'ingest_state', ingest_rows, cfg,
+				sync_meta('sync ingest state'))!
 		}
 		session.finish(mut db)!
 	}
@@ -1143,8 +3293,8 @@ pub fn (store PollyDbStore) list_sessions_page(request SessionListRequest) !Sess
 
 pub fn (mut store_session BrowserStoreSession) list_sessions_page_explained(request SessionListRequest) !SessionListExecution {
 	mut total_sw := time.new_stopwatch()
-	return list_sessions_page_in_session(mut store_session.db, store_session.session,
-		request, storage.PersistentDatabaseOpenTimings{}, 0, mut total_sw)
+	return list_sessions_page_in_session(mut store_session.db, store_session.session, request, storage.PersistentDatabaseOpenTimings{},
+		0, mut total_sw)
 }
 
 pub fn (store PollyDbStore) list_sessions_page_explained(request SessionListRequest) !SessionListExecution {
@@ -1157,15 +3307,15 @@ pub fn (store PollyDbStore) list_sessions_page_explained(request SessionListRequ
 	mut session_sw := time.new_stopwatch()
 	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
 	session_ms := session_sw.elapsed().milliseconds()
-	return list_sessions_page_in_session(mut db, session, request, open_result.timings,
-		session_ms, mut total_sw)!
+	return list_sessions_page_in_session(mut db, session, request, open_result.timings, session_ms, mut
+		total_sw)!
 }
 
 fn list_sessions_page_in_session(mut db storage.PersistentDatabase, session storage.DatabaseSession, request SessionListRequest, open_timings storage.PersistentDatabaseOpenTimings, session_ms i64, mut total_sw time.StopWatch) !SessionListExecution {
 	if request.query.len == 0 && request.cwd_prefix.len == 0 && request.source.len == 0
 		&& request.include_archived {
-		fetch_limit := max_int(request.offset + max_int(request.limit, 0), max_int(request.limit,
-			0))
+		fetch_limit := max_int(request.offset + max_int(request.limit, 0),
+			max_int(request.limit, 0))
 		mut query_db := queryapi.open_database(db.root_dir, session.branch_name)!
 		defer {
 			query_db.close() or {}
@@ -1287,6 +3437,93 @@ pub fn (store PollyDbStore) explain_browser_queries(session_request SessionListR
 	}
 }
 
+fn recent_entry_rows(mut db storage.PersistentDatabase, session storage.DatabaseSession, recent_sessions int) ![]storage.TypedSchemaRow {
+	mut session_rows := []storage.TypedSchemaRow{}
+	sessions_spec := session.table_spec('sessions') or { storage.TypedTableSpec{} }
+	if table_has_index(sessions_spec, 'updated_at_cover_idx') {
+		session_rows = session.lookup_index_between_reverse_projected(mut db, 'sessions',
+			'updated_at_cover_idx', session_list_min_updated_at, session_list_max_updated_at,
+			recent_sessions, ['id', 'updated_at']) or { []storage.TypedSchemaRow{} }
+	} else {
+		session_rows = session.scan_table(mut db, 'sessions', 0)!
+		session_rows.sort_with_compare(fn (a &storage.TypedSchemaRow, b &storage.TypedSchemaRow) int {
+			a_updated := agentview_optional_row_string(*a, 'updated_at')
+			b_updated := agentview_optional_row_string(*b, 'updated_at')
+			if a_updated > b_updated {
+				return -1
+			}
+			if a_updated < b_updated {
+				return 1
+			}
+			return 0
+		})
+		if session_rows.len > recent_sessions {
+			session_rows = session_rows[..recent_sessions].clone()
+		}
+	}
+	if session_rows.len == 0 {
+		return []storage.TypedSchemaRow{}
+	}
+	mut out := []storage.TypedSchemaRow{}
+	for session_row in session_rows {
+		session_id := agentview_required_row_string(session_row, 'id') or { continue }
+		rows := if table_has_index(session.table_spec('entries') or { storage.TypedTableSpec{} },
+			'entries_session_cover_idx')
+		{
+			session.lookup_index_projected(mut db, 'entries', 'entries_session_cover_idx',
+				session_id, 0, ['id', 'timestamp']) or { []storage.TypedSchemaRow{} }
+		} else if table_has_index(session.table_spec('entries') or { storage.TypedTableSpec{} },
+			'entries_session_idx')
+		{
+			session.lookup_index_projected(mut db, 'entries', 'entries_session_idx', session_id, 0, [
+				'id',
+				'timestamp',
+			]) or { []storage.TypedSchemaRow{} }
+		} else {
+			[]storage.TypedSchemaRow{}
+		}
+		for row in rows {
+			out << row
+		}
+	}
+	out.sort_with_compare(fn (a &storage.TypedSchemaRow, b &storage.TypedSchemaRow) int {
+		a_ts := agentview_optional_row_string(*a, 'timestamp')
+		b_ts := agentview_optional_row_string(*b, 'timestamp')
+		if a_ts > b_ts {
+			return -1
+		}
+		if a_ts < b_ts {
+			return 1
+		}
+		a_id := agentview_optional_row_string(*a, 'id')
+		b_id := agentview_optional_row_string(*b, 'id')
+		if a_id < b_id {
+			return -1
+		}
+		if a_id > b_id {
+			return 1
+		}
+		return 0
+	})
+	return out
+}
+
+fn agentview_required_row_string(row storage.TypedSchemaRow, field string) !string {
+	value := row.data.get(field) or { return error('missing required field: ${field}') }
+	match value {
+		string { return value }
+		else { return error('field ${field} is not a string') }
+	}
+}
+
+fn agentview_optional_row_string(row storage.TypedSchemaRow, field string) string {
+	value := row.data.get(field) or { return '' }
+	return match value {
+		string { value }
+		else { '' }
+	}
+}
+
 fn load_session_list_rows(mut db storage.PersistentDatabase, session storage.DatabaseSession) ![]storage.TypedSchemaRow {
 	spec := session.table_spec('sessions') or { storage.TypedTableSpec{} }
 	if table_has_index(spec, 'updated_at_cover_idx') {
@@ -1303,10 +3540,12 @@ fn load_session_list_rows(mut db storage.PersistentDatabase, session storage.Dat
 			string { left }
 			else { '' }
 		}
+
 		right_value := match right {
 			string { right }
 			else { '' }
 		}
+
 		if left_value > right_value {
 			return -1
 		}
@@ -1435,8 +3674,8 @@ pub fn (store PollyDbStore) load_transcript_page(request TranscriptRequest) !Tra
 
 pub fn (mut store_session BrowserStoreSession) load_transcript_page_explained(request TranscriptRequest) !TranscriptExecution {
 	mut total_sw := time.new_stopwatch()
-	return load_transcript_page_in_session(mut store_session.db, store_session.session,
-		request, storage.PersistentDatabaseOpenTimings{}, 0, mut total_sw)
+	return load_transcript_page_in_session(mut store_session.db, store_session.session, request, storage.PersistentDatabaseOpenTimings{},
+		0, mut total_sw)
 }
 
 pub fn (store PollyDbStore) load_transcript_page_explained(request TranscriptRequest) !TranscriptExecution {
@@ -1465,8 +3704,7 @@ fn load_transcript_page_in_session(mut db storage.PersistentDatabase, session st
 		session.lookup_index_projected(mut db, 'entries', 'entries_session_cover_idx',
 			request.session_id, 0, transcript_entry_select_columns)!
 	} else {
-		session.lookup_index(mut db, 'entries', 'entries_session_idx', request.session_id,
-			0)!
+		session.lookup_index(mut db, 'entries', 'entries_session_idx', request.session_id, 0)!
 	}
 	index_lookup_ms := index_sw.elapsed().milliseconds()
 	mut decode_sw := time.new_stopwatch()
@@ -1561,8 +3799,8 @@ pub fn (mut store_session BrowserStoreSession) search_entries_explained(request 
 			total_ms: total_sw.elapsed().milliseconds()
 		}
 	}
-	return search_entries_in_session(mut store_session.db, store_session.session, request,
-		query, terms, storage.PersistentDatabaseOpenTimings{}, 0, mut total_sw)
+	return search_entries_in_session(mut store_session.db, store_session.session, request, query,
+		terms, storage.PersistentDatabaseOpenTimings{}, 0, mut total_sw)
 }
 
 pub fn (store PollyDbStore) search_entries_explained(request SearchRequest) !SearchExecution {
@@ -1665,8 +3903,10 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 	mut session_summaries := map[string]SessionSummary{}
 	if candidate_session_ids.len > 0 {
 		mut session_summary_sw := time.new_stopwatch()
-		session_rows := session.get_rows_projected(mut db, 'sessions', candidate_session_ids.map(it.bytes()),
-			session_summary_select_columns) or { []storage.TypedSchemaRow{} }
+		session_rows := session.get_rows_projected(mut db, 'sessions',
+			candidate_session_ids.map(it.bytes()), session_summary_select_columns) or {
+			[]storage.TypedSchemaRow{}
+		}
 		session_summary_ms = session_summary_sw.elapsed().milliseconds()
 		for row in session_rows {
 			summary := decode_session_summary(row) or { continue }
@@ -1780,8 +4020,8 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 			offset:               request.offset
 		}
 		mut preferred_sw := time.new_stopwatch()
-		ranked = collect_session_local_search_hits(mut db, session, preferred_request,
-			query, terms)!
+		ranked =
+			collect_session_local_search_hits(mut db, session, preferred_request, query, terms)!
 		filter_rank_ms += preferred_sw.elapsed().milliseconds()
 		if ranked.len > 0 {
 			mut paginate_sw := time.new_stopwatch()
@@ -1819,8 +4059,7 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 	}
 	if request.session_id.len == 0 {
 		mut recent_sw := time.new_stopwatch()
-		ranked = collect_recent_session_body_search_hits(mut db, session, request, query,
-			terms)!
+		ranked = collect_recent_session_body_search_hits(mut db, session, request, query, terms)!
 		filter_rank_ms += recent_sw.elapsed().milliseconds()
 		if ranked.len > 0 {
 			mut paginate_sw := time.new_stopwatch()
@@ -1858,8 +4097,7 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 	}
 	if request.session_id.len == 0 {
 		mut metadata_sw := time.new_stopwatch()
-		ranked = collect_session_metadata_search_hits(mut db, session, request, query,
-			terms)!
+		ranked = collect_session_metadata_search_hits(mut db, session, request, query, terms)!
 		filter_rank_ms += metadata_sw.elapsed().milliseconds()
 		if ranked.len > 0 {
 			mut paginate_sw := time.new_stopwatch()
@@ -1967,8 +4205,7 @@ fn collect_session_local_search_hits(mut db storage.PersistentDatabase, session 
 			'content_text',
 		])!
 	} else {
-		session.lookup_index(mut db, 'entries', 'entries_session_idx', request.session_id,
-			0)!
+		session.lookup_index(mut db, 'entries', 'entries_session_idx', request.session_id, 0)!
 	}
 	mut ranked := []RankedSearchHit{}
 	for row in rows {
@@ -1998,7 +4235,8 @@ fn collect_session_metadata_search_hits(mut db storage.PersistentDatabase, sessi
 		if request.kind.len > 0 && request.kind != 'all' {
 			continue
 		}
-		haystack := '${summary.title}\n${summary.cwd}\n${summary.source}\n${summary.path}'.to_lower()
+		haystack :=
+			'${summary.title}\n${summary.cwd}\n${summary.source}\n${summary.path}'.to_lower()
 		mut matched := true
 		for term in terms {
 			if !haystack.contains(term) {
@@ -2044,8 +4282,7 @@ fn collect_recent_session_body_search_hits(mut db storage.PersistentDatabase, se
 			limit:      request.limit
 			offset:     0
 		}
-		hits := collect_session_local_search_hits(mut db, session, session_request, query,
-			terms)!
+		hits := collect_session_local_search_hits(mut db, session, session_request, query, terms)!
 		sessions_scanned++
 		entries_scanned += max_int(hits.len, 1)
 		ranked << hits
@@ -2225,6 +4462,30 @@ fn entries_spec(include_search_indexes bool) !storage.TypedTableSpec {
 	return storage.TypedTableSpec.new(table, indexes)!
 }
 
+fn entries_memory_spec(include_search_indexes bool) !storage.TypedTableSpec {
+	base := entries_spec(include_search_indexes)!
+	mut indexes := base.indexes.clone()
+	indexes << storage.SchemaIndexDef.embedding_markdown('entries_content_block_vec_idx',
+		'content_md', memory.MarkdownEmbeddingScope.block, 'bge-small-zh-v1.5')!
+	indexes << storage.SchemaIndexDef.embedding_markdown(agentview_memory_path_index, 'content_md',
+		memory.MarkdownEmbeddingScope.path, 'bge-small-zh-v1.5')!
+	return storage.TypedTableSpec.new(base.table, indexes)
+}
+
+fn ensure_agentview_memory_capability(mut db storage.PersistentDatabase) !bool {
+	for capability in db.memory_capabilities_for_table(agentview_memory_capability_table) {
+		if capability.column_name == agentview_memory_capability_column {
+			return false
+		}
+	}
+	db.register_memory_capability(storage.MemoryCapabilityDef.reflective_field(agentview_memory_capability_table,
+		agentview_memory_capability_column, storage.ReflectionOptions{
+		embedding_index: agentview_memory_path_index
+		reflection_kind: 'summary'
+	})!)!
+	return true
+}
+
 fn put_session_summary(mut db storage.PersistentDatabase, mut session storage.GroupCommitSession, summary SessionSummary) ! {
 	row := build_session_row(summary)
 	_ = session.put_row(mut db, 'sessions', summary.id.bytes(), row, storage.ChunkConfig.default(),
@@ -2232,9 +4493,18 @@ fn put_session_summary(mut db storage.PersistentDatabase, mut session storage.Gr
 }
 
 fn put_session_entry(mut db storage.PersistentDatabase, mut session storage.GroupCommitSession, summary SessionSummary, entry SessionEntry, empty_markdown storage.MarkdownRef) ! {
-	entry_id, row := build_session_entry_row(summary, entry, empty_markdown)
+	entry_markdown := build_session_entry_markdown(mut db, entry, empty_markdown)!
+	entry_id, row := build_session_entry_row(summary, entry, entry_markdown)
 	_ = session.put_row(mut db, 'entries', entry_id.bytes(), row, storage.ChunkConfig.default(),
 		sync_meta('sync entry ${entry_id}'))!
+}
+
+fn build_session_entry_markdown(mut db storage.PersistentDatabase, entry SessionEntry, empty_markdown storage.MarkdownRef) !storage.MarkdownRef {
+	content_text := if entry.text.len > 0 { entry.text } else { entry.tool_name }
+	if should_skip_markdown_index(entry, content_text) {
+		return empty_markdown
+	}
+	return ingest_markdown_for_store(mut db, content_text)!
 }
 
 fn build_session_entry_row(summary SessionSummary, entry SessionEntry, empty_markdown storage.MarkdownRef) (string, storage.TypedRowData) {
@@ -2282,7 +4552,28 @@ fn should_skip_markdown_index(entry SessionEntry, content_text string) bool {
 	if entry.kind in [.tool_call, .tool_result, .meta] {
 		return true
 	}
-	return content_text.len > 32768
+	if content_text.len > 32768 {
+		return true
+	}
+	return likely_skip_memory_markdown_content(content_text)
+}
+
+fn likely_skip_memory_markdown_content(content_text string) bool {
+	trimmed := content_text.trim_space()
+	if trimmed.len == 0 {
+		return true
+	}
+	if trimmed.starts_with('<environment_context>') || trimmed.contains('<cwd>')
+		|| trimmed.contains('<shell>') || trimmed.contains('<timezone>')
+		|| trimmed.contains('<current_date>') {
+		return true
+	}
+	if trimmed.starts_with('<turn_aborted>') || trimmed.contains('::git-stage{')
+		|| trimmed.contains('::git-commit{') || trimmed.contains('::git-push{')
+		|| trimmed.contains('::git-create-branch{') || trimmed.contains('::git-create-pr{') {
+		return true
+	}
+	return false
 }
 
 struct SearchBackfillResult {
@@ -2291,8 +4582,8 @@ struct SearchBackfillResult {
 }
 
 fn backfill_search_markdown_for_entries(mut db storage.PersistentDatabase, entry_ids []string) !SearchBackfillResult {
-	return backfill_search_markdown_for_entries_with_config(mut db, entry_ids, storage.ChunkConfig.default(),
-		false)
+	return backfill_search_markdown_for_entries_with_config(mut db, entry_ids,
+		storage.ChunkConfig.default(), false)
 }
 
 fn backfill_search_markdown_for_entries_with_config(mut db storage.PersistentDatabase, entry_ids []string, cfg storage.ChunkConfig, force_reingest bool) !SearchBackfillResult {
@@ -2316,6 +4607,7 @@ fn backfill_search_markdown_for_entries_with_config(mut db storage.PersistentDat
 	mut updated := 0
 	mut scanned := 0
 	for entry_id in entry_ids {
+		memory_distill_progress('markdown backfill row ${scanned + 1}/${entry_ids.len} key=${entry_id}')
 		row := reader.get_row(mut db, 'entries', entry_id.bytes()) or { continue }
 		scanned++
 		entry := decode_session_entry(row) or { continue }
@@ -2327,23 +4619,28 @@ fn backfill_search_markdown_for_entries_with_config(mut db storage.PersistentDat
 			continue
 		}
 		next_ref := ingest_markdown_for_store(mut db, entry.text) or { continue }
-		mut next_row := row.data.clone()
+		memory_distill_progress('markdown ingested key=${entry_id} bytes=${next_ref.source_len}')
+		mut next_row := row.data
 		next_row.set('content_md', next_ref)
 		if use_split_group_commit {
 			_ = split_session.put_row(mut db, 'entries', row.primary_key, next_row, cfg,
 				sync_meta('backfill markdown ${row.primary_key.bytestr()}'))!
 		} else {
-			_ = session.put_row(mut db, 'entries', row.primary_key, next_row, storage.ChunkConfig.default(),
+			_ = session.put_row(mut db, 'entries', row.primary_key, next_row,
+				storage.ChunkConfig.default(),
 				sync_meta('backfill markdown ${row.primary_key.bytestr()}'))!
 		}
+		memory_distill_progress('markdown queued key=${entry_id}')
 		updated++
 	}
 	if updated > 0 {
+		memory_distill_progress('markdown backfill finish updated=${updated}')
 		if use_split_group_commit {
 			split_session.finish(mut db)!
 		} else {
 			session.finish(mut db)!
 		}
+		memory_distill_progress('markdown backfill committed updated=${updated}')
 	}
 	return SearchBackfillResult{
 		rows_scanned:    scanned
@@ -2602,8 +4899,9 @@ fn write_sync_resume_state(mut db storage.PersistentDatabase, state SyncResumeSt
 	}
 	mut session := db.begin_group_commit_session(storage.SessionOptions.for_branch(store_branch),
 		storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
-	_ = session.put_row(mut db, 'sync_resume_state', state.name.bytes(), build_sync_resume_state_row(state),
-		storage.ChunkConfig.default(), sync_meta('sync resume state ${state.name}'))!
+	_ = session.put_row(mut db, 'sync_resume_state', state.name.bytes(),
+		build_sync_resume_state_row(state), storage.ChunkConfig.default(),
+		sync_meta('sync resume state ${state.name}'))!
 	session.finish(mut db)!
 }
 
@@ -2613,8 +4911,8 @@ fn clear_sync_resume_state(mut db storage.PersistentDatabase, name string) ! {
 	}
 	mut session := db.begin_group_commit_session(storage.SessionOptions.for_branch(store_branch),
 		storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
-	_ = session.delete_row(mut db, 'sync_resume_state', name.bytes(), storage.ChunkConfig.default(),
-		sync_meta('clear resume state ${name}'))!
+	_ = session.delete_row(mut db, 'sync_resume_state', name.bytes(),
+		storage.ChunkConfig.default(), sync_meta('clear resume state ${name}'))!
 	session.finish(mut db)!
 }
 
@@ -2746,8 +5044,8 @@ fn write_entry_search_states(mut db storage.PersistentDatabase, ingest_states ma
 			_ = split_session.delete_rows(mut db, 'entry_search_state', delete_keys, cfg,
 				sync_meta('delete stale entry search state'))!
 		} else {
-			_ = session.delete_rows(mut db, 'entry_search_state', delete_keys, storage.ChunkConfig.default(),
-				sync_meta('delete stale entry search state'))!
+			_ = session.delete_rows(mut db, 'entry_search_state', delete_keys,
+				storage.ChunkConfig.default(), sync_meta('delete stale entry search state'))!
 		}
 	}
 	if entry_ids.len > 0 {
@@ -2762,10 +5060,11 @@ fn write_entry_search_states(mut db storage.PersistentDatabase, ingest_states ma
 		}
 		if rows.len > 0 {
 			if use_split_group_commit {
-				_ = split_session.put_rows(mut db, 'entry_search_state', rows, cfg, sync_meta('sync entry search state'))!
-			} else {
-				_ = session.put_rows(mut db, 'entry_search_state', rows, storage.ChunkConfig.default(),
+				_ = split_session.put_rows(mut db, 'entry_search_state', rows, cfg,
 					sync_meta('sync entry search state'))!
+			} else {
+				_ = session.put_rows(mut db, 'entry_search_state', rows,
+					storage.ChunkConfig.default(), sync_meta('sync entry search state'))!
 			}
 		}
 	}
@@ -2791,10 +5090,10 @@ fn delete_entries_for_sessions(mut db storage.PersistentDatabase, mut session st
 	}
 	reader := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
 	for session_id in session_ids {
-		rows := reader.lookup_index(mut db, 'entries', 'entries_session_idx', session_id,
-			0)!
+		rows := reader.lookup_index(mut db, 'entries', 'entries_session_idx', session_id, 0)!
 		for row in rows {
-			_ = session.delete_row(mut db, 'entries', row.primary_key, storage.ChunkConfig.default(),
+			_ = session.delete_row(mut db, 'entries', row.primary_key,
+				storage.ChunkConfig.default(),
 				sync_meta('delete stale entry ${row.primary_key.bytestr()}'))!
 		}
 	}
@@ -2812,8 +5111,7 @@ fn existing_entry_primary_keys(mut db storage.PersistentDatabase, session_id str
 		return [][]u8{}
 	}
 	reader := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
-	rows := reader.lookup_index(mut db, 'entries', 'entries_session_idx', session_id,
-		0)!
+	rows := reader.lookup_index(mut db, 'entries', 'entries_session_idx', session_id, 0)!
 	mut out := [][]u8{cap: rows.len}
 	for row in rows {
 		out << row.primary_key.clone()
@@ -3217,6 +5515,7 @@ fn score_search_entry(query string, terms []string, entry SessionEntry, summary 
 		.tool_result { 4 }
 		.meta { 2 }
 	}
+
 	return score
 }
 
@@ -3260,6 +5559,7 @@ fn score_search_row_fts(query string, terms []string, row storage.TypedSchemaRow
 		.tool_result { 4 }
 		.meta { 2 }
 	}
+
 	if fts_score < 0 {
 		score += int((-fts_score) * 1000.0)
 	}
@@ -3306,6 +5606,7 @@ fn score_search_query_row_fts(query string, terms []string, row queryapi.QueryRo
 		.tool_result { 4 }
 		.meta { 2 }
 	}
+
 	if fts_score < 0 {
 		score += int((-fts_score) * 1000.0)
 	}

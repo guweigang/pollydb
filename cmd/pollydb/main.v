@@ -1,7 +1,9 @@
 module main
 
+import agentview
 import os
 import memory
+import memorydb
 import pollylink
 import query as queryapi
 import storage
@@ -81,6 +83,49 @@ fn cli_looks_like_url(raw string) bool {
 
 fn cli_sidecar_auth_token() string {
 	return os.getenv('POLLYHUB_TOKEN')
+}
+
+fn cli_memory_embedding_model_path() !string {
+	model_path := os.getenv('POLLYDB_MEMORY_EMBEDDING_MODEL').trim_space()
+	if model_path.len == 0 {
+		return error('missing embedding model path; set POLLYDB_MEMORY_EMBEDDING_MODEL')
+	}
+	return model_path
+}
+
+fn cli_memory_generation_model_path() !string {
+	model_path := os.getenv('POLLYDB_MEMORY_GENERATION_MODEL').trim_space()
+	if model_path.len == 0 {
+		return error('missing generation model path; set POLLYDB_MEMORY_GENERATION_MODEL')
+	}
+	return model_path
+}
+
+fn cli_memory_use_heuristic_distill() bool {
+	return os.getenv('POLLYDB_MEMORY_FAST_DISTILL').trim_space() in ['1', 'true', 'yes']
+}
+
+fn cli_memory_preview_only() bool {
+	return os.getenv('POLLYDB_MEMORY_PREVIEW').trim_space() in ['1', 'true', 'yes']
+}
+
+fn cli_memory_preview_reason_counts(counts map[string]int) string {
+	if counts.len == 0 {
+		return ''
+	}
+	mut parts := []string{}
+	for reason, count in counts {
+		parts << '${reason}:${count}'
+	}
+	parts.sort()
+	return parts.join(', ')
+}
+
+fn cli_memory_preview_join(items []string) string {
+	if items.len == 0 {
+		return ''
+	}
+	return items.join(', ')
 }
 
 fn cli_open_repository(root_dir string) !storage.Repository {
@@ -521,6 +566,8 @@ fn (cli PollyDbCli) usage() string {
   pollydb prefix-index-projected [root_dir] [branch] <table_name> <index_name> <prefix> <columns_csv> [limit]
   pollydb query-fts-preview [root_dir] [branch] <table_name> <column_name> <scope> <kind> <terms_csv> [select_columns_csv] [limit]
   pollydb query-fts [root_dir] [branch] <table_name> <column_name> <scope> <kind> <terms_csv> [select_columns_csv] [limit]
+  pollydb distill-agentview-memory [root_dir] [branch] [max_jobs] [neighbor_limit] [min_evidence] [recent_sessions] [candidate_limit] [candidate_offset]
+  pollydb extract-agentview-memory [root_dir] [branch] <query_text> [seed_limit] [neighbor_limit] [reflection_limit]
 
 Repository:
   init     Initialize a pollydb repository if needed and print its status.
@@ -594,6 +641,8 @@ Data and Aggregates:
   prefix-index-projected  Scan rows for a covering string/bytes index prefix and decode only selected columns.
   query-fts-preview  Print planner preview for one lightweight Markdown FTS query.
   query-fts  Execute one lightweight Markdown FTS query and print ranked rows plus hit explanations.
+  distill-agentview-memory  Distill AgentView `entries.content_md` into replayable memory reflections using local llama.cpp models.
+  extract-agentview-memory  Query distilled AgentView memory, linked evidence, and source hits.
 
 Defaults:
   root_dir defaults to the current working directory.
@@ -652,6 +701,10 @@ Aggregate projection refresh policy:
 
 Environment:
   POLLYHUB_TOKEN  Bearer token automatically used for sidecar-* and sync-*-sidecar commands.
+  POLLYDB_MEMORY_EMBEDDING_MODEL  Local embedding GGUF used by distill/extract AgentView memory commands.
+  POLLYDB_MEMORY_GENERATION_MODEL  Local generation GGUF used by distill-agentview-memory.
+  POLLYDB_MEMORY_FAST_DISTILL  Set to 1 to use heuristic reflection text generation instead of llama.cpp generation.
+  POLLYDB_MEMORY_PREVIEW  Set to 1 to preview AgentView memory cards without persisting reflections.
 '
 }
 
@@ -855,6 +908,12 @@ fn (mut cli PollyDbCli) run() ! {
 	}
 	if command == 'query-fts' {
 		return cli.run_query_fts()
+	}
+	if command == 'distill-agentview-memory' {
+		return cli.run_distill_agentview_memory()
+	}
+	if command == 'extract-agentview-memory' {
+		return cli.run_extract_agentview_memory()
 	}
 	if command in ['help', '--help', '-h'] {
 		println(cli.usage())
@@ -1163,8 +1222,7 @@ fn cli_render_sidecar_branch_log(repo_name string, branch_name string, entries [
 		]
 	}
 	lines << ''
-	lines << cli_render_table(['commit', 'root', 'parents', 'author', 'message', 'timestamp'],
-		rows)
+	lines << cli_render_table(['commit', 'root', 'parents', 'author', 'message', 'timestamp'], rows)
 	return lines.join('\n')
 }
 
@@ -1239,8 +1297,7 @@ fn cli_render_sidecar_audit(entries []pollylink.AuditEntry) string {
 	}
 	mut lines := []string{}
 	lines << cli_title('Sidecar Audit Log')
-	lines << cli_render_table(['timestamp', 'actor', 'action', 'repo', 'branch', 'result', 'detail'],
-		rows)
+	lines << cli_render_table(['timestamp', 'actor', 'action', 'repo', 'branch', 'result', 'detail'], rows)
 	return lines.join('\n')
 }
 
@@ -1268,8 +1325,7 @@ fn cli_render_sidecar_branch_statuses(repo_name string, statuses []pollylink.Bra
 	mut lines := []string{}
 	lines << cli_title('Sidecar Branch Statuses')
 	lines << cli_render_table(['repo', 'branch', 'head_commit', 'merge', 'scope', 'push',
-		'auto_merge', 'sync_policy', 'protection', 'projectors', 'stale_projectors', 'timestamp'],
-		rows)
+		'auto_merge', 'sync_policy', 'protection', 'projectors', 'stale_projectors', 'timestamp'], rows)
 	return lines.join('\n')
 }
 
@@ -1777,6 +1833,7 @@ fn parse_index_defs(spec string) ![]storage.SchemaIndexDef {
 							'path' { memory.MarkdownEmbeddingScope.path }
 							else { return error('embedding scope must be block or path: ${part}') }
 						}
+
 						indexes << storage.SchemaIndexDef.embedding_markdown(name, target_parts[0],
 							scope, embed_parts[1])!
 						continue
@@ -1804,6 +1861,7 @@ fn parse_index_defs(spec string) ![]storage.SchemaIndexDef {
 				.string_, .i64_ {}
 				else { return error('markdown selector index type must be string or i64: ${part}') }
 			}
+
 			indexes << storage.SchemaIndexDef.field_selector(name, target_parts[0], 'markdown',
 				target_parts[1], value_type, stores_row)!
 			continue
@@ -1972,6 +2030,7 @@ fn parse_json_scalar_value(type_name string, raw string) !storage.ColumnValue {
 		}
 		else {}
 	}
+
 	return parse_typed_value(column, raw)
 }
 
@@ -2255,8 +2314,8 @@ fn (mut cli PollyDbCli) run_sync_push() ! {
 		sync_policy_label(effective_policy)
 	}
 	println(cli_render_sync_result('Sync Push', 'push', ctx.root_dir, ctx.branch, peer.root_dir,
-		peer.branch, policy_label, execution.exchange.packets.len, sync_packet_bytes(execution.exchange.packets),
-		branch.name, branch.commit_cid, 'applied'))
+		peer.branch, policy_label, execution.exchange.packets.len,
+		sync_packet_bytes(execution.exchange.packets), branch.name, branch.commit_cid, 'applied'))
 }
 
 fn (mut cli PollyDbCli) run_sync_pull() ! {
@@ -2290,8 +2349,8 @@ fn (mut cli PollyDbCli) run_sync_pull() ! {
 		sync_policy_label(effective_policy)
 	}
 	println(cli_render_sync_result('Sync Pull', 'pull', peer.root_dir, peer.branch, ctx.root_dir,
-		ctx.branch, policy_label, execution.exchange.packets.len, sync_packet_bytes(execution.exchange.packets),
-		branch.name, branch.commit_cid, 'applied'))
+		ctx.branch, policy_label, execution.exchange.packets.len,
+		sync_packet_bytes(execution.exchange.packets), branch.name, branch.commit_cid, 'applied'))
 }
 
 fn (mut cli PollyDbCli) run_recommend_sync_policy() ! {
@@ -2351,8 +2410,7 @@ fn (mut cli PollyDbCli) run_sync_push_sidecar() ! {
 		repo_name:  repo_name
 		auth_token: cli_sidecar_auth_token()
 	}
-	result := pollylink.push_branch_to_sidecar(mut repo, ctx.branch, client, target_branch,
-		policy)!
+	result := pollylink.push_branch_to_sidecar(mut repo, ctx.branch, client, target_branch, policy)!
 	result_label := if result.auto_merged { cli_success('auto_merged') } else { 'applied' }
 	sidecar_target := if repo_name.len == 0 { sidecar_url } else { '${sidecar_url} [${repo_name}]' }
 	println(cli_render_sync_result('Sync Push (Sidecar)', 'push', ctx.root_dir, ctx.branch,
@@ -2634,6 +2692,7 @@ fn (mut cli PollyDbCli) run_sidecar_grant_repo() ! {
 		'admin' { pollylink.RepoRole.admin }
 		else { return error('invalid repo role: ${cli.args[4]}') }
 	}
+
 	pollylink.grant_repo_access(root_dir, repo_name, actor, role)!
 	println(cli_render_field_card('Sidecar Repo Grant', [
 		CliField{'root', root_dir},
@@ -2993,11 +3052,8 @@ fn (mut cli PollyDbCli) run_describe_table() ! {
 		if column.auto_update_current_timestamp {
 			modifiers << 'auto_update'
 		}
-		column_rows << [column.name, format_column_type(column), if modifiers.len > 0 {
-			modifiers.join(',')
-		} else {
-			'-'
-		}]
+		modifier_text := if modifiers.len > 0 { modifiers.join(',') } else { '-' }
+		column_rows << [column.name, format_column_type(column), modifier_text]
 	}
 	println('')
 	println(cli_title('Columns'))
@@ -3099,7 +3155,8 @@ fn (mut cli PollyDbCli) run_projectors() ! {
 	}
 	states := db.projection_states_at_branch(ctx.branch)!
 	if states.len == 0 {
-		println(cli_empty('no aggregate projectors', 'register one with `pollydb register-aggregate-projection`'))
+		println(cli_empty('no aggregate projectors',
+			'register one with `pollydb register-aggregate-projection`'))
 		return
 	}
 	report := db.status_report()!
@@ -3207,6 +3264,7 @@ fn (mut cli PollyDbCli) run_refresh_aggregate_projections() ! {
 			0
 		}
 	}
+
 	if effective_limit < 0 {
 		println(cli_render_fields('Projector Refresh', [
 			CliField{'policy', 'none'},
@@ -3226,8 +3284,7 @@ fn (mut cli PollyDbCli) run_refresh_aggregate_projections() ! {
 		}
 		return
 	}
-	commit := db.refresh_aggregate_projections_limited(ctx.branch, storage.ChunkConfig.default(),
-		storage.CommitMeta{
+	commit := db.refresh_aggregate_projections_limited(ctx.branch, storage.ChunkConfig.default(), storage.CommitMeta{
 		author:    'pollydb-cli'
 		message:   'refresh aggregate projections'
 		timestamp: 0
@@ -3248,8 +3305,7 @@ fn (mut cli PollyDbCli) run_refresh_aggregate_projections() ! {
 				virtual_root.fresh.str(),
 			]
 		}
-		println(cli_render_table(['name', 'virtual_root', 'source_data_root', 'fresh'],
-			rows))
+		println(cli_render_table(['name', 'virtual_root', 'source_data_root', 'fresh'], rows))
 	}
 }
 
@@ -3348,8 +3404,8 @@ fn (mut cli PollyDbCli) run_null_json_path() ! {
 	}
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	spec := session.table_spec(table_name)!
-	_ = session.set_json_path_null(mut db, table_name, primary_key.bytes(), json_column,
-		json_path, storage.ChunkConfig.default(), storage.CommitMeta{
+	_ = session.set_json_path_null(mut db, table_name, primary_key.bytes(), json_column, json_path,
+		storage.ChunkConfig.default(), storage.CommitMeta{
 		author:    'pollydb-cli'
 		message:   'null json path ${json_column}.${json_path}'
 		timestamp: 0
@@ -3373,8 +3429,8 @@ fn (mut cli PollyDbCli) run_delete_json_path() ! {
 	}
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	spec := session.table_spec(table_name)!
-	_ = session.delete_json_path(mut db, table_name, primary_key.bytes(), json_column,
-		json_path, storage.ChunkConfig.default(), storage.CommitMeta{
+	_ = session.delete_json_path(mut db, table_name, primary_key.bytes(), json_column, json_path,
+		storage.ChunkConfig.default(), storage.CommitMeta{
 		author:    'pollydb-cli'
 		message:   'delete json path ${json_column}.${json_path}'
 		timestamp: 0
@@ -3399,8 +3455,8 @@ fn (mut cli PollyDbCli) run_patch_json_paths() ! {
 	session := db.begin_session(storage.SessionOptions.for_branch(ctx.branch))!
 	spec := session.table_spec(table_name)!
 	updates := parse_json_path_updates(updates_csv)!
-	_ = session.patch_json_paths(mut db, table_name, primary_key.bytes(), json_column,
-		updates, storage.ChunkConfig.default(), storage.CommitMeta{
+	_ = session.patch_json_paths(mut db, table_name, primary_key.bytes(), json_column, updates,
+		storage.ChunkConfig.default(), storage.CommitMeta{
 		author:    'pollydb-cli'
 		message:   'patch json paths ${json_column}'
 		timestamp: 0
@@ -3610,8 +3666,8 @@ fn (mut cli PollyDbCli) run_scan_index_between() ! {
 	column := index_column(spec, index_name)!
 	start_value := parse_typed_value(column, raw_start)!
 	end_value := parse_typed_value(column, raw_end)!
-	rows := session.lookup_index_between(mut db, table_name, index_name, start_value,
-		end_value, limit)!
+	rows := session.lookup_index_between(mut db, table_name, index_name, start_value, end_value,
+		limit)!
 	if rows.len == 0 {
 		println(cli_empty('no rows', 'no values matched the requested range'))
 		return
@@ -3779,8 +3835,8 @@ fn (mut cli PollyDbCli) run_prefix_index_projected() ! {
 	index := table_index_def(spec, index_name)!
 	column := index_column(spec, index_name)!
 	prefix := parse_typed_value(column, raw_prefix)!
-	rows := session.lookup_index_prefix_projected(mut db, table_name, index_name, prefix,
-		limit, columns)!
+	rows := session.lookup_index_prefix_projected(mut db, table_name, index_name, prefix, limit,
+		columns)!
 	if rows.len == 0 {
 		println(cli_empty('no rows', 'no rows matched this prefix'))
 		return
@@ -3904,6 +3960,290 @@ fn (mut cli PollyDbCli) run_query_fts() ! {
 	lines << ''
 	lines << cli_render_query_rows('Rows', spec, result.rows)
 	println(lines.join('\n'))
+}
+
+fn (mut cli PollyDbCli) run_distill_agentview_memory() ! {
+	ctx := cli.resolve_db_context(1, true)!
+	max_jobs := if cli.args.len > ctx.next_idx { cli.args[ctx.next_idx].int() } else { 4 }
+	neighbor_limit := if cli.args.len > ctx.next_idx + 1 {
+		cli.args[ctx.next_idx + 1].int()
+	} else {
+		8
+	}
+	min_evidence := if cli.args.len > ctx.next_idx + 2 {
+		cli.args[ctx.next_idx + 2].int()
+	} else {
+		1
+	}
+	recent_sessions := if cli.args.len > ctx.next_idx + 3 {
+		cli.args[ctx.next_idx + 3].int()
+	} else {
+		if max_jobs * 16 > 64 { max_jobs * 16 } else { 64 }
+	}
+	candidate_limit := if cli.args.len > ctx.next_idx + 4 {
+		cli.args[ctx.next_idx + 4].int()
+	} else {
+		0
+	}
+	candidate_offset := if cli.args.len > ctx.next_idx + 5 {
+		cli.args[ctx.next_idx + 5].int()
+	} else {
+		0
+	}
+	preview_only := cli_memory_preview_only()
+	store := if preview_only {
+		agentview.PollyDbStore.open_existing(ctx.root_dir)
+	} else {
+		agentview.PollyDbStore.open(ctx.root_dir)!
+	}
+	if !preview_only {
+		_ = store.ensure_memory_schema()!
+	}
+	$if llama_cpp ? {
+		embedding_model_path := cli_memory_embedding_model_path()!
+		mut embedding_engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
+			model_path:   embedding_model_path
+			n_ctx:        512
+			n_batch:      512
+			n_gpu_layers: 0
+		})!
+		defer {
+			embedding_engine.close()
+		}
+		options := agentview.MemoryDistillOptions{
+			recent_sessions:  if recent_sessions > 0 { recent_sessions } else { 64 }
+			max_jobs:         if max_jobs > 0 { max_jobs } else { 4 }
+			neighbor_limit:   if neighbor_limit > 0 { neighbor_limit } else { 8 }
+			min_evidence:     if min_evidence > 0 { min_evidence } else { 1 }
+			candidate_limit:  candidate_limit
+			candidate_offset: candidate_offset
+		}
+		if preview_only {
+			mut previews := []agentview.MemoryDistillPreviewCard{}
+			if cli_memory_use_heuristic_distill() {
+				previews = store.preview_recent_memory_heuristic(mut embedding_engine, options)!
+			} else {
+				generation_model_path := cli_memory_generation_model_path()!
+				mut generator := memory.new_llama_generation_engine(memory.LlamaGenerationConfig{
+					model_path:       generation_model_path
+					n_ctx:            2048
+					n_batch:          512
+					n_gpu_layers:     0
+					max_tokens:       260
+					max_output_bytes: 12000
+				})!
+				defer {
+					generator.close()
+				}
+				previews =
+					store.preview_recent_memory(mut embedding_engine, mut generator, options)!
+			}
+			mut keep_count := 0
+			mut discard_count := 0
+			mut discard_reasons := map[string]int{}
+			for preview in previews {
+				if preview.decision.keep {
+					keep_count++
+				} else {
+					discard_count++
+					reason := if preview.decision.reason.len > 0 {
+						preview.decision.reason
+					} else {
+						'discard'
+					}
+					discard_reasons[reason] = discard_reasons[reason] + 1
+				}
+			}
+			println(cli_render_field_card('AgentView Memory Preview', [
+				CliField{'root_dir', ctx.root_dir},
+				CliField{'branch', ctx.branch},
+				CliField{'cards', previews.len.str()},
+				CliField{'keep', keep_count.str()},
+				CliField{'discard', discard_count.str()},
+				CliField{'discard_reasons', cli_memory_preview_reason_counts(discard_reasons)},
+			]))
+			if previews.len == 0 {
+				println('')
+				println(cli_empty('no preview cards',
+					'no current AgentView memory candidates reached preview generation'))
+				return
+			}
+			for preview in previews {
+				println('')
+				println(cli_render_field_card('Preview', [
+					CliField{'action', preview.write_plan.action},
+					CliField{'reason', preview.write_plan.reason},
+					CliField{'score', preview.write_plan.score.str()},
+					CliField{'confidence', preview.write_plan.trace.confidence},
+					CliField{'title', preview.title},
+					CliField{'topic', preview.topic_key},
+					CliField{'evidence', preview.evidence_count.str()},
+					CliField{'supersedes', preview.supersedes_id},
+					CliField{'signals', cli_memory_preview_join(preview.write_plan.trace.signals)},
+					CliField{'blockers', cli_memory_preview_join(preview.write_plan.trace.blockers)},
+					CliField{'inference', preview.write_plan.trace.inference},
+				]))
+				println('')
+				if preview.write_plan.action == 'discard' {
+					println(cli_empty('discarded candidate',
+						'quality gate blocked this candidate; no memory card will be written'))
+				} else {
+					println(preview.summary_md.trim_space())
+					if preview.insight_md.trim_space().len > 0 {
+						println('')
+						println(preview.insight_md.trim_space())
+					}
+				}
+			}
+			return
+		}
+		mut persisted := []memory.PersistedReflection{}
+		if cli_memory_use_heuristic_distill() {
+			persisted = store.distill_recent_memory_heuristic(mut embedding_engine, options)!
+		} else {
+			generation_model_path := cli_memory_generation_model_path()!
+			mut generator := memory.new_llama_generation_engine(memory.LlamaGenerationConfig{
+				model_path:       generation_model_path
+				n_ctx:            2048
+				n_batch:          512
+				n_gpu_layers:     0
+				max_tokens:       260
+				max_output_bytes: 12000
+			})!
+			defer {
+				generator.close()
+			}
+			persisted = store.distill_recent_memory(mut embedding_engine, mut generator, options)!
+		}
+		println(cli_render_field_card('AgentView Memory Distillation', [
+			CliField{'root_dir', ctx.root_dir},
+			CliField{'branch', ctx.branch},
+			CliField{'reflections', persisted.len.str()},
+		]))
+		if persisted.len == 0 {
+			println('')
+			println(cli_empty('no new reflections',
+				'all current AgentView memory sources have already been distilled'))
+			return
+		}
+		for reflection in persisted {
+			println('')
+			println(cli_render_field_card('Reflection', [
+				CliField{'id', reflection.reflection_id},
+				CliField{'kind', reflection.reflection_kind},
+				CliField{'title', reflection.title},
+				CliField{'topic', reflection.topic_key},
+				CliField{'sources', reflection.source_refs.len.str()},
+			]))
+			println('')
+			println(reflection.summary_md.trim_space())
+			if reflection.insight_md.trim_space().len > 0 {
+				println('')
+				println(reflection.insight_md.trim_space())
+			}
+		}
+	} $else {
+		return error('distill-agentview-memory requires a pollydb binary built with `-d llama_cpp`')
+	}
+}
+
+fn (mut cli PollyDbCli) run_extract_agentview_memory() ! {
+	ctx := cli.resolve_db_context(1, true)!
+	if cli.args.len <= ctx.next_idx {
+		return error('extract-agentview-memory requires [root_dir] [branch] <query_text> [seed_limit] [neighbor_limit] [reflection_limit]')
+	}
+	query_text := cli.args[ctx.next_idx]
+	seed_limit := if cli.args.len > ctx.next_idx + 1 { cli.args[ctx.next_idx + 1].int() } else { 4 }
+	neighbor_limit := if cli.args.len > ctx.next_idx + 2 {
+		cli.args[ctx.next_idx + 2].int()
+	} else {
+		8
+	}
+	reflection_limit := if cli.args.len > ctx.next_idx + 3 {
+		cli.args[ctx.next_idx + 3].int()
+	} else {
+		4
+	}
+	store := agentview.PollyDbStore.open(ctx.root_dir)!
+	_ = store.ensure_memory_schema()!
+	$if llama_cpp ? {
+		embedding_model_path := cli_memory_embedding_model_path()!
+		mut db := storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
+		defer {
+			db.close() or {}
+		}
+		mut embedding_engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
+			model_path:   embedding_model_path
+			n_ctx:        512
+			n_batch:      512
+			n_gpu_layers: 0
+		})!
+		defer {
+			embedding_engine.close()
+		}
+		result := memorydb.replay_query(mut db, mut embedding_engine, memory.ReplayQueryRequest{
+			branch_name:      ctx.branch
+			text:             query_text
+			seed_limit:       if seed_limit > 0 { seed_limit } else { 4 }
+			neighbor_limit:   if neighbor_limit > 0 { neighbor_limit } else { 8 }
+			reflection_limit: if reflection_limit > 0 { reflection_limit } else { 4 }
+		})!
+		println(cli_render_field_card('AgentView Memory Extraction', [
+			CliField{'root_dir', ctx.root_dir},
+			CliField{'branch', ctx.branch},
+			CliField{'query', query_text},
+			CliField{'source_hits', result.source_hits.len.str()},
+			CliField{'evidence_hits', result.evidence_hits.len.str()},
+			CliField{'reflections', result.reflections.len.str()},
+		]))
+		if result.reflections.len > 0 {
+			println('')
+			mut reflection_rows := [][]string{cap: result.reflections.len}
+			for reflection in result.reflections {
+				reflection_rows << [reflection.reflection_id, reflection.reflection_kind, reflection.title,
+					'${reflection.score:.4f}', reflection.topic_key]
+			}
+			println(cli_title('Reflections'))
+			println(cli_render_table(['id', 'kind', 'title', 'score', 'topic'], reflection_rows))
+		}
+		if result.evidence_hits.len > 0 {
+			println('')
+			mut evidence_rows := [][]string{cap: result.evidence_hits.len}
+			for hit in result.evidence_hits {
+				evidence_rows << [hit.table_name, hit.primary_key.bytestr(), hit.column_name,
+					'${hit.score:.4f}', hit.via_link_kind, hit.anchor]
+			}
+			println(cli_title('Evidence'))
+			println(cli_render_table(['table', 'primary_key', 'column', 'score', 'via', 'anchor'],
+				evidence_rows))
+		}
+		if result.source_hits.len > 0 {
+			println('')
+			mut source_rows := [][]string{cap: result.source_hits.len}
+			for hit in result.source_hits {
+				source_rows << [hit.table_name, hit.primary_key.bytestr(), hit.column_name,
+					'${hit.score:.4f}', hit.scope.str(), hit.anchor]
+			}
+			println(cli_title('Source Hits'))
+			println(cli_render_table(['table', 'primary_key', 'column', 'score', 'scope', 'anchor'],
+				source_rows))
+		}
+		for reflection in result.reflections {
+			println('')
+			println(cli_render_field_card('Reflection Detail', [
+				CliField{'id', reflection.reflection_id},
+				CliField{'title', reflection.title},
+			]))
+			println('')
+			println(reflection.summary_md.trim_space())
+			if reflection.insight_md.trim_space().len > 0 {
+				println('')
+				println(reflection.insight_md.trim_space())
+			}
+		}
+	} $else {
+		return error('extract-agentview-memory requires a pollydb binary built with `-d llama_cpp`')
+	}
 }
 
 fn main() {

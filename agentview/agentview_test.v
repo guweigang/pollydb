@@ -1,7 +1,37 @@
 module agentview
 
+import memory
 import os
 import storage
+
+struct AgentViewTestEmbeddingEngine {
+pub:
+	dims    int
+	vectors map[string][]f32
+}
+
+fn (engine AgentViewTestEmbeddingEngine) model_name() string {
+	return 'test'
+}
+
+fn (engine AgentViewTestEmbeddingEngine) dimensions() int {
+	return engine.dims
+}
+
+fn (mut engine AgentViewTestEmbeddingEngine) embed(text string) ![]f32 {
+	if text !in engine.vectors {
+		return error('missing test vector for `${text}`')
+	}
+	return engine.vectors[text].clone()
+}
+
+fn (mut engine AgentViewTestEmbeddingEngine) embed_batch(texts []string) ![][]f32 {
+	mut out := [][]f32{cap: texts.len}
+	for text in texts {
+		out << engine.embed(text)!
+	}
+	return out
+}
 
 fn make_multi_session_codex_fixture(dest_root string) {
 	fixture_root := os.join_path(os.dir(@FILE), 'testdata', 'codex_fixture')
@@ -17,7 +47,8 @@ fn make_multi_session_codex_fixture(dest_root string) {
 	second_text = second_text.replace('session-001', 'session-002')
 	second_text = second_text.replace('Fixture thread', 'Fixture thread two')
 	second_text = second_text.replace('Review this patch', 'Resume fixture second session')
-	second_text = second_text.replace('I will inspect the patch.', 'I will continue from the next batch.')
+	second_text = second_text.replace('I will inspect the patch.',
+		'I will continue from the next batch.')
 	second_text = second_text.replace('Checking changed files', 'Continuing batched sync')
 	second_text = second_text.replace('call_001', 'call_002')
 	second_text = second_text.replace('2026-04-01T10:00:00Z', '2026-04-02T11:00:00Z')
@@ -37,7 +68,8 @@ fn test_session_id_from_path() {
 }
 
 fn test_compact_snippet_trims_long_text() {
-	snippet := compact_snippet('alpha beta gamma delta epsilon zeta eta theta iota kappa lambda', 'theta', 24)
+	snippet := compact_snippet('alpha beta gamma delta epsilon zeta eta theta iota kappa lambda',
+		'theta', 24)
 	assert snippet.contains('theta')
 }
 
@@ -81,11 +113,12 @@ fn test_pollydb_store_sync_and_query_fixture() {
 	assert transcript.entries[0].text == 'Review this patch'
 
 	search_execution := store.search_entries_explained(SearchRequest{
-		query: 'inspect'
+		query:      'inspect'
 		session_id: 'session-001'
-		limit: 1
+		limit:      1
 	}) or { panic(err) }
-	assert search_execution.explain.strategy in ['general_fts_prefix', 'fts_no_hits', 'session_index_substring']
+	assert search_execution.explain.strategy in ['general_fts_prefix', 'fts_no_hits',
+		'session_index_substring']
 	assert search_execution.explain.strategy != 'no_fts_indexes'
 
 	list_page := store.list_sessions_page(SessionListRequest{
@@ -97,8 +130,8 @@ fn test_pollydb_store_sync_and_query_fixture() {
 
 	transcript_page := store.load_transcript_page(TranscriptRequest{
 		session_id: 'session-001'
-		offset: 1
-		limit: 2
+		offset:     1
+		limit:      2
 	}) or { panic(err) }
 	assert transcript_page.total_entries == 5
 	assert transcript_page.entries.len == 2
@@ -127,6 +160,1218 @@ fn test_pollydb_store_sync_and_query_fixture() {
 	entry_search_rows := session.scan_table(mut db, 'entry_search_state', 0) or { panic(err) }
 	assert ingest_rows.len == 1
 	assert entry_search_rows.len == 0
+}
+
+fn test_pollydb_store_can_enable_memory_schema() {
+	codex_root := os.join_path(os.dir(@FILE), 'testdata', 'codex_fixture')
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-schema')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	_ = store.sync_codex(codex_root) or { panic(err) }
+	changed := store.ensure_memory_schema() or { panic(err) }
+	assert changed
+
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	entry_spec := session.table_spec('entries') or { panic(err) }
+	assert entry_spec.indexes.any(it.name == 'entries_content_block_vec_idx')
+	assert entry_spec.indexes.any(it.name == 'entries_content_path_vec_idx')
+	capability := db.memory_capability('entries', 'content_md') or { panic(err) }
+	assert capability.options.embedding_index == 'entries_content_path_vec_idx'
+}
+
+fn test_pollydb_store_sync_populates_markdown_for_memory_entries() {
+	codex_root := os.join_path(os.dir(@FILE), 'testdata', 'codex_fixture')
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-markdown')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	stats := store.sync_codex(codex_root) or { panic(err) }
+	assert stats.sessions == 1
+	assert stats.entries == 5
+
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	entry_rows := session.scan_table(mut db, 'entries', 0) or { panic(err) }
+	assert entry_rows.len == 5
+	mut populated := 0
+	mut empty := 0
+	for row in entry_rows {
+		entry := decode_session_entry(row) or { panic(err) }
+		ref := opt_markdown_ref(row, 'content_md') or { panic('expected markdown ref') }
+		if should_skip_markdown_index(entry, entry.text) {
+			if ref.source_len == 0 {
+				empty++
+			}
+			continue
+		}
+		assert ref.source_len > 0
+		populated++
+	}
+	assert populated == 3
+	assert empty == 2
+}
+
+fn test_pollydb_store_distills_memory_from_seeded_entries() {
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-e2e')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	_ = store.ensure_memory_schema() or { panic(err) }
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	cfg := storage.ChunkConfig.default()
+	summary := SessionSummary{
+		id:          'session-memory-001'
+		title:       'Patch review memory'
+		updated_at:  '2026-04-01T10:00:09Z'
+		started_at:  '2026-04-01T10:00:00Z'
+		cwd:         '/tmp/work'
+		source:      'codex'
+		originator:  'Codex Desktop'
+		cli_version: '0.1.0'
+		path:        '/tmp/memory-session.jsonl'
+		entry_count: 3
+		user_turns:  1
+	}
+	session_spec := sessions_spec() or { panic(err) }
+	entry_spec := entries_spec(false) or { panic(err) }
+	session_codec := storage.TypedRowCodec.new(session_spec.table)
+	entry_codec := storage.TypedRowCodec.new(entry_spec.table)
+	session_view := storage.TableView.new(storage.Tree{}, 'sessions')
+	entry_view := storage.TableView.new(storage.Tree{}, 'entries')
+	mut kvs := []storage.KVPair{}
+	kvs << storage.KVPair{
+		key:   session_view.row_key(summary.id.bytes())
+		value: session_codec.encode(build_session_row(summary)) or {
+			panic('encode session row: ${err}')
+		}
+	}
+	entry_a := SessionEntry{
+		seq:       0
+		timestamp: '2026-04-01T10:00:05Z'
+		kind:      .message
+		role:      'user'
+		text:      '遵循 V 的安装约定'
+	}
+	entry_b := SessionEntry{
+		seq:       1
+		timestamp: '2026-04-01T10:00:06Z'
+		kind:      .message
+		role:      'assistant'
+		text:      '代码全面改成 import guweigang.vjsx。'
+	}
+	entry_c := SessionEntry{
+		seq:       2
+		timestamp: '2026-04-01T10:00:07Z'
+		kind:      .message
+		role:      'assistant'
+		text:      '不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案。'
+	}
+	entry_a_id, entry_a_row := build_session_entry_row(summary, entry_a, ingest_markdown_for_store(mut db,
+		'遵循 V 的安装约定') or { panic(err) })
+	kvs << storage.KVPair{
+		key:   entry_view.row_key(entry_a_id.bytes())
+		value: entry_codec.encode(entry_a_row) or { panic('encode entry_a row: ${err}') }
+	}
+	entry_b_id, entry_b_row := build_session_entry_row(summary, entry_b, ingest_markdown_for_store(mut db,
+		'代码全面改成 import guweigang.vjsx。') or { panic(err) })
+	kvs << storage.KVPair{
+		key:   entry_view.row_key(entry_b_id.bytes())
+		value: entry_codec.encode(entry_b_row) or { panic('encode entry_b row: ${err}') }
+	}
+	entry_c_id, entry_c_row := build_session_entry_row(summary, entry_c, ingest_markdown_for_store(mut db,
+		'不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案。') or { panic(err) })
+	kvs << storage.KVPair{
+		key:   entry_view.row_key(entry_c_id.bytes())
+		value: entry_codec.encode(entry_c_row) or { panic('encode entry_c row: ${err}') }
+	}
+	mut tree := storage.Tree.build(kvs, cfg) or { panic('build tree: ${err}') }
+	tree = storage.rebuild_typed_indexes_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or {
+		panic('rebuild indexes: ${err}')
+	}
+	tree = storage.rebuild_typed_aggregates_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or {
+		panic('rebuild aggregates: ${err}')
+	}
+	_ = db.commit_to_branch('main', tree, storage.CommitMeta{
+		author:    'gwg'
+		message:   'seed agentview memory e2e'
+		timestamp: 1
+	}) or { panic('commit tree: ${err}') }
+	db.close() or { panic(err) }
+
+	mut engine := AgentViewTestEmbeddingEngine{
+		dims:    2
+		vectors: {
+			'遵循 V 的安装约定':                                                                                              [
+				f32(1.0),
+				0.0,
+			]
+			'代码全面改成 import guweigang.vjsx。':                                                                           [
+				f32(0.99),
+				0.01,
+			]
+			'不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案。':                                                      [
+				f32(0.97),
+				0.03,
+			]
+			'遵循 V 的安装约定\n代码全面改成 import guweigang.vjsx\n不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案': [
+				f32(0.985),
+				0.015,
+			]
+		}
+	}
+	persisted := store.distill_recent_memory_heuristic(mut engine, MemoryDistillOptions{
+		recent_sessions: 1
+		max_jobs:        1
+		neighbor_limit:  2
+		min_evidence:    1
+		candidate_limit: 5
+	}) or { panic(err) }
+	assert persisted.len == 1
+	assert persisted[0].title.len > 0
+	assert persisted[0].summary_md.len > 0
+	assert persisted[0].source_refs.len >= 1
+
+	db = storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	reflection_spec := session.table_spec('memory_reflections') or { panic(err) }
+	assert reflection_spec.indexes.any(it.name == agentview_memory_reflections_title_fts_index)
+	assert reflection_spec.indexes.any(it.name == agentview_memory_reflections_summary_fts_index)
+	reflection_rows := session.scan_table(mut db, 'memory_reflections', 0) or { panic(err) }
+	link_rows := session.scan_table(mut db, 'memory_links', 0) or { panic(err) }
+	assert reflection_rows.len == 1
+	assert link_rows.len >= 2
+}
+
+fn test_should_skip_markdown_index_skips_environment_context_blocks() {
+	entry := SessionEntry{
+		kind: .message
+		text: '<environment_context>\n<cwd>/tmp/demo</cwd>\n<shell>zsh</shell>\n</environment_context>'
+	}
+	assert should_skip_markdown_index(entry, entry.text)
+}
+
+fn test_should_skip_markdown_index_skips_turn_abort_and_git_directives() {
+	entry := SessionEntry{
+		kind: .message
+		text: '<turn_aborted>\nThe user interrupted the previous turn.\n</turn_aborted>\n\n::git-push{cwd="/tmp/demo" branch="main"}'
+	}
+	assert should_skip_markdown_index(entry, entry.text)
+}
+
+fn test_memory_salience_gate_keeps_durable_candidates_and_skips_transient_updates() {
+	root_cause := classify_memory_salience(SessionEntry{
+		kind: .message
+		role: 'assistant'
+		text: '我已经定位到直接触发点了：`buffer.js` 不是运行时动态推出来的，而是代码里直接用 `@VMODROOT` 拼路径去读。'
+	})
+	assert root_cause.memory_worthy
+	assert root_cause.candidate_type == 'root_cause'
+
+	constraint := classify_memory_salience(SessionEntry{
+		kind: .message
+		role: 'assistant'
+		text: '不要求用户先手动 export，也兼容现在的安装脚本。'
+	})
+	assert constraint.memory_worthy
+	assert constraint.candidate_type == 'constraint'
+
+	update := classify_memory_salience(SessionEntry{
+		kind: .message
+		role: 'assistant'
+		text: '我准备直接在 vhttpd 里加一个 vjsx_runtime_asset_root(...) 助手，并在创建 NodeRuntimeConfig 时接上。'
+	})
+	assert !update.memory_worthy
+	assert update.skip_reason == 'transient_status'
+}
+
+fn test_memory_card_topic_key_is_derived_from_polished_card_content() {
+	input_a := memory.ReflectionPersistInput{
+		title:      'V 安装约定'
+		summary_md: '# 摘要\n\n- 代码全面改成 import guweigang.vjsx\n\n## 重要约束\n\n- 不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 临时软链方案\n'
+	}
+	input_b := memory.ReflectionPersistInput{
+		title:      'V 安装约定'
+		summary_md: '# 摘要\n\n- 代码全面改成 import guweigang.vjsx\n\n## 重要约束\n\n- 不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 临时软链方案\n'
+	}
+	input_c := memory.ReflectionPersistInput{
+		title:      'HTTP 空闲端口'
+		summary_md: '# 摘要\n\n- 先向系统申请空闲端口，再启动 HTTP 服务\n'
+	}
+	assert memory_card_topic_key(input_a) == memory_card_topic_key(input_b)
+	assert memory_card_topic_key(input_a) != memory_card_topic_key(input_c)
+	assert memory_card_topic_key(input_a).starts_with('agentview-card:')
+}
+
+fn test_memory_card_vector_ranking_uses_lexical_guard_as_veto_only() {
+	left_title := 'V 安装约定'
+	left_summary := '# 摘要\n\n- 代码全面改成 import guweigang.vjsx\n\n## 重要约束\n\n- 不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 临时软链方案\n'
+	right_title := '遵循 V 的安装约定'
+	right_summary := '# 摘要\n\n- 代码全面改成 import guweigang.vjsx\n\n## 重要约束\n\n- 不要先 clone 到 /tmp/vjsx 再 link\n'
+	other_title := 'HTTP 空闲端口'
+	other_summary := '# 摘要\n\n- 先向系统申请空闲端口，再启动 HTTP 服务\n'
+	similar_vector := cosine_similarity([f32(1.0), 0.0], [f32(0.98), 0.02])
+	unrelated_vector := cosine_similarity([f32(1.0), 0.0], [f32(0.0), 1.0])
+	similar_guard := memory_card_lexical_guard_score(left_title, left_summary, right_title,
+		right_summary)
+	unrelated_guard := memory_card_lexical_guard_score(left_title, left_summary, other_title,
+		other_summary)
+	assert similar_vector > 0.75
+	assert similar_guard > 0.18
+	assert unrelated_vector < 0.75
+	assert unrelated_guard < 0.18
+}
+
+fn test_memory_card_write_decision_keeps_durable_cards_and_discards_noise() {
+	useful := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      'V 安装约定'
+		summary_md: '# 摘要\n\n- 代码全面改成 import guweigang.vjsx\n\n## 重要约束\n\n- 不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 临时软链方案\n'
+	})
+	assert useful.keep
+
+	boilerplate := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      'entries.content_md 记忆复盘'
+		summary_md: '# 摘要\n\n- 当前主题已从 seed 与近邻证据中完成一次可回放蒸馏。\n'
+	})
+	assert !boilerplate.keep
+	assert boilerplate.reason == 'boilerplate_title' || boilerplate.reason == 'no_durable_points'
+
+	short_note := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '调用方式'
+		summary_md: '# 摘要\n\n- 每次调用都传一遍\n'
+	})
+	assert !short_note.keep
+	assert short_note.reason == 'no_durable_points'
+
+	transient := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      'workflow 检查'
+		summary_md: '# 摘要\n\n- 找到具体 workflow 和脚本链路后，我会直接指出是哪一步造成的\n'
+	})
+	assert !transient.keep
+	assert transient.reason == 'no_durable_points'
+
+	bad_summary := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      'RequestOwnedZBox 返回值'
+		summary_md: r'# 摘要
+
+- 这说明锅已经不在 sample 了，是真正的 bridge/runtime 返回值丢失
+- WorkspaceContextMiddleware` 里 `$handler->handle($request)` 直接拿回了 `null
+
+## 关键决策
+
+- PHP 暴露的 dispatch_request/dispatch_body/dispatch_envelope/dispatch：返回 RequestOwnedZBox
+'
+	})
+	assert !bad_summary.keep
+	assert bad_summary.reason == 'bad_summary_point'
+
+	hypothesis := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '这不是最终一定的答案，但如果它能立刻让这条 PHPT 通过，就说明崩点确实就在对象返回'
+		summary_md: '# 摘要\n\n- 类方法返回对象\n- 这不是最终一定的答案，但如果它能立刻让这条 PHPT 通过，就说明崩点确实就在对象返回\n'
+	})
+	assert !hypothesis.keep
+	assert hypothesis.reason == 'hypothesis_validation_title'
+
+	process_title := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '把范围压到 prepared-query 这条链了'
+		summary_md: '# 摘要\n\n- 不经过 VSlim Query 包装\n- 确认 query builder 的写接口能直接用，接下来就把 console 页的表单和 controller action 一次性补齐\n'
+	})
+	assert !process_title.keep
+	assert process_title.reason == 'process_title'
+
+	truncated_point := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      'prepared-query 写接口'
+		summary_md: '# 摘要\n\n- 确认 query builder 的写接口能直接用，接下来就把 console 页的表单和 controller action 一次性补�...\n'
+	})
+	assert !truncated_point.keep
+	assert truncated_point.reason == 'bad_summary_point'
+
+	question_title := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '是不是同一个 `v_ptr` 被不同 PHP wrapper 重复接管'
+		summary_md: '# 摘要\n\n- 是不是同一个 `v_ptr` 被不同 PHP wrapper 重复接管\n'
+	})
+	assert !question_title.keep
+	assert question_title.reason == 'question_title'
+
+	malformed_path := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      r'dispatch_request(new VSlim\Vhttpd\Request(...))` 这条验证路径里，表单 body 没有自动落成 `parsedBody'
+		summary_md: r'# 摘要
+
+- dispatch_request(new VSlim\Vhttpd\Request(...))` 这条验证路径里，表单 body 没有自动落成 `parsedBody
+'
+	})
+	assert !malformed_path.keep
+	assert malformed_path.reason == 'bad_summary_point'
+
+	token_fragment := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      'vphp` 或 `vslim'
+		summary_md: '# 摘要\n\n- 我同意，这里不该打补丁绕过去\n- vphp` 或 `vslim\n'
+	})
+	assert !token_fragment.keep
+	assert token_fragment.reason == 'bad_summary_point'
+
+	first_person_validation := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '我再看一下这轮改动边界和验证结果，确认没有漏掉明显的回归'
+		summary_md: '# 摘要\n\n- 我再看一下这轮改动边界和验证结果，确认没有漏掉明显的回归\n'
+	})
+	assert !first_person_validation.keep
+	assert first_person_validation.reason == 'bad_summary_point'
+
+	future_step := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      'bridge/runtime 返回值丢失'
+		summary_md: '# 摘要\n\n- `WorkspaceContextMiddleware` 里 `$handler->handle($request)` 直接拿回了 `null`\n- 下一步我要去对齐崩溃前最后一批 `vphp_call_method` 日志\n'
+	})
+	assert !future_step.keep
+	assert future_step.reason == 'bad_summary_point'
+
+	regenerate_step := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '我要重新生成 `php_bridge.c`，这一步用 `emit-only` 就够了'
+		summary_md: '# 摘要\n\n- 我要重新生成 `php_bridge.c`，这一步用 `emit-only` 就够了\n'
+	})
+	assert !regenerate_step.keep
+	assert regenerate_step.reason == 'process_title'
+
+	conditional_future := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '同一份 `.env`，PDO 能连、VSlim seed 不能连'
+		summary_md: '# 摘要\n\n- 如果是，我会把读路径的失败面再收稳一点\n- 同一份 `.env`，PDO 能连、VSlim seed 不能连\n'
+	})
+	assert !conditional_future.keep
+	assert conditional_future.reason == 'bad_summary_point'
+
+	non_target_failure := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '这个失败也有信息量，不过还不是我们要的那个崩溃'
+		summary_md: '# 摘要\n\n- 会话没带回去\n- 这个失败也有信息量，不过还不是我们要的那个崩溃\n'
+	})
+	assert !non_target_failure.keep
+	assert non_target_failure.reason == 'hypothesis_validation_title'
+
+	vague_title := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '定位到了'
+		summary_md: '# 摘要\n\n- 定位到了：污染源不在 `authUser`，也不在 `resolveContext`，而是在 `dashboard()`\n'
+	})
+	assert !vague_title.keep
+	assert vague_title.reason == 'vague_title'
+
+	vague_signal_title := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '编译这边有新信号了'
+		summary_md: '# 摘要\n\n- `Makefile` 这条 `ext` 没带 MySQL 头文件路径\n'
+	})
+	assert !vague_signal_title.keep
+	assert vague_signal_title.reason == 'vague_title'
+
+	raw_schema := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      'updated_at 这一列在旧库上没加成功'
+		summary_md: '# 摘要\n\n- 表结构已经说明原因了：`updated_at` 这一列在旧库上没加成功，而 `chunks/status/owner` 加上了\n- ADD COLUMN updated_at datetime not null\n'
+	})
+	assert !raw_schema.keep
+	assert raw_schema.reason == 'bad_summary_point'
+
+	double_dot_truncated := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '第二跳已经进了 `documents.render`，说明 service 和 controller 绑定都没再丢，问题落圮..'
+		summary_md: '# 摘要\n\n- 第二跳已经进了 `documents.render`，说明 service 和 controller 绑定都没再丢，问题落圮..\n'
+	})
+	assert !double_dot_truncated.keep
+	assert double_dot_truncated.reason == 'corrupt_title'
+
+	ascii_dot_after_cjk := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      r'`dispatch_request(new VSlim\Vhttpd\Request(...))` 这条验证路径里，表宮.'
+		summary_md: r'# 摘要
+
+- `dispatch_request(new VSlim\Vhttpd\Request(...))` 这条验证路径里，表宮.
+'
+	})
+	assert !ascii_dot_after_cjk.keep
+	assert ascii_dot_after_cjk.reason == 'corrupt_title'
+
+	truncated_markdown_link := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '现在 [WorkspaceRepository.php](/Users/demo/app/Repositories/WorkspaceRepository.'
+		summary_md: '# 摘要\n\n- 现在 [WorkspaceRepository.php](/Users/demo/app/Repositories/WorkspaceRepository.\n'
+	})
+	assert !truncated_markdown_link.keep
+	assert truncated_markdown_link.reason == 'corrupt_title'
+
+	unbalanced_cjk_quotes := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '2 attrs 不能回退”，一个看“3 attrs 能不能终于过'
+		summary_md: '# 摘要\n\n- 2 attrs 不能回退”，一个看“3 attrs 能不能终于过\n'
+	})
+	assert !unbalanced_cjk_quotes.keep
+	assert unbalanced_cjk_quotes.reason == 'corrupt_title'
+
+	ascii_label := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      'session + access'
+		summary_md: '# 摘要\n\n- session + access\n'
+	})
+	assert !ascii_label.keep
+	assert ascii_label.reason == 'no_durable_points'
+
+	future_check := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '只有 workspace middleware，没有 access/trace'
+		summary_md: '# 摘要\n\n- 我再确认一次“只有 workspace middleware，没有 access/trace”时到底稳不稳\n'
+	})
+	assert !future_check.keep
+	assert future_check.reason == 'bad_summary_point'
+
+	title_replay := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '污染源不在 `authUser`，也不在 `resolveContext`，而是在 `dashboard()`'
+		summary_md: '# 摘要\n\n- 污染源不在 `authUser`，也不在 `resolveContext`，而是在 `dashboard()`\n'
+	})
+	assert !title_replay.keep
+	assert title_replay.reason == 'title_replay_only'
+
+	isolated_artifact := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '`make ext` 编译环境缺少 mysql.h'
+		summary_md: '# 摘要\n\n- `make ext` 失败是个已知编译环境问题，不是这次 bug 本身：它少了 `mysql.h` include\n- vslim.so\n'
+	})
+	assert isolated_artifact.keep
+	assert isolated_artifact.score < useful.score + 5
+
+	strong_single_sentence := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '`persistent_assoc_with_value/without_key` 只服务于 `attributes_ref` 这一路，没有别的 payload 复用'
+		summary_md: '# 摘要\n\n- `persistent_assoc_with_value/without_key` 只服务于 `attributes_ref` 这一路，没有别的 payload 复用\n'
+	})
+	assert strong_single_sentence.keep
+
+	run_tests_constraint := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '不能直接当 PHP 脚本跑，改用官方 `run-tests.php` 复核它们，避免误判'
+		summary_md: '# 摘要\n\n- 不能直接当 PHP 脚本跑，改用官方 `run-tests.php` 复核它们，避免误判\n'
+	})
+	assert run_tests_constraint.keep
+}
+
+fn test_memory_card_write_plan_explains_add_update_and_discard() {
+	add_input := memory.ReflectionPersistInput{
+		title:      'V 安装约定'
+		topic_key:  'agentview:v-install-convention'
+		summary_md: '# 摘要\n\n- 代码全面改成 import guweigang.vjsx\n\n## 重要约束\n\n- 不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 临时软链方案\n'
+		insight_md: '## 推断\n\n- 这是后续 V 项目导入路径选择的稳定约束。\n'
+	}
+	add_profile := memory_card_quality_profile(add_input)
+	add_decision := memory_card_write_decision_from_profile(add_profile)
+	add_plan := memory_card_write_plan(add_input, add_profile, add_decision, 2, '')
+	assert add_plan.action == 'add'
+	assert add_plan.reason == 'keep'
+	assert add_plan.trace.confidence == 'high'
+	assert 'multi_evidence' in add_plan.trace.signals
+	assert 'score_pass' in add_plan.trace.signals
+	assert add_plan.trace.blockers.len == 0
+
+	update_plan := memory_card_write_plan(add_input, add_profile, add_decision, 2,
+		'memory-reflection-001')
+	assert update_plan.action == 'update'
+	assert update_plan.reason == 'similar_existing_memory'
+	assert 'matched_existing_memory' in update_plan.trace.signals
+
+	discard_input := memory.ReflectionPersistInput{
+		title:      '污染源不在 `authUser`，也不在 `resolveContext`，而是在 `dashboard()`'
+		topic_key:  'agentview:weak-title-replay'
+		summary_md: '# 摘要\n\n- 污染源不在 `authUser`，也不在 `resolveContext`，而是在 `dashboard()`\n'
+	}
+	discard_profile := memory_card_quality_profile(discard_input)
+	discard_decision := memory_card_write_decision_from_profile(discard_profile)
+	discard_plan := memory_card_write_plan(discard_input, discard_profile, discard_decision, 1, '')
+	assert discard_plan.action == 'discard'
+	assert discard_plan.reason == 'title_replay_only'
+	assert discard_plan.trace.inference == 'candidate failed the durable-memory quality gate'
+	assert 'title_replay_only' in discard_plan.trace.blockers
+}
+
+fn test_pollydb_store_discards_low_value_memory_from_synced_fixture() {
+	codex_root := os.join_path(os.dir(@FILE), 'testdata', 'codex_fixture')
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-sync-e2e')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	stats := store.sync_codex(codex_root) or { panic(err) }
+	assert stats.sessions == 1
+	assert stats.entries == 5
+	_ = store.ensure_memory_schema() or { panic(err) }
+
+	mut engine := AgentViewTestEmbeddingEngine{
+		dims:    2
+		vectors: {
+			'Review this patch':         [f32(1.0), 0.0]
+			'I will inspect the patch.': [f32(0.99), 0.01]
+			'Checking changed files':    [f32(0.97), 0.03]
+		}
+	}
+	persisted := store.distill_recent_memory_heuristic(mut engine, MemoryDistillOptions{
+		recent_sessions: 1
+		max_jobs:        1
+		neighbor_limit:  2
+		min_evidence:    1
+		candidate_limit: 5
+	}) or { panic(err) }
+	assert persisted.len == 0
+
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	if db.has_table('memory_reflections') {
+		reflection_rows := session.scan_table(mut db, 'memory_reflections', 0) or { panic(err) }
+		assert reflection_rows.len == 0
+	} else {
+		assert !db.has_table('memory_reflections')
+	}
+	if db.has_table('memory_links') {
+		link_rows := session.scan_table(mut db, 'memory_links', 0) or { panic(err) }
+		assert link_rows.len == 0
+	} else {
+		assert !db.has_table('memory_links')
+	}
+}
+
+fn test_pollydb_store_previews_memory_without_persisting_reflections() {
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-preview')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	_ = store.ensure_memory_schema() or { panic(err) }
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	cfg := storage.ChunkConfig.default()
+	summary := SessionSummary{
+		id:          'session-preview-001'
+		title:       'Preview memory'
+		updated_at:  '2026-04-01T10:00:09Z'
+		started_at:  '2026-04-01T10:00:00Z'
+		cwd:         '/tmp/work'
+		source:      'codex'
+		originator:  'Codex Desktop'
+		cli_version: '0.1.0'
+		path:        '/tmp/preview-session.jsonl'
+		entry_count: 2
+		user_turns:  1
+	}
+	session_spec := sessions_spec() or { panic(err) }
+	entry_spec := entries_spec(false) or { panic(err) }
+	session_codec := storage.TypedRowCodec.new(session_spec.table)
+	entry_codec := storage.TypedRowCodec.new(entry_spec.table)
+	session_view := storage.TableView.new(storage.Tree{}, 'sessions')
+	entry_view := storage.TableView.new(storage.Tree{}, 'entries')
+	mut kvs := []storage.KVPair{}
+	kvs << storage.KVPair{
+		key:   session_view.row_key(summary.id.bytes())
+		value: session_codec.encode(build_session_row(summary)) or { panic(err) }
+	}
+	entry_a := SessionEntry{
+		seq:       0
+		timestamp: '2026-04-01T10:00:05Z'
+		kind:      .message
+		role:      'assistant'
+		text:      '代码全面改成 import guweigang.vjsx。'
+	}
+	entry_b := SessionEntry{
+		seq:       1
+		timestamp: '2026-04-01T10:00:06Z'
+		kind:      .message
+		role:      'assistant'
+		text:      '不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案。'
+	}
+	entry_a_id, entry_a_row := build_session_entry_row(summary, entry_a, ingest_markdown_for_store(mut db,
+		entry_a.text) or { panic(err) })
+	kvs << storage.KVPair{
+		key:   entry_view.row_key(entry_a_id.bytes())
+		value: entry_codec.encode(entry_a_row) or { panic(err) }
+	}
+	entry_b_id, entry_b_row := build_session_entry_row(summary, entry_b, ingest_markdown_for_store(mut db,
+		entry_b.text) or { panic(err) })
+	kvs << storage.KVPair{
+		key:   entry_view.row_key(entry_b_id.bytes())
+		value: entry_codec.encode(entry_b_row) or { panic(err) }
+	}
+	mut tree := storage.Tree.build(kvs, cfg) or { panic(err) }
+	tree = storage.rebuild_typed_indexes_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	tree = storage.rebuild_typed_aggregates_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', tree, storage.CommitMeta{
+		author:    'gwg'
+		message:   'seed agentview memory preview'
+		timestamp: 1
+	}) or { panic(err) }
+	db.close() or { panic(err) }
+
+	mut engine := AgentViewTestEmbeddingEngine{
+		dims:    2
+		vectors: {
+			entry_a.text:                                                                                  [
+				f32(1.0),
+				0.0,
+			]
+			entry_b.text:                                                                                  [
+				f32(0.98),
+				0.02,
+			]
+			'代码全面改成 import guweigang.vjsx\n不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案': [
+				f32(0.99),
+				0.01,
+			]
+		}
+	}
+	previews := store.preview_recent_memory_heuristic(mut engine, MemoryDistillOptions{
+		recent_sessions: 1
+		max_jobs:        1
+		neighbor_limit:  2
+		min_evidence:    1
+		candidate_limit: 5
+	}) or { panic(err) }
+	assert previews.len == 1
+	assert previews[0].decision.keep || previews[0].decision.reason.len > 0
+	assert previews[0].write_plan.action in ['add', 'update', 'discard']
+	assert previews[0].write_plan.trace.evidence_count > 0
+	assert previews[0].write_plan.trace.candidate_title.len > 0
+
+	db = storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	if db.has_table('memory_reflections') {
+		reflection_rows := session.scan_table(mut db, 'memory_reflections', 0) or { panic(err) }
+		assert reflection_rows.len == 0
+	} else {
+		assert !db.has_table('memory_reflections')
+	}
+	if db.has_table('memory_links') {
+		link_rows := session.scan_table(mut db, 'memory_links', 0) or { panic(err) }
+		assert link_rows.len == 0
+	} else {
+		assert !db.has_table('memory_links')
+	}
+}
+
+fn test_build_memory_segment_anchors_splits_topics_streamingly() {
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-segments')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	_ = store.ensure_memory_schema() or { panic(err) }
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	cfg := storage.ChunkConfig.default()
+	summary := SessionSummary{
+		id:          'session-segment-001'
+		title:       'Segment memory'
+		updated_at:  '2026-04-01T10:00:09Z'
+		started_at:  '2026-04-01T10:00:00Z'
+		cwd:         '/tmp/work'
+		source:      'codex'
+		originator:  'Codex Desktop'
+		cli_version: '0.1.0'
+		path:        '/tmp/segment-session.jsonl'
+		entry_count: 4
+		user_turns:  2
+	}
+	session_spec := sessions_spec() or { panic(err) }
+	entry_spec := entries_spec(false) or { panic(err) }
+	session_codec := storage.TypedRowCodec.new(session_spec.table)
+	entry_codec := storage.TypedRowCodec.new(entry_spec.table)
+	session_view := storage.TableView.new(storage.Tree{}, 'sessions')
+	entry_view := storage.TableView.new(storage.Tree{}, 'entries')
+	mut kvs := []storage.KVPair{}
+	kvs << storage.KVPair{
+		key:   session_view.row_key(summary.id.bytes())
+		value: session_codec.encode(build_session_row(summary)) or {
+			panic('encode session row: ${err}')
+		}
+	}
+	entries := [
+		SessionEntry{
+			seq:       0
+			timestamp: '2026-04-01T10:00:05Z'
+			kind:      .message
+			role:      'user'
+			text:      '决定遵循 V 的安装约定'
+		},
+		SessionEntry{
+			seq:       1
+			timestamp: '2026-04-01T10:00:06Z'
+			kind:      .message
+			role:      'assistant'
+			text:      '代码全面改成 import guweigang.vjsx。'
+		},
+		SessionEntry{
+			seq:       2
+			timestamp: '2026-04-01T10:00:07Z'
+			kind:      .message
+			role:      'user'
+			text:      '确认 runtime asset root 方案'
+		},
+		SessionEntry{
+			seq:       3
+			timestamp: '2026-04-01T10:00:08Z'
+			kind:      .message
+			role:      'assistant'
+			text:      'README 的安装说明：默认会自动找包内 runtime/vjsx，也支持 VJSX_ASSET_ROOT 覆盖'
+		},
+	]
+	for entry in entries {
+		entry_id, entry_row := build_session_entry_row(summary, entry, ingest_markdown_for_store(mut db,
+			entry.text) or { panic(err) })
+		kvs << storage.KVPair{
+			key:   entry_view.row_key(entry_id.bytes())
+			value: entry_codec.encode(entry_row) or { panic('encode entry row: ${err}') }
+		}
+	}
+	mut tree := storage.Tree.build(kvs, cfg) or { panic('build tree: ${err}') }
+	tree = storage.rebuild_typed_indexes_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or {
+		panic('rebuild indexes: ${err}')
+	}
+	tree = storage.rebuild_typed_aggregates_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or {
+		panic('rebuild aggregates: ${err}')
+	}
+	_ = db.commit_to_branch('main', tree, storage.CommitMeta{
+		author:    'gwg'
+		message:   'seed agentview memory segments'
+		timestamp: 1
+	}) or { panic('commit tree: ${err}') }
+
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	rows := recent_entry_rows(mut db, session, 1) or { panic(err) }
+	mut engine := AgentViewTestEmbeddingEngine{
+		dims:    2
+		vectors: {
+			'决定遵循 V 的安装约定':                                                         [
+				f32(1.0),
+				0.0,
+			]
+			'代码全面改成 import guweigang.vjsx。':                                          [
+				f32(0.98),
+				0.02,
+			]
+			'确认 runtime asset root 方案':                                                  [
+				f32(0.0),
+				1.0,
+			]
+			'README 的安装说明：默认会自动找包内 runtime/vjsx，也支持 VJSX_ASSET_ROOT 覆盖': [
+				f32(0.02),
+				0.98,
+			]
+		}
+	}
+	candidates, report := memory_candidates_for_embedding(mut db, session, rows, 0, 0) or {
+		panic(err)
+	}
+	assert report.embedding_candidate_entries == 4
+	anchors := build_memory_segment_anchors(candidates, mut engine, 0) or { panic(err) }
+	assert anchors.len == 2
+	assert anchors[0].primary_key.bytestr() == 'session-segment-001:3'
+	assert anchors[1].primary_key.bytestr() == 'session-segment-001:1'
+	assert anchors[0].entry_count == 2
+	assert anchors[1].entry_count == 2
+}
+
+fn test_memory_candidates_for_embedding_supports_offset_sampling() {
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-candidate-offset')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	_ = store.ensure_memory_schema() or { panic(err) }
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	cfg := storage.ChunkConfig.default()
+	summary := SessionSummary{
+		id:          'session-offset-001'
+		title:       'Offset memory'
+		updated_at:  '2026-04-01T10:00:09Z'
+		started_at:  '2026-04-01T10:00:00Z'
+		cwd:         '/tmp/work'
+		source:      'codex'
+		originator:  'Codex Desktop'
+		cli_version: '0.1.0'
+		path:        '/tmp/offset-session.jsonl'
+		entry_count: 3
+		user_turns:  1
+	}
+	session_spec := sessions_spec() or { panic(err) }
+	entry_spec := entries_spec(false) or { panic(err) }
+	session_codec := storage.TypedRowCodec.new(session_spec.table)
+	entry_codec := storage.TypedRowCodec.new(entry_spec.table)
+	session_view := storage.TableView.new(storage.Tree{}, 'sessions')
+	entry_view := storage.TableView.new(storage.Tree{}, 'entries')
+	mut kvs := []storage.KVPair{}
+	kvs << storage.KVPair{
+		key:   session_view.row_key(summary.id.bytes())
+		value: session_codec.encode(build_session_row(summary)) or { panic(err) }
+	}
+	for idx, text in ['新增 alpha durable API。', '新增 beta durable API。',
+		'新增 gamma durable API。'] {
+		entry := SessionEntry{
+			seq:       idx
+			timestamp: '2026-04-01T10:00:0${idx + 1}Z'
+			kind:      .message
+			role:      'assistant'
+			text:      text
+		}
+		entry_id, entry_row := build_session_entry_row(summary, entry, ingest_markdown_for_store(mut db, text) or {
+			panic(err)
+		})
+		kvs << storage.KVPair{
+			key:   entry_view.row_key(entry_id.bytes())
+			value: entry_codec.encode(entry_row) or { panic(err) }
+		}
+	}
+	mut tree := storage.Tree.build(kvs, cfg) or { panic(err) }
+	tree = storage.rebuild_typed_indexes_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	tree = storage.rebuild_typed_aggregates_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', tree, storage.CommitMeta{
+		author:  'gwg'
+		message: 'seed candidate offset'
+	}) or { panic(err) }
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	rows := recent_entry_rows(mut db, session, 1) or { panic(err) }
+	first, _ := memory_candidates_for_embedding(mut db, session, rows, 1, 0) or { panic(err) }
+	second, _ := memory_candidates_for_embedding(mut db, session, rows, 1, 1) or { panic(err) }
+	assert first.len == 1
+	assert second.len == 1
+	assert first[0].primary_key() != second[0].primary_key()
+}
+
+fn test_memory_candidates_for_embedding_limit_skips_undistillable_noise_before_window() {
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-candidate-outline-filter')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	_ = store.ensure_memory_schema() or { panic(err) }
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	cfg := storage.ChunkConfig.default()
+	summary := SessionSummary{
+		id:          'session-outline-filter-001'
+		title:       'Outline filter memory'
+		updated_at:  '2026-04-01T10:00:09Z'
+		started_at:  '2026-04-01T10:00:00Z'
+		cwd:         '/tmp/work'
+		source:      'codex'
+		originator:  'Codex Desktop'
+		cli_version: '0.1.0'
+		path:        '/tmp/outline-filter-session.jsonl'
+		entry_count: 4
+		user_turns:  1
+	}
+	session_spec := sessions_spec() or { panic(err) }
+	entry_spec := entries_spec(false) or { panic(err) }
+	session_codec := storage.TypedRowCodec.new(session_spec.table)
+	entry_codec := storage.TypedRowCodec.new(entry_spec.table)
+	session_view := storage.TableView.new(storage.Tree{}, 'sessions')
+	entry_view := storage.TableView.new(storage.Tree{}, 'entries')
+	mut kvs := []storage.KVPair{}
+	kvs << storage.KVPair{
+		key:   session_view.row_key(summary.id.bytes())
+		value: session_codec.encode(build_session_row(summary)) or { panic(err) }
+	}
+	for idx, text in ['builtin__DenseArray_has_index', 'knowledge-studio',
+		'同意，你继续，一定要挖出 vslim 或 vphp 的 bug。',
+		'新增 AgentView 记忆预览 write plan，并输出 signals 与 blockers。'] {
+		entry := SessionEntry{
+			seq:       idx
+			timestamp: '2026-04-01T10:00:0${idx + 1}Z'
+			kind:      .message
+			role:      'assistant'
+			text:      text
+		}
+		entry_id, entry_row := build_session_entry_row(summary, entry, ingest_markdown_for_store(mut db, text) or {
+			panic(err)
+		})
+		kvs << storage.KVPair{
+			key:   entry_view.row_key(entry_id.bytes())
+			value: entry_codec.encode(entry_row) or { panic(err) }
+		}
+	}
+	mut tree := storage.Tree.build(kvs, cfg) or { panic(err) }
+	tree = storage.rebuild_typed_indexes_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	tree = storage.rebuild_typed_aggregates_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', tree, storage.CommitMeta{
+		author:  'gwg'
+		message: 'seed candidate outline filter'
+	}) or { panic(err) }
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	rows := recent_entry_rows(mut db, session, 1) or { panic(err) }
+	candidates, report := memory_candidates_for_embedding(mut db, session, rows, 1, 0) or {
+		panic(err)
+	}
+	assert candidates.len == 1
+	assert candidates[0].entry.text.contains('write plan')
+	assert report.discarded_before_embedding['undistillable_outline_before_embedding'] >= 2
+}
+
+fn test_build_memory_segment_anchors_prefers_technical_over_workflow_status() {
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-segment-priority')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	_ = store.ensure_memory_schema() or { panic(err) }
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	cfg := storage.ChunkConfig.default()
+	summary := SessionSummary{
+		id:          'session-segment-002'
+		title:       'Segment priority'
+		updated_at:  '2026-04-01T10:00:09Z'
+		started_at:  '2026-04-01T10:00:00Z'
+		cwd:         '/tmp/work'
+		source:      'codex'
+		originator:  'Codex Desktop'
+		cli_version: '0.1.0'
+		path:        '/tmp/segment-priority-session.jsonl'
+		entry_count: 4
+		user_turns:  2
+	}
+	session_spec := sessions_spec() or { panic(err) }
+	entry_spec := entries_spec(false) or { panic(err) }
+	session_codec := storage.TypedRowCodec.new(session_spec.table)
+	entry_codec := storage.TypedRowCodec.new(entry_spec.table)
+	session_view := storage.TableView.new(storage.Tree{}, 'sessions')
+	entry_view := storage.TableView.new(storage.Tree{}, 'entries')
+	mut kvs := []storage.KVPair{}
+	kvs << storage.KVPair{
+		key:   session_view.row_key(summary.id.bytes())
+		value: session_codec.encode(build_session_row(summary)) or { panic(err) }
+	}
+	entries := [
+		SessionEntry{
+			seq:       0
+			timestamp: '2026-04-01T10:00:05Z'
+			kind:      .message
+			role:      'assistant'
+			text:      '验证通过了，我现在把这批文件按同一组功能改动一起提交。随后会把当前 main 上的两条本地提交一并推到远端。'
+		},
+		SessionEntry{
+			seq:       1
+			timestamp: '2026-04-01T10:00:06Z'
+			kind:      .message
+			role:      'assistant'
+			text:      '测试已经启动，我在等目标用例跑完。'
+		},
+		SessionEntry{
+			seq:       2
+			timestamp: '2026-04-01T10:00:07Z'
+			kind:      .message
+			role:      'assistant'
+			text:      '我已经定位到直接触发点了：`buffer.js` 不是运行时动态推出来的，而是代码里直接用 `@VMODROOT` 拼路径去读。'
+		},
+		SessionEntry{
+			seq:       3
+			timestamp: '2026-04-01T10:00:08Z'
+			kind:      .message
+			role:      'assistant'
+			text:      '这样就能解释为什么你的进程会去找 `/tmp/vjsx/...`，也说明运行时资源路径解析依赖 `@VMODROOT`。'
+		},
+	]
+	for entry in entries {
+		entry_id, entry_row := build_session_entry_row(summary, entry, ingest_markdown_for_store(mut db,
+			entry.text) or { panic(err) })
+		kvs << storage.KVPair{
+			key:   entry_view.row_key(entry_id.bytes())
+			value: entry_codec.encode(entry_row) or { panic(err) }
+		}
+	}
+	mut tree := storage.Tree.build(kvs, cfg) or { panic(err) }
+	tree = storage.rebuild_typed_indexes_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	tree = storage.rebuild_typed_aggregates_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', tree, storage.CommitMeta{
+		author:    'gwg'
+		message:   'seed agentview memory segment priority'
+		timestamp: 1
+	}) or { panic(err) }
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	rows := recent_entry_rows(mut db, session, 1) or { panic(err) }
+	mut engine := AgentViewTestEmbeddingEngine{
+		dims:    2
+		vectors: {
+			'我已经定位到直接触发点了：`buffer.js` 不是运行时动态推出来的，而是代码里直接用 `@VMODROOT` 拼路径去读。': [
+				f32(0.0),
+				1.0,
+			]
+			'这样就能解释为什么你的进程会去找 `/tmp/vjsx/...`，也说明运行时资源路径解析依赖 `@VMODROOT`。':            [
+				f32(0.02),
+				0.98,
+			]
+		}
+	}
+	candidates, report := memory_candidates_for_embedding(mut db, session, rows, 0, 0) or {
+		panic(err)
+	}
+	assert report.skipped_by_reason['transient_status'] == 2
+	assert report.embedding_candidate_entries >= 1
+	anchors := build_memory_segment_anchors(candidates, mut engine, 0) or { panic(err) }
+	assert anchors.len == 1
+	assert anchors[0].segment_kind == 'root_cause'
+	assert anchors[0].segment_horizon == 'durable'
+	assert anchors[0].primary_key.bytestr() == 'session-segment-002:2'
+}
+
+fn test_build_memory_segment_anchors_defers_execution_context_segments() {
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-segment-execution-context')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	_ = store.ensure_memory_schema() or { panic(err) }
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	cfg := storage.ChunkConfig.default()
+	summary := SessionSummary{
+		id:          'session-segment-003'
+		title:       'Execution context priority'
+		updated_at:  '2026-04-01T10:00:09Z'
+		started_at:  '2026-04-01T10:00:00Z'
+		cwd:         '/tmp/work'
+		source:      'codex'
+		originator:  'Codex Desktop'
+		cli_version: '0.1.0'
+		path:        '/tmp/segment-execution-context-session.jsonl'
+		entry_count: 4
+		user_turns:  2
+	}
+	session_spec := sessions_spec() or { panic(err) }
+	entry_spec := entries_spec(false) or { panic(err) }
+	session_codec := storage.TypedRowCodec.new(session_spec.table)
+	entry_codec := storage.TypedRowCodec.new(entry_spec.table)
+	session_view := storage.TableView.new(storage.Tree{}, 'sessions')
+	entry_view := storage.TableView.new(storage.Tree{}, 'entries')
+	mut kvs := []storage.KVPair{}
+	kvs << storage.KVPair{
+		key:   session_view.row_key(summary.id.bytes())
+		value: session_codec.encode(build_session_row(summary)) or { panic(err) }
+	}
+	entries := [
+		SessionEntry{
+			seq:       0
+			timestamp: '2026-04-01T10:00:05Z'
+			kind:      .message
+			role:      'assistant'
+			text:      '现在是在受限沙箱里。git push 这一步需要提权才能访问远端，我先申请权限并顺手确认当前分支状态。'
+		},
+		SessionEntry{
+			seq:       1
+			timestamp: '2026-04-01T10:00:06Z'
+			kind:      .message
+			role:      'assistant'
+			text:      '当前在 main，而且本地还有 1 个尚未推送的提交。'
+		},
+		SessionEntry{
+			seq:       2
+			timestamp: '2026-04-01T10:00:07Z'
+			kind:      .message
+			role:      'assistant'
+			text:      '我已经定位到直接触发点了：`buffer.js` 不是运行时动态推出来的，而是代码里直接用 `@VMODROOT` 拼路径去读。'
+		},
+		SessionEntry{
+			seq:       3
+			timestamp: '2026-04-01T10:00:08Z'
+			kind:      .message
+			role:      'assistant'
+			text:      '这样就能解释为什么你的进程会去找 `/tmp/vjsx/...`，也说明运行时资源路径解析依赖 `@VMODROOT`。'
+		},
+	]
+	for entry in entries {
+		entry_id, entry_row := build_session_entry_row(summary, entry, ingest_markdown_for_store(mut db,
+			entry.text) or { panic(err) })
+		kvs << storage.KVPair{
+			key:   entry_view.row_key(entry_id.bytes())
+			value: entry_codec.encode(entry_row) or { panic(err) }
+		}
+	}
+	mut tree := storage.Tree.build(kvs, cfg) or { panic(err) }
+	tree = storage.rebuild_typed_indexes_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	tree = storage.rebuild_typed_aggregates_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', tree, storage.CommitMeta{
+		author:    'gwg'
+		message:   'seed agentview memory execution context priority'
+		timestamp: 1
+	}) or { panic(err) }
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	rows := recent_entry_rows(mut db, session, 1) or { panic(err) }
+	mut engine := AgentViewTestEmbeddingEngine{
+		dims:    2
+		vectors: {
+			'我已经定位到直接触发点了：`buffer.js` 不是运行时动态推出来的，而是代码里直接用 `@VMODROOT` 拼路径去读。': [
+				f32(0.0),
+				1.0,
+			]
+			'这样就能解释为什么你的进程会去找 `/tmp/vjsx/...`，也说明运行时资源路径解析依赖 `@VMODROOT`。':            [
+				f32(0.02),
+				0.98,
+			]
+		}
+	}
+	candidates, report := memory_candidates_for_embedding(mut db, session, rows, 0, 0) or {
+		panic(err)
+	}
+	assert report.discarded_before_embedding['transient_before_embedding'] == 2
+	assert report.embedding_candidate_entries >= 1
+	anchors := build_memory_segment_anchors(candidates, mut engine, 0) or { panic(err) }
+	assert anchors.len == 1
+	assert anchors[0].segment_kind == 'root_cause'
+	assert anchors[0].segment_horizon == 'durable'
+	assert anchors[0].primary_key.bytestr() == 'session-segment-003:2'
+}
+
+fn test_memory_segment_evidence_filters_mixed_topic_neighbors() {
+	seed := MemorySegmentEntry{
+		primary_key: 'seed'.bytes()
+		session_id:  'session-purity-001'
+		timestamp:   '2026-04-01T10:00:01Z'
+		score:       80
+		entry:       SessionEntry{
+			seq:  0
+			role: 'assistant'
+			kind: .message
+			text: '`borrowed` 这条线更可疑，因为 `NextHandler` 是 `memdup` 出来的裸 V 内存。'
+		}
+		vector:      [f32(1.0), 0.0]
+	}
+	same_topic := MemorySegmentEntry{
+		primary_key: 'same'.bytes()
+		session_id:  'session-purity-001'
+		timestamp:   '2026-04-01T10:00:02Z'
+		score:       70
+		entry:       SessionEntry{
+			seq:  1
+			role: 'assistant'
+			kind: .message
+			text: '`NextHandler` wrapper 不能重复接管 `borrowed` 指针。'
+		}
+		vector:      [f32(0.98), 0.02]
+	}
+	mixed_topic := MemorySegmentEntry{
+		primary_key: 'mixed'.bytes()
+		session_id:  'session-purity-001'
+		timestamp:   '2026-04-01T10:00:03Z'
+		score:       70
+		entry:       SessionEntry{
+			seq:  2
+			role: 'assistant'
+			kind: .message
+			text: '`make ext` 失败是已知编译环境问题，它少了 `mysql.h` include。'
+		}
+		vector:      [f32(0.62), 0.78]
+	}
+	anchor := MemorySegmentAnchor{
+		primary_key: seed.primary_key.clone()
+		session_id:  seed.session_id
+		timestamp:   mixed_topic.timestamp
+		score:       seed.score
+		entries:     [seed, same_topic, mixed_topic]
+	}
+	evidence := memory_segment_evidence(anchor, seed, 8)
+	assert evidence.len == 1
+	assert evidence[0].primary_key.bytestr() == 'same'
+	assert !evidence[0].text.contains('mysql.h')
 }
 
 fn test_pollydb_store_sync_updates_only_changed_entries() {

@@ -200,6 +200,15 @@ fn test_usage_includes_query_fts_commands() {
 	assert cli.usage().contains('query-fts')
 }
 
+fn test_usage_includes_agentview_memory_commands() {
+	cli := PollyDbCli.new([])
+	assert cli.usage().contains('distill-agentview-memory')
+	assert cli.usage().contains('extract-agentview-memory')
+	assert cli.usage().contains('POLLYDB_MEMORY_EMBEDDING_MODEL')
+	assert cli.usage().contains('POLLYDB_MEMORY_GENERATION_MODEL')
+	assert cli.usage().contains('POLLYDB_MEMORY_FAST_DISTILL')
+}
+
 fn test_usage_includes_scan_index_between() {
 	cli := PollyDbCli.new([])
 	assert cli.usage().contains('scan-index-between')
