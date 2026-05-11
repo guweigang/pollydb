@@ -696,6 +696,10 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops_split_delta(ops []TypedWrit
 		ops)!
 	mut index_trees := map[string]Tree{}
 	for index in view.indexes {
+		if index.is_embedding() {
+			index_trees[index.name] = base_split.index_trees[index.name] or { Tree{} }
+			continue
+		}
 		if index.is_field_selector() || index.is_fts() {
 			index_trees[index.name] = rebuild_typed_single_index_tree(next_rows_tree,
 				view.schema.codec, view.schema.table.name, index, cfg)!
@@ -729,6 +733,10 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops_split_batched(ops []TypedWr
 		view.indexes, row_states)!
 	mut index_trees := map[string]Tree{}
 	for index in view.indexes {
+		if index.is_embedding() {
+			index_trees[index.name] = base_split.index_trees[index.name] or { Tree{} }
+			continue
+		}
 		if index.is_field_selector() || index.is_fts() {
 			index_trees[index.name] = rebuild_typed_single_index_tree(next_rows_tree,
 				view.schema.codec, view.schema.table.name, index, cfg)!
@@ -1480,6 +1488,9 @@ fn (view TypedIndexedSchemaView) apply_fast_write_ops(ops []TypedWriteOp, cfg Ch
 }
 
 pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg ChunkConfig) !TypedIndexedSchemaUpdate {
+	if sparse := view.apply_sparse_insert_ops(ops, cfg) {
+		return sparse
+	}
 	detailed := cfg.detailed_timings
 	mut items_sw := if detailed { time.new_stopwatch() } else { time.StopWatch{} }
 	mut items := view.schema.table.tree.items()!
@@ -1498,7 +1509,7 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 	mut regular_index_simple_lookup := []bool{}
 	mut regular_index_prefixes := [][]u8{}
 	for index in view.indexes {
-		if index.is_field_selector() || index.is_fts() {
+		if index.is_field_selector() || index.is_fts() || index.is_embedding() {
 			continue
 		}
 		regular_indexes << index
@@ -1711,6 +1722,65 @@ pub fn (view TypedIndexedSchemaView) apply_write_ops(ops []TypedWriteOp, cfg Chu
 	}
 }
 
+fn (view TypedIndexedSchemaView) apply_sparse_insert_ops(ops []TypedWriteOp, cfg ChunkConfig) ?TypedIndexedSchemaUpdate {
+	if ops.len == 0 || view.is_split_backed() {
+		return none
+	}
+	mut regular_indexes := []SchemaIndexDef{}
+	mut regular_index_columns := []ColumnDef{}
+	for index in view.indexes {
+		if index.is_field_selector() && !index.is_fts() && !index.is_embedding() {
+			return none
+		}
+		if index.is_fts() || index.is_embedding() || index.is_field_selector() {
+			continue
+		}
+		regular_indexes << index
+		regular_index_columns << index.value_column(view.schema.codec.table) or { return none }
+	}
+	mut seen := map[string]bool{}
+	for op in ops {
+		if op.delete {
+			return none
+		}
+		key := op.primary_key.hex()
+		if key in seen {
+			return none
+		}
+		seen[key] = true
+		if _ := view.schema.get(op.primary_key) {
+			return none
+		}
+	}
+	codec := view.schema.codec
+	mut mutations := []Mutation{}
+	for op in ops {
+		encoded_row := codec.encode_without_validation(op.row) or { return none }
+		mutations << Mutation.put(view.schema.table.key_for(op.primary_key), encoded_row.clone())
+		for idx, index in regular_indexes {
+			index_value, has_value := typed_index_value_lookup(op.row, index, codec.table) or {
+				return none
+			}
+			if !has_value {
+				continue
+			}
+			index_key := encode_index_value_without_validation(index_value, regular_index_columns[idx]) or {
+				return none
+			}
+			index_view := view.split_storage.index_view(index.name) or { return none }
+			stored_value := if index.stores_row { encoded_row.clone() } else { []u8{} }
+			mutations << Mutation.put(index_view.key_for(index_key, op.primary_key), stored_value)
+		}
+	}
+	update := view.schema.table.tree.apply_mutations(mutations, cfg) or { return none }
+	next_schema := view.schema.with_table(view.schema.table.with_tree(update.tree))
+	return TypedIndexedSchemaUpdate{
+		view:    view.with_schema(next_schema)
+		diff:    update.diff
+		timings: TypedIndexedWriteTimings{}
+	}
+}
+
 pub fn (view TypedIndexedSchemaView) plan_write_spans(ops []TypedWriteOp) !MutationSpanPlanStats {
 	items := view.schema.table.tree.items()!
 	mut existing_key_set := map[string]bool{}
@@ -1729,7 +1799,7 @@ pub fn (view TypedIndexedSchemaView) plan_write_spans(ops []TypedWriteOp) !Mutat
 	mut regular_index_prefixes := [][]u8{}
 	split := view.split_storage()
 	for index in view.indexes {
-		if index.is_field_selector() || index.is_fts() {
+		if index.is_field_selector() || index.is_fts() || index.is_embedding() {
 			continue
 		}
 		regular_indexes << index
@@ -1929,7 +1999,7 @@ fn (view TypedIndexedSchemaView) apply_write_ops_with_map(ops []TypedWriteOp, it
 	mut projected_old_columns := []string{}
 	mut projected_old_column_seen := map[string]bool{}
 	for index in view.indexes {
-		if index.is_field_selector() || index.is_fts() {
+		if index.is_field_selector() || index.is_fts() || index.is_embedding() {
 			continue
 		}
 		regular_indexes << index
@@ -2725,7 +2795,7 @@ fn apply_split_index_mutations(base_tree Tree, table_name string, codec TypedRow
 fn build_split_index_mutation_batches(table_name string, codec TypedRowCodec, indexes []SchemaIndexDef, states []SplitIndexMutationRowState) !map[string]SplitIndexMutationBatch {
 	mut batches := map[string]SplitIndexMutationBatch{}
 	for index in indexes {
-		if index.is_field_selector() || index.is_fts() {
+		if index.is_field_selector() || index.is_fts() || index.is_embedding() {
 			continue
 		}
 		column := index.value_column(codec.table)!
@@ -2921,7 +2991,7 @@ fn rebuild_typed_indexes_for_tables(tree Tree, specs []TypedTableSpec, table_nam
 			primary_key := row_key.bytes()[row_prefix.len..]
 			row := codec.decode(item_map[row_key])!
 			for index in spec.indexes {
-				if index.is_field_selector() || index.is_fts() {
+				if index.is_field_selector() || index.is_fts() || index.is_embedding() {
 					continue
 				}
 				index_value, has_value := typed_index_value_lookup(row, index, spec.table)!
@@ -3574,7 +3644,7 @@ fn rebuild_typed_indexes_for_changed_rows(tree Tree, specs []TypedTableSpec, cha
 			row := codec.decode(item_map[row_key])!
 			encoded_row := codec.encode_without_validation(row)!
 			for index in spec.indexes {
-				if index.is_field_selector() || index.is_fts() {
+				if index.is_field_selector() || index.is_fts() || index.is_embedding() {
 					continue
 				}
 				index_value, has_value := typed_index_value_lookup(row, index, spec.table)!
@@ -4118,7 +4188,10 @@ fn encode_index_value_without_validation(value ColumnValue, column ColumnDef) ![
 		}
 	}
 	mut out := [u8(1)]
-	out << (TypedValueEncoder.encode_value(value, column.typ)!)
+	encoded := TypedValueEncoder.encode_value(value, column.typ) or {
+		return error('column ${column.name}: ${err}')
+	}
+	out << encoded
 	return out
 }
 

@@ -51,9 +51,9 @@ pub:
 	prefix_lengths []int
 }
 
-type ReflectionOptions = memory.ReflectionOptions
+pub type ReflectionOptions = memory.ReflectionOptions
 
-type MemoryCapabilityDef = memory.MemoryCapabilityDef
+pub type MemoryCapabilityDef = memory.MemoryCapabilityDef
 
 pub struct SchemaView {
 pub:

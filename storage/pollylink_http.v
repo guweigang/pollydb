@@ -3426,8 +3426,9 @@ fn (handler PollyLinkSidecarHandler) serve_query_rows(req http.Request) http.Res
 		return json_error(.bad_request, err.msg())
 	}
 	dto := sidecar_query_compat_rows_dto_from_page(branch_name, table_name, column_name,
-		plugin_name, selector, field_selector_meta, query_kind, value_raw, SidecarGeneralFtsClauseDto{}, select_columns,
-		start_primary_key, start_index_value_raw, continuation_token, page)
+		plugin_name, selector, field_selector_meta, query_kind, value_raw, SidecarGeneralFtsClauseDto{},
+		select_columns, start_primary_key, start_index_value_raw, continuation_token,
+		page)
 	handler.audit(identity, 'query_rows', repo_name, branch_name, true, '${table_name}.${column_name}:${page.rows.len}')
 	return json_ok(json.encode(dto))
 }
@@ -3519,8 +3520,8 @@ fn (handler PollyLinkSidecarHandler) serve_query_rows_post(req http.Request) htt
 		QueryGeneralFtsClause{}
 	}
 	if payload.general_fts.index_name.len == 0 {
-		start_index_value = sidecar_decode_query_anchor_value(spec, first_column_name, first_plugin_name,
-			first_selector, start_index_value_raw) or {
+		start_index_value = sidecar_decode_query_anchor_value(spec, first_column_name,
+			first_plugin_name, first_selector, start_index_value_raw) or {
 			handler.audit(identity, 'query_rows', payload.repo_name, payload.branch_name,
 				false, err.msg())
 			return json_error(.bad_request, err.msg())
@@ -3531,9 +3532,14 @@ fn (handler PollyLinkSidecarHandler) serve_query_rows_post(req http.Request) htt
 		filters:               filters
 		general_fts:           general_fts_clause
 		select_columns:        payload.select_columns
-		start_primary_key:     if payload.general_fts.index_name.len == 0 { start_primary_key.bytes() } else { []u8{} }
+		start_primary_key:     if payload.general_fts.index_name.len == 0 {
+			start_primary_key.bytes()
+		} else {
+			[]u8{}
+		}
 		start_index_value:     start_index_value
-		has_start_index_value: payload.general_fts.index_name.len == 0 && start_index_value_raw.len > 0
+		has_start_index_value: payload.general_fts.index_name.len == 0
+			&& start_index_value_raw.len > 0
 		continuation_token:    payload.continuation_token
 		limit:                 payload.limit
 	}
@@ -3563,8 +3569,8 @@ fn (handler PollyLinkSidecarHandler) serve_query_rows_post(req http.Request) htt
 		payload.filters[0].value
 	} else {
 		''
-	}, payload.general_fts, payload.select_columns.clone(), start_primary_key, start_index_value_raw, payload.continuation_token,
-		page)
+	}, payload.general_fts, payload.select_columns.clone(), start_primary_key, start_index_value_raw,
+		payload.continuation_token, page)
 	handler.audit(identity, 'query_rows', payload.repo_name, payload.branch_name, true,
 		'${payload.table_name}:${page.rows.len}')
 	return json_ok(json.encode(dto))
@@ -4093,7 +4099,7 @@ fn (handler PollyLinkSidecarHandler) handle(req http.Request) http.Response {
 	return json_error(.not_found, 'unknown route: ${path}')
 }
 
-fn handle_pollylink_sidecar_request(root_dir string, default_branch string, req http.Request) http.Response {
+pub fn handle_pollylink_sidecar_request(root_dir string, default_branch string, req http.Request) http.Response {
 	return PollyLinkSidecarHandler{
 		root_dir:       root_dir
 		default_branch: default_branch
@@ -5049,11 +5055,11 @@ fn read_pollyhub_audit_entries(root_dir string, limit int) ![]PollyHubAuditEntry
 	return out
 }
 
-fn summarize_pollyhub_audit_since(root_dir string, since i64) ! (int, int) {
+fn summarize_pollyhub_audit_since(root_dir string, since i64) !(int, int) {
 	return pollyhub.summarize_audit_since(root_dir, since)
 }
 
-fn summarize_pollyhub_actor_audit_since(root_dir string, actor string, since i64) ! (int, int) {
+fn summarize_pollyhub_actor_audit_since(root_dir string, actor string, since i64) !(int, int) {
 	return pollyhub.summarize_actor_audit_since(root_dir, actor, since)
 }
 

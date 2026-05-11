@@ -125,6 +125,30 @@ fn test_chunk_store_roundtrip_from_streaming_cids() {
 	}
 }
 
+fn test_chunk_store_get_rebuilds_stale_index_snapshot() {
+	path := os.join_path(os.vtmp_dir(), 'pollytree-stale-index-rebuild.chunk')
+	defer {
+		os.rm(path) or {}
+		os.rm('${path}.idx') or {}
+	}
+	first_cid := 'first-record'.bytes()
+	second_cid := 'second-record'.bytes()
+	first_data := 'alpha'.bytes()
+	second_data := 'beta'.bytes()
+	mut store := ChunkStore.open(path) or { panic(err) }
+	store.put(first_cid, first_data) or { panic(err) }
+	store.checkpoint() or { panic(err) }
+	store.put(second_cid, second_data) or { panic(err) }
+	store.checkpoint_mode(.data_only) or { panic(err) }
+	store.close()
+
+	mut reopened := ChunkStore.open(path) or { panic(err) }
+	defer {
+		reopened.close()
+	}
+	assert reopened.get(second_cid) or { panic(err) } == second_data
+}
+
 fn test_hash_chunks_parallel_matches_sequential() {
 	cfg := ChunkConfig.default()
 	data := []u8{len: 256 * 1024, init: u8(index % 251)}

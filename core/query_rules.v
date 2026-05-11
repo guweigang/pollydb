@@ -395,21 +395,17 @@ pub fn query_fts_preview_warnings(index_name string) []string {
 }
 
 pub fn query_fts_preview_notes(kind string, term_count int) []string {
-	return match kind {
-		'all' {
-			[
-				'Planner will intersect exact FTS term matches across ${term_count} term(s).',
-			]
-		}
-		'any' {
-			[
-				'Planner will union exact FTS term matches across ${term_count} term(s).',
-			]
-		}
-		else {
-			[]string{}
-		}
+	if kind == 'all' {
+		return [
+			'Planner will intersect exact FTS term matches across ${term_count} term(s).',
+		]
 	}
+	if kind == 'any' {
+		return [
+			'Planner will union exact FTS term matches across ${term_count} term(s).',
+		]
+	}
+	return []string{}
 }
 
 pub fn query_field_selector_projection_only_warning(field_ref string) string {

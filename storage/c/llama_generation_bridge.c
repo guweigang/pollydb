@@ -132,6 +132,28 @@ static int polly_decode_tokens(
 	return 0;
 }
 
+static int polly_decode_tokens_chunked(
+	PollyLlamaGenerationHandle* handle,
+	const llama_token* tokens,
+	int n_tokens,
+	int pos_start,
+	bool logits_last) {
+	if (handle == NULL || tokens == NULL || n_tokens <= 0) {
+		polly_generation_set_error("invalid llama.cpp generation batch input");
+		return -1;
+	}
+	const int chunk_size = handle->n_batch > 0 ? handle->n_batch : handle->n_ctx;
+	for (int offset = 0; offset < n_tokens; offset += chunk_size) {
+		const int remaining = n_tokens - offset;
+		const int take = remaining < chunk_size ? remaining : chunk_size;
+		const bool chunk_logits_last = logits_last && (offset + take) == n_tokens;
+		if (polly_decode_tokens(handle, tokens + offset, take, pos_start + offset, chunk_logits_last) < 0) {
+			return -2;
+		}
+	}
+	return 0;
+}
+
 static int polly_append_token_piece(
 	PollyLlamaGenerationHandle* handle,
 	llama_token token,
@@ -209,7 +231,7 @@ int polly_llama_generation_generate(
 	}
 
 	llama_memory_clear(llama_get_memory(handle->ctx), true);
-	if (polly_decode_tokens(handle, tokens, n_tokens, 0, true) < 0) {
+	if (polly_decode_tokens_chunked(handle, tokens, n_tokens, 0, true) < 0) {
 		free(tokens);
 		return -8;
 	}

@@ -422,7 +422,10 @@ pub fn (mut store ChunkStore) get(cid []u8) ![]u8 {
 		return error('chunk store index disabled')
 	}
 	entry := store.index_get(cid) or {
-		return error('chunk not found: ${cid.hex()}')
+		store.rebuild_index_from_file()!
+		store.index_get(cid) or {
+			return error('chunk not found: ${cid.hex()}')
+		}
 	}
 	if store.data_dirty {
 		store.file.flush()
@@ -597,9 +600,7 @@ fn (mut store ChunkStore) rebuild_index_from_file() ! {
 	store.index = map[u64][]ChunkStoreIndexEntry{}
 	store.index_snapshot_payload = []u8{}
 	store.index_snapshot_entries = 0
-	store.rebuild_index_from_mmap() or {
-		store.rebuild_index_from_file_reads()!
-	}
+	store.rebuild_index_from_file_reads()!
 	// A rebuilt in-memory index means the on-disk snapshot is stale or missing.
 	store.index_dirty = true
 	store.index_snapshot_sync_pending = false

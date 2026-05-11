@@ -6,7 +6,6 @@ import time
 import vmarkdown
 import x.json2
 
-
 struct DatabaseCatalogReader {
 	data []u8
 mut:
@@ -907,6 +906,92 @@ fn rebuild_persistent_typed_indexes_for_changed_rows(root_dir string, tree Tree,
 		removed_indexes:  removed_indexes
 		inserted_indexes: inserted_indexes
 	}
+}
+
+fn typed_write_set_requires_scan_reindex(specs []TypedTableSpec, write_set TypedWriteSet) bool {
+	mut spec_by_name := map[string]TypedTableSpec{}
+	for spec in specs {
+		spec_by_name[spec.table.name] = spec
+	}
+	for op in write_set.operations() {
+		spec := spec_by_name[op.table_name] or { continue }
+		for index in spec.indexes {
+			if index.is_field_selector() && !index.is_fts() && !index.is_embedding() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+fn persistent_typed_index_mutations_for_write_set(root_dir string, base_tree Tree, next_tree Tree, specs []TypedTableSpec, write_set TypedWriteSet) ![]Mutation {
+	mut spec_by_name := map[string]TypedTableSpec{}
+	for spec in specs {
+		spec_by_name[spec.table.name] = spec
+	}
+	mut mutations := []Mutation{}
+	for op in write_set.operations() {
+		spec := spec_by_name[op.table_name] or { continue }
+		codec := TypedRowCodec.new(spec.table)
+		base_table := TableView.new(base_tree, spec.table.name)
+		if old_raw := base_table.get(op.primary_key) {
+			old_row := codec.decode(old_raw.value)!
+			mutations << persistent_typed_index_delete_mutations_for_row(root_dir, spec,
+				op.primary_key, old_row)!
+		}
+		if op.delete {
+			continue
+		}
+		next_table := TableView.new(next_tree, spec.table.name)
+		new_raw := next_table.get(op.primary_key) or { continue }
+		new_row := codec.decode(new_raw.value)!
+		mutations << persistent_typed_index_put_mutations_for_row(root_dir, spec, op.primary_key,
+			new_row)!
+	}
+	return mutations
+}
+
+fn persistent_typed_index_delete_mutations_for_row(root_dir string, spec TypedTableSpec, primary_key []u8, row TypedRowData) ![]Mutation {
+	mut mutations := []Mutation{}
+	for index in spec.indexes {
+		if !row.has(index.column) {
+			continue
+		}
+		index_values := persistent_typed_index_values_from_row(root_dir, row, index, spec.table)!
+		if index_values.len == 0 {
+			continue
+		}
+		column := index.value_column(spec.table)!
+		index_view := IndexView.new(Tree{}, spec.table.name, index.name)
+		for value in index_values {
+			index_key := TypedValueEncoder.encode_index_value(value, column)!
+			mutations << Mutation.delete(index_view.key_for(index_key, primary_key))
+		}
+	}
+	return mutations
+}
+
+fn persistent_typed_index_put_mutations_for_row(root_dir string, spec TypedTableSpec, primary_key []u8, row TypedRowData) ![]Mutation {
+	codec := TypedRowCodec.new(spec.table)
+	encoded_row := codec.encode(row)!
+	mut mutations := []Mutation{}
+	for index in spec.indexes {
+		if !row.has(index.column) {
+			continue
+		}
+		index_values := persistent_typed_index_values_from_row(root_dir, row, index, spec.table)!
+		if index_values.len == 0 {
+			continue
+		}
+		column := index.value_column(spec.table)!
+		index_view := IndexView.new(Tree{}, spec.table.name, index.name)
+		index_value := if index.stores_row { encoded_row.clone() } else { []u8{} }
+		for value in index_values {
+			index_key := TypedValueEncoder.encode_index_value(value, column)!
+			mutations << Mutation.put(index_view.key_for(index_key, primary_key), index_value.clone())
+		}
+	}
+	return mutations
 }
 
 struct TransactionMarkdownIndexEntry {
@@ -2810,7 +2895,7 @@ pub fn (mut database PersistentDatabase) register_aggregate_projection(def Aggre
 	database.persist_catalog()!
 }
 
-fn (mut database PersistentDatabase) register_memory_capability(def MemoryCapabilityDef) ! {
+pub fn (mut database PersistentDatabase) register_memory_capability(def MemoryCapabilityDef) ! {
 	spec := database.catalog[def.table_name] or {
 		return error('memory capability table not registered: ${def.table_name}')
 	}
@@ -2845,7 +2930,7 @@ fn (mut database PersistentDatabase) register_memory_capability(def MemoryCapabi
 	database.persist_catalog()!
 }
 
-fn (database PersistentDatabase) memory_capabilities_for_table(table_name string) []MemoryCapabilityDef {
+pub fn (database PersistentDatabase) memory_capabilities_for_table(table_name string) []MemoryCapabilityDef {
 	mut out := []MemoryCapabilityDef{}
 	for key in sorted_memory_capability_keys(database.memory_capabilities) {
 		capability := database.memory_capabilities[key] or { continue }
@@ -2856,7 +2941,7 @@ fn (database PersistentDatabase) memory_capabilities_for_table(table_name string
 	return out
 }
 
-fn (database PersistentDatabase) memory_capability(table_name string, column_name string) ?MemoryCapabilityDef {
+pub fn (database PersistentDatabase) memory_capability(table_name string, column_name string) ?MemoryCapabilityDef {
 	key := memory_capability_key(table_name, column_name)
 	return database.memory_capabilities[key]
 }
@@ -3229,17 +3314,32 @@ pub fn (mut database PersistentDatabase) apply_typed_write_set_with_specs(branch
 			timings:            BranchTypedTransactionTimings{}
 		}
 	}
+	vector_progress('typed write begin ops=${write_set.len()} specs=${specs.len}')
 	tx := database.engine.typed_transaction_at_branch(branch_name, specs)!
 	base_tree := tx.current_tree()
 	normalized_write_set := normalize_temporal_write_set(tx, write_set)!
+	vector_progress('typed write apply ops=${normalized_write_set.len()}')
 	transaction_update := tx.apply_write_set(normalized_write_set, cfg)!
-	changed_rows := collect_changed_typed_rows_exact(specs, base_tree, transaction_update.tx.current_tree())!
-	normalized_tree, _ := rebuild_persistent_typed_indexes_for_changed_rows(database.root_dir,
-		transaction_update.tx.current_tree(), specs, changed_rows, cfg)!
+	vector_progress('typed write index normalize ops=${normalized_write_set.len()}')
+	normalized_tree := if typed_write_set_requires_scan_reindex(specs, normalized_write_set) {
+		vector_progress('typed write scan reindex fallback ops=${normalized_write_set.len()}')
+		changed_rows := collect_changed_typed_rows_exact(specs, base_tree, transaction_update.tx.current_tree())!
+		normalized, _ := rebuild_persistent_typed_indexes_for_changed_rows(database.root_dir,
+			transaction_update.tx.current_tree(), specs, changed_rows, cfg)!
+		normalized
+	} else {
+		vector_progress('typed write targeted reindex ops=${normalized_write_set.len()}')
+		index_mutations := persistent_typed_index_mutations_for_write_set(database.root_dir,
+			base_tree, transaction_update.tx.current_tree(), specs, normalized_write_set)!
+		transaction_update.tx.current_tree().apply_mutations(index_mutations, cfg)!.tree
+	}
+	vector_progress('typed write commit ops=${normalized_write_set.len()}')
 	virtual_roots := database.virtual_roots_for_new_data_root(branch_name, normalized_tree.root.cid)
 	update := database.engine.commit_to_branch_with_virtual_roots(branch_name, normalized_tree,
 		meta, virtual_roots)!
+	vector_progress('typed write fts ops=${normalized_write_set.len()}')
 	database.apply_fts_write_set(branch_name, specs, normalized_write_set)!
+	vector_progress('typed write done ops=${normalized_write_set.len()}')
 	return BranchTypedTransactionResult{
 		update:             update
 		transaction_update: TypedTransactionResult{
@@ -3279,17 +3379,32 @@ pub fn (mut database PersistentDatabase) apply_typed_write_set_buffered_with_spe
 			timings:            BranchTypedTransactionTimings{}
 		}
 	}
+	vector_progress('typed write buffered begin ops=${write_set.len()} specs=${specs.len}')
 	tx := database.engine.typed_transaction_at_branch(branch_name, specs)!
 	base_tree := tx.current_tree()
 	normalized_write_set := normalize_temporal_write_set(tx, write_set)!
+	vector_progress('typed write buffered apply ops=${normalized_write_set.len()}')
 	transaction_update := tx.apply_write_set(normalized_write_set, cfg)!
-	changed_rows := collect_changed_typed_rows_exact(specs, base_tree, transaction_update.tx.current_tree())!
-	normalized_tree, _ := rebuild_persistent_typed_indexes_for_changed_rows(database.root_dir,
-		transaction_update.tx.current_tree(), specs, changed_rows, cfg)!
+	vector_progress('typed write buffered index normalize ops=${normalized_write_set.len()}')
+	normalized_tree := if typed_write_set_requires_scan_reindex(specs, normalized_write_set) {
+		vector_progress('typed write buffered scan reindex fallback ops=${normalized_write_set.len()}')
+		changed_rows := collect_changed_typed_rows_exact(specs, base_tree, transaction_update.tx.current_tree())!
+		normalized, _ := rebuild_persistent_typed_indexes_for_changed_rows(database.root_dir,
+			transaction_update.tx.current_tree(), specs, changed_rows, cfg)!
+		normalized
+	} else {
+		vector_progress('typed write buffered targeted reindex ops=${normalized_write_set.len()}')
+		index_mutations := persistent_typed_index_mutations_for_write_set(database.root_dir,
+			base_tree, transaction_update.tx.current_tree(), specs, normalized_write_set)!
+		transaction_update.tx.current_tree().apply_mutations(index_mutations, cfg)!.tree
+	}
+	vector_progress('typed write buffered commit ops=${normalized_write_set.len()}')
 	virtual_roots := database.virtual_roots_for_new_data_root(branch_name, normalized_tree.root.cid)
 	update := database.engine.commit_to_branch_with_virtual_roots(branch_name, normalized_tree,
 		meta, virtual_roots)!
+	vector_progress('typed write buffered fts ops=${normalized_write_set.len()}')
 	database.apply_fts_write_set(branch_name, specs, normalized_write_set)!
+	vector_progress('typed write buffered done ops=${normalized_write_set.len()}')
 	return BranchTypedTransactionResult{
 		update:             update
 		transaction_update: TypedTransactionResult{
@@ -6062,7 +6177,7 @@ pub:
 	source_json_path         string
 	source_markdown_selector string
 	aggregate                ColumnAggregate
-	priority                 int = 100
+	priority                 int                         = 100
 	cost_hint                AggregateProjectionCostHint = .medium
 }
 
@@ -6127,45 +6242,54 @@ pub fn AggregateProjectionDef.sum_json_i64(name string, table_name string, colum
 }
 
 pub fn AggregateProjectionDef.count_markdown_blocks(name string, table_name string, column_name string) !AggregateProjectionDef {
-	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name, 'blocks')
+	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name,
+		'blocks')
 }
 
 pub fn AggregateProjectionDef.count_markdown_block_kind(name string, table_name string, column_name string, kind string) !AggregateProjectionDef {
-	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name, 'blocks:${kind}')
+	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name,
+		'blocks:${kind}')
 }
 
 pub fn AggregateProjectionDef.count_markdown_headings(name string, table_name string, column_name string) !AggregateProjectionDef {
-	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name, 'headings')
+	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name,
+		'headings')
 }
 
 pub fn AggregateProjectionDef.count_markdown_heading_level(name string, table_name string, column_name string, level int) !AggregateProjectionDef {
 	if level < 1 || level > 6 {
 		return error('markdown heading level must be between 1 and 6')
 	}
-	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name, 'headings:${level}')
+	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name,
+		'headings:${level}')
 }
 
 pub fn AggregateProjectionDef.count_markdown_links(name string, table_name string, column_name string) !AggregateProjectionDef {
-	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name, 'links')
+	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name,
+		'links')
 }
 
 pub fn AggregateProjectionDef.count_markdown_images(name string, table_name string, column_name string) !AggregateProjectionDef {
-	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name, 'images')
+	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name,
+		'images')
 }
 
 pub fn AggregateProjectionDef.count_markdown_code_blocks(name string, table_name string, column_name string) !AggregateProjectionDef {
-	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name, 'code_blocks')
+	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name,
+		'code_blocks')
 }
 
 pub fn AggregateProjectionDef.count_markdown_code_blocks_with_lang(name string, table_name string, column_name string, lang string) !AggregateProjectionDef {
 	if lang.len == 0 {
 		return error('markdown code block language cannot be empty')
 	}
-	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name, 'code_blocks:${lang}')
+	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name,
+		'code_blocks:${lang}')
 }
 
 pub fn AggregateProjectionDef.count_markdown_code_spans(name string, table_name string, column_name string) !AggregateProjectionDef {
-	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name, 'code_spans')
+	return AggregateProjectionDef.count_markdown_selector(name, table_name, column_name,
+		'code_spans')
 }
 
 pub fn AggregateProjectionDef.count_field_selector(name string, table_name string, column_name string, plugin_name string, selector string) !AggregateProjectionDef {
@@ -6175,7 +6299,8 @@ pub fn AggregateProjectionDef.count_field_selector(name string, table_name strin
 	AggregateProjectionDef.sum_i64(name, table_name, column_name)!
 	return match plugin_name {
 		'markdown' {
-			AggregateProjectionDef.count_markdown_selector(name, table_name, column_name, selector)!
+			AggregateProjectionDef.count_markdown_selector(name, table_name, column_name,
+				selector)!
 		}
 		else {
 			return error('unsupported aggregate projection field selector plugin: ${plugin_name}')
@@ -6258,11 +6383,11 @@ pub fn (def AggregateProjectionDef) with_cost_hint(cost_hint AggregateProjection
 
 pub fn (state AggregateProjectorState) to_virtual_root_ref() VirtualRootRef {
 	return VirtualRootRef{
-		name:                state.projection.name
-		root_cid:            state.virtual_root_cid
+		name:                 state.projection.name
+		root_cid:             state.virtual_root_cid
 		source_data_root_cid: state.source_data_root_cid
-		fresh:               state.fresh
-		stale_reason:        state.stale_reason
+		fresh:                state.fresh
+		stale_reason:         state.stale_reason
 	}
 }
 
@@ -6280,7 +6405,8 @@ fn validate_markdown_projection_selector(selector string) ! {
 			if parts.len > 2 {
 				return error('markdown block selector must be blocks or blocks:<kind>')
 			}
-			if parts.len == 2 && parts[1] !in ['meta', 'heading', 'paragraph', 'blockquote', 'list', 'code_block', 'horizontal_rule'] {
+			if parts.len == 2
+				&& parts[1] !in ['meta', 'heading', 'paragraph', 'blockquote', 'list', 'code_block', 'horizontal_rule'] {
 				return error('unsupported markdown block kind selector: ${parts[1]}')
 			}
 		}
@@ -6418,10 +6544,12 @@ fn collect_markdown_index_values_from_inlines(selector string, nodes []vmarkdown
 	for node in nodes {
 		match node {
 			vmarkdown.EmphasisNode {
-				collect_markdown_index_values_from_inlines(selector, node.children, mut out)
+				collect_markdown_index_values_from_inlines(selector, node.children, mut
+					out)
 			}
 			vmarkdown.StrongNode {
-				collect_markdown_index_values_from_inlines(selector, node.children, mut out)
+				collect_markdown_index_values_from_inlines(selector, node.children, mut
+					out)
 			}
 			vmarkdown.LinkNode {
 				if parts[0] == 'link_host' {
@@ -6458,10 +6586,12 @@ fn collect_markdown_index_values(selector string, nodes []vmarkdown.BlockNode, m
 						markdown_append_distinct(mut out, ColumnValue(text))
 					}
 				}
-				collect_markdown_index_values_from_inlines(selector, node.children, mut out)
+				collect_markdown_index_values_from_inlines(selector, node.children, mut
+					out)
 			}
 			vmarkdown.ParagraphNode {
-				collect_markdown_index_values_from_inlines(selector, node.children, mut out)
+				collect_markdown_index_values_from_inlines(selector, node.children, mut
+					out)
 			}
 			vmarkdown.BlockquoteNode {
 				collect_markdown_index_values(selector, node.children, mut out)
@@ -6543,7 +6673,9 @@ fn compute_sum_json_i64_projection(mut db PersistentDatabase, branch_name string
 				root := json2.decode[map[string]json2.Any](raw)!
 				value := json_lookup_path_value(root, def.source_json_path)!
 				match value {
-					i64 { total += value }
+					i64 {
+						total += value
+					}
 					NullValue {}
 					else {
 						return error('aggregate projection ${def.name} requires i64 json scalar at ${def.source_json_path}')
@@ -6678,8 +6810,7 @@ fn count_markdown_blocks(selector string, nodes []vmarkdown.BlockNode) i64 {
 fn compute_markdown_projection_value(mut db PersistentDatabase, branch_name string, def AggregateProjectionDef) !i64 {
 	spec := db.table_spec(def.table_name)!
 	column := spec.table.column(def.column_name)!
-	return compute_field_projection_i64(mut db, branch_name, def.table_name, column,
-		def.field_projection_selector())
+	return compute_field_projection_i64(mut db, branch_name, def.table_name, column, def.field_projection_selector())
 }
 
 fn compute_aggregate_projection_value(mut db PersistentDatabase, branch_name string, def AggregateProjectionDef) !i64 {
@@ -6702,8 +6833,8 @@ pub fn (mut db PersistentDatabase) projection_value_at_branch(branch_name string
 		if state.virtual_root_cid.len == 0 {
 			return error('aggregate projection ${name} has no materialized virtual root on ${branch_name}')
 		}
-		item := Tree.lookup_in_byte_store(state.virtual_root_cid, aggregate_projection_value_key(name),
-			mut db.engine.repository.node_store)!
+		item := Tree.lookup_in_byte_store(state.virtual_root_cid, aggregate_projection_value_key(name), mut
+			db.engine.repository.node_store)!
 		raw := TypedValueEncoder.decode_value(item.value, .i64_)!
 		match raw {
 			i64 {
@@ -6745,7 +6876,8 @@ pub fn (mut db PersistentDatabase) markdown_projection_i64_at_branch(branch_name
 }
 
 pub fn (mut db PersistentDatabase) markdown_projection_i64(table_name string, column_name string, selector string) !i64 {
-	return db.markdown_projection_i64_at_branch(db.default_branch, table_name, column_name, selector)
+	return db.markdown_projection_i64_at_branch(db.default_branch, table_name, column_name,
+		selector)
 }
 
 pub fn (mut db PersistentDatabase) refresh_aggregate_projections(branch_name string, cfg ChunkConfig, meta CommitMeta) !Commit {
@@ -6777,7 +6909,8 @@ pub fn (mut db PersistentDatabase) refresh_aggregate_projections_limited(branch_
 				stale_reason:         'registration_backfill'
 			}
 		}
-		if current_ref.fresh && current_ref.source_data_root_cid == current.root_cid && current_ref.root_cid.len > 0 {
+		if current_ref.fresh && current_ref.source_data_root_cid == current.root_cid
+			&& current_ref.root_cid.len > 0 {
 			next_roots << current_ref
 			continue
 		}

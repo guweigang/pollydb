@@ -209,11 +209,7 @@ fn (mut store MarkdownFileStore) put_chunk(chunk vmarkdown.Chunk) ! {
 	}
 	out.write_u32(u32(chunk.data.len))
 	out.write_bytes(chunk.data)
-	mut file := os.create(path)!
-	defer {
-		file.close()
-	}
-	_ = file.write(out.bytes())!
+	os.write_file(path, out.bytes().bytestr())!
 }
 
 fn (mut store MarkdownFileStore) put_root(root_id string, refs []string) ! {

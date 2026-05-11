@@ -44,8 +44,8 @@ fn maybe_reflect_with_scheduler(mut scheduler memory.ReflectorScheduler, mut dat
 fn maybe_reflect_persistent_with_scheduler(mut scheduler memory.ReflectorScheduler, mut database PersistentDatabase, branch_name string, mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, cfg ChunkConfig, meta CommitMeta) ![]memory.PersistedReflection {
 	state := database.load_reflector_state(branch_name)!
 	mut live_scheduler := memory.ReflectorScheduler.from_state(scheduler.options, state)
-	persisted := maybe_reflect_with_scheduler(mut live_scheduler, mut database, branch_name, mut embedding_engine, mut
-		generator)!
+	persisted := maybe_reflect_with_scheduler(mut live_scheduler, mut database, branch_name, mut
+		embedding_engine, mut generator)!
 	decision := live_scheduler.decision()
 	last_root := if persisted.len > 0 {
 		persisted[persisted.len - 1].derived_from_root_hash
@@ -67,20 +67,23 @@ fn maybe_reflect_persistent_with_scheduler(mut scheduler memory.ReflectorSchedul
 }
 
 fn (mut database PersistentDatabase) run_reflector(mut scheduler memory.ReflectorScheduler, branch_name string, mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator) ![]memory.PersistedReflection {
-	return maybe_reflect_with_scheduler(mut scheduler, mut database, branch_name, mut embedding_engine, mut generator)
+	return maybe_reflect_with_scheduler(mut scheduler, mut database, branch_name, mut
+		embedding_engine, mut generator)
 }
 
 fn (mut database PersistentDatabase) run_reflector_persistent(mut scheduler memory.ReflectorScheduler, branch_name string, mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, cfg ChunkConfig, meta CommitMeta) ![]memory.PersistedReflection {
-	return maybe_reflect_persistent_with_scheduler(mut scheduler, mut database, branch_name, mut embedding_engine, mut generator, cfg, meta)
+	return maybe_reflect_persistent_with_scheduler(mut scheduler, mut database, branch_name, mut
+		embedding_engine, mut generator, cfg, meta)
 }
 
-fn (mut database PersistentDatabase) reflect_memory_persistent(branch_name string, pending_writes int, mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options memory.ReflectorScheduleOptions, cfg ChunkConfig, meta CommitMeta) ![]memory.PersistedReflection {
+pub fn (mut database PersistentDatabase) reflect_memory_persistent(branch_name string, pending_writes int, mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options memory.ReflectorScheduleOptions, cfg ChunkConfig, meta CommitMeta) ![]memory.PersistedReflection {
 	if pending_writes > 0 {
 		database.record_reflector_writes(branch_name, pending_writes, cfg, meta)!
 	}
 	state := database.load_reflector_state(branch_name)!
 	mut scheduler := memory.ReflectorScheduler.from_state(options, state)
-	return maybe_reflect_persistent_with_scheduler(mut scheduler, mut database, branch_name, mut embedding_engine, mut generator, cfg, meta)
+	return maybe_reflect_persistent_with_scheduler(mut scheduler, mut database, branch_name, mut
+		embedding_engine, mut generator, cfg, meta)
 }
 
 fn memory_reflections_spec() !TypedTableSpec {
@@ -100,6 +103,15 @@ fn memory_reflections_spec() !TypedTableSpec {
 		SchemaIndexDef.new('reflection_kind_idx', 'reflection_kind')!,
 		SchemaIndexDef.new('topic_key_idx', 'topic_key')!,
 		SchemaIndexDef.new('derived_from_root_hash_idx', 'derived_from_root_hash')!,
+		SchemaIndexDef.fts_with_options('memory_reflections_title_fts_idx', 'title', FtsIndexOptions{
+			tokenizer:      'unicode61 remove_diacritics 2'
+			prefix_lengths: [2, 3, 4]
+		})!,
+		SchemaIndexDef.fts_markdown_with_options('memory_reflections_summary_fts_idx',
+			'summary_md', .visible_text, FtsIndexOptions{
+			tokenizer:      'unicode61 remove_diacritics 2'
+			prefix_lengths: [2, 3, 4]
+		})!,
 	])!
 }
 
@@ -137,10 +149,7 @@ fn memory_links_spec() !TypedTableSpec {
 }
 
 fn (mut database PersistentDatabase) ensure_memory_reflections_table() ! {
-	if database.has_table('memory_reflections') {
-		return
-	}
-	database.register_table(memory_reflections_spec()!)!
+	database.register_or_update_table(memory_reflections_spec()!)!
 }
 
 fn (mut database PersistentDatabase) ensure_memory_reflector_state_table() ! {
@@ -317,7 +326,7 @@ fn (mut database PersistentDatabase) reflective_markdown_candidates(branch_name 
 	return out
 }
 
-fn (mut database PersistentDatabase) reflected_source_keys(branch_name string) !map[string]bool {
+pub fn (mut database PersistentDatabase) reflected_source_keys(branch_name string) !map[string]bool {
 	mut out := map[string]bool{}
 	if !database.has_table('memory_links') {
 		return out
@@ -329,12 +338,14 @@ fn (mut database PersistentDatabase) reflected_source_keys(branch_name string) !
 		if link.link_kind != 'semantic_neighbor' {
 			continue
 		}
-		out[memory.reflection_source_key(link.from_table_name, link.from_primary_key, link.from_column_name)] = true
+
+		out[memory.reflection_source_key(link.from_table_name, link.from_primary_key,
+			link.from_column_name)] = true
 	}
 	return out
 }
 
-fn (mut database PersistentDatabase) index_reflective_markdown_fields(branch_name string, table_name string, primary_key []u8, mut engine memory.EmbeddingEngine) ![]string {
+pub fn (mut database PersistentDatabase) index_reflective_markdown_fields(branch_name string, table_name string, primary_key []u8, mut engine memory.EmbeddingEngine) ![]string {
 	spec := database.table_spec(table_name)!
 	session := database.open_session(branch_name)!
 	row := session.get_row(mut database, table_name, primary_key)!
@@ -355,7 +366,7 @@ fn (mut database PersistentDatabase) index_reflective_markdown_fields(branch_nam
 	return indexed_columns
 }
 
-fn (mut database PersistentDatabase) build_markdown_reflection_job(branch_name string, table_name string, primary_key []u8, column_name string, mut engine memory.EmbeddingEngine, neighbor_limit int) !memory.ReflectionJob {
+pub fn (mut database PersistentDatabase) build_markdown_reflection_job(branch_name string, table_name string, primary_key []u8, column_name string, mut engine memory.EmbeddingEngine, neighbor_limit int) !memory.ReflectionJob {
 	capability := database.memory_capability(table_name, column_name) or {
 		return error('memory capability not registered: ${table_name}.${column_name}')
 	}
@@ -367,6 +378,7 @@ fn (mut database PersistentDatabase) build_markdown_reflection_job(branch_name s
 	session := database.open_session(branch_name)!
 	ref := session.get_markdown_ref(mut database, table_name, primary_key, column_name)!
 	targets := markdown_embedding_targets_from_ref(database, ref)!
+	vector_progress('reflection job targets=${targets.len} source=${table_name}.${column_name} key=${primary_key.bytestr()}')
 	if targets.len == 0 {
 		return error('markdown column has no embedding targets: ${table_name}.${column_name}')
 	}
@@ -380,16 +392,25 @@ fn (mut database PersistentDatabase) build_markdown_reflection_job(branch_name s
 	if seed_targets.len == 0 {
 		seed_targets = targets.clone()
 	}
+	target_limit := vector_embedding_target_limit()
+	if target_limit > 0 && seed_targets.len > target_limit {
+		vector_progress('limit reflection seed targets ${seed_targets.len}->${target_limit} source=${table_name}.${column_name} key=${primary_key.bytestr()}')
+		seed_targets = seed_targets[..target_limit].clone()
+	}
 	limit := if neighbor_limit > 0 { neighbor_limit } else { 8 }
 	mut evidence_by_source := map[string]memory.ReflectionEvidence{}
-	for seed in seed_targets {
+	for seed_idx, seed in seed_targets {
+		vector_progress('reflection seed ${seed_idx + 1}/${seed_targets.len} embed scope=${seed.scope} source=${table_name}.${column_name} key=${primary_key.bytestr()}')
 		query_vector := engine.embed(seed.text)!
+		vector_progress('reflection seed ${seed_idx + 1}/${seed_targets.len} query scope=${seed.scope} limit=${
+			limit + 8}')
 		hits := database.query_markdown_embedding_vector(query_vector, VectorSearchQuery{
 			branch_name: branch_name
 			limit:       limit + 8
 			scope:       seed.scope
 			scope_set:   true
 		})!
+		vector_progress('reflection seed ${seed_idx + 1}/${seed_targets.len} hits=${hits.len}')
 		for hit in hits {
 			if hit.table_name.len == 0 || hit.column_name.len == 0 {
 				continue
@@ -556,7 +577,7 @@ fn decode_persisted_reflection(mut database PersistentDatabase, branch_name stri
 	}
 }
 
-fn (mut database PersistentDatabase) replay_query(mut engine memory.EmbeddingEngine, request memory.ReplayQueryRequest) !memory.ReplayQueryResult {
+pub fn (mut database PersistentDatabase) replay_query(mut engine memory.EmbeddingEngine, request memory.ReplayQueryRequest) !memory.ReplayQueryResult {
 	if request.branch_name.len == 0 {
 		return error('replay query requires branch_name')
 	}
@@ -605,10 +626,12 @@ fn (mut database PersistentDatabase) replay_query(mut engine memory.EmbeddingEng
 		if link.link_kind != 'semantic_neighbor' {
 			continue
 		}
-		from_key := memory.reflection_source_key(link.from_table_name, link.from_primary_key, link.from_column_name)
+		from_key := memory.reflection_source_key(link.from_table_name, link.from_primary_key,
+			link.from_column_name)
 		base_score := candidate_keys[from_key] or { continue }
 		metadata := memory.decode_memory_link_metadata(link.metadata_json) or { continue }
-		to_key := memory.reflection_source_key(link.to_table_name, link.to_primary_key, link.to_column_name)
+		to_key := memory.reflection_source_key(link.to_table_name, link.to_primary_key,
+			link.to_column_name)
 		score := if metadata.score > 0 { metadata.score } else { base_score }
 		current := candidate_keys[to_key] or { -1.0 }
 		if score > current {
@@ -660,7 +683,8 @@ fn (mut database PersistentDatabase) replay_query(mut engine memory.EmbeddingEng
 		if link.link_kind != 'derived_from' || link.from_table_name != 'memory_reflections' {
 			continue
 		}
-		to_key := memory.reflection_source_key(link.to_table_name, link.to_primary_key, link.to_column_name)
+		to_key := memory.reflection_source_key(link.to_table_name, link.to_primary_key,
+			link.to_column_name)
 		score := candidate_keys[to_key] or { continue }
 		reflection_id := link.from_primary_key.bytestr()
 		current_score := reflection_scores[reflection_id] or { -1.0 }
@@ -721,9 +745,15 @@ fn (mut database PersistentDatabase) replay_overview(mut engine memory.Embedding
 	return memory.replay_overview(request.branch_name, result.evidence_hits, result.reflections)
 }
 
-fn (mut database PersistentDatabase) persist_markdown_reflection(branch_name string, table_name string, primary_key []u8, column_name string, mut engine memory.EmbeddingEngine, neighbor_limit int, input memory.ReflectionPersistInput, cfg ChunkConfig, meta CommitMeta) !memory.PersistedReflection {
-	database.index_reflective_markdown_fields(branch_name, table_name, primary_key, mut engine)!
-	job := database.build_markdown_reflection_job(branch_name, table_name, primary_key, column_name, mut engine, neighbor_limit)!
+pub fn (mut database PersistentDatabase) persist_markdown_reflection(branch_name string, table_name string, primary_key []u8, column_name string, mut engine memory.EmbeddingEngine, neighbor_limit int, input memory.ReflectionPersistInput, cfg ChunkConfig, meta CommitMeta) !memory.PersistedReflection {
+	database.index_reflective_markdown_fields(branch_name, table_name, primary_key, mut
+		engine)!
+	job := database.build_markdown_reflection_job(branch_name, table_name, primary_key,
+		column_name, mut engine, neighbor_limit)!
+	return database.persist_reflection_job(job, input, cfg, meta)
+}
+
+pub fn (mut database PersistentDatabase) persist_prebuilt_reflection_job(job memory.ReflectionJob, input memory.ReflectionPersistInput, cfg ChunkConfig, meta CommitMeta) !memory.PersistedReflection {
 	return database.persist_reflection_job(job, input, cfg, meta)
 }
 
@@ -731,11 +761,15 @@ fn (mut database PersistentDatabase) persist_reflection_job(job memory.Reflectio
 	if input.summary_md.trim_space().len == 0 {
 		return error('reflection summary_md cannot be empty')
 	}
+	vector_progress('persist reflection ensure tables title=${input.title}')
 	database.ensure_memory_reflections_table()!
 	database.ensure_memory_links_table()!
+	vector_progress('persist reflection root title=${input.title}')
 	derived_from_root_hash := database.engine.root_cid_at_branch(job.branch_name)!
+	vector_progress('persist reflection ingest summary title=${input.title}')
 	summary_ref := database.ingest_markdown(input.summary_md)!
 	insight_ref := if input.insight_md.trim_space().len > 0 {
+		vector_progress('persist reflection ingest insight title=${input.title}')
 		database.ingest_markdown(input.insight_md)!
 	} else {
 		MarkdownRef{}
@@ -798,7 +832,9 @@ fn (mut database PersistentDatabase) persist_reflection_job(job memory.Reflectio
 		link_row.set('created_at', link.created_at)
 		writes.put('memory_links', link.link_id.bytes(), link_row)
 	}
+	vector_progress('persist reflection apply writes title=${input.title} links=${links.len}')
 	database.apply_typed_write_set(job.branch_name, writes, cfg, meta)!
+	vector_progress('persist reflection apply done title=${input.title} links=${links.len}')
 	return memory.PersistedReflection{
 		reflection_id:            reflection_id
 		reflection_kind:          job.reflection_kind

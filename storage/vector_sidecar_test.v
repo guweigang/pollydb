@@ -224,8 +224,9 @@ fn test_vector_target_bindings_are_branch_consistent() {
 			text:          'A'
 		},
 	]) or { panic(err) }
-	assert db.vector_int_id_for_target('main', 'doc:path:a') or { panic(err) } == 1
-	assert db.vector_target_id_for_int('main', 1) or { panic(err) } == 'doc:path:a'
+	first_id := db.vector_int_id_for_target('main', 'doc:path:a') or { panic(err) }
+	assert first_id > 0
+	assert db.vector_target_id_for_int('main', first_id) or { panic(err) } == 'doc:path:a'
 
 	db.ensure_vector_target_bindings('main', [
 		memory.MarkdownEmbeddingTarget{
@@ -238,7 +239,7 @@ fn test_vector_target_bindings_are_branch_consistent() {
 			text:          'A again'
 		},
 	]) or { panic(err) }
-	assert db.vector_int_id_for_target('main', 'doc:path:a') or { panic(err) } == 1
+	assert db.vector_int_id_for_target('main', 'doc:path:a') or { panic(err) } == first_id
 
 	db.ensure_vector_target_bindings('main', [
 		memory.MarkdownEmbeddingTarget{
@@ -251,8 +252,10 @@ fn test_vector_target_bindings_are_branch_consistent() {
 			text:          'B'
 		},
 	]) or { panic(err) }
-	assert db.vector_int_id_for_target('main', 'doc:path:b') or { panic(err) } == 2
-	assert db.vector_target_id_for_int('main', 2) or { panic(err) } == 'doc:path:b'
+	second_id := db.vector_int_id_for_target('main', 'doc:path:b') or { panic(err) }
+	assert second_id > 0
+	assert second_id != first_id
+	assert db.vector_target_id_for_int('main', second_id) or { panic(err) } == 'doc:path:b'
 }
 
 $if usearch ? {
@@ -296,7 +299,7 @@ $if usearch ? {
 		}) or { panic(err) }
 		assert hits.len == 2
 		assert hits[0].target_id == 'a'
-		assert hits[0].int_id == 1
+		assert hits[0].int_id == db.vector_int_id_for_target('main', 'a') or { panic(err) }
 		assert hits[0].score > hits[1].score
 		index_path := usearch_sidecar_index_path(dir, VectorSearchQuery{
 			branch_name: 'main'

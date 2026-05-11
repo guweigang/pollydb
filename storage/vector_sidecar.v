@@ -34,6 +34,36 @@ pub:
 	dimensions    int
 }
 
+fn vector_progress_enabled() bool {
+	return os.getenv('POLLYDB_VECTOR_PROGRESS') == '1' || os.getenv('POLLYDB_MEMORY_PROGRESS') == '1'
+}
+
+fn vector_progress(message string) {
+	if vector_progress_enabled() {
+		eprintln('pollydb vector: ${message}')
+	}
+}
+
+fn vector_embedding_target_limit() int {
+	raw := os.getenv('POLLYDB_MEMORY_MAX_EMBED_TARGETS').trim_space()
+	if raw.len == 0 {
+		return 0
+	}
+	return raw.int()
+}
+
+fn stable_vector_int_id(target_id string) i64 {
+	sum := sha256.sum(target_id.bytes())
+	mut value := i64(0)
+	for idx in 0 .. 7 {
+		value = value * 256 + i64(sum[idx])
+	}
+	if value == 0 {
+		return 1
+	}
+	return value
+}
+
 pub enum VectorIndexBackendKind {
 	polly_scan
 	usearch
@@ -171,7 +201,6 @@ pub fn (mut database PersistentDatabase) ensure_vector_target_bindings(branch_na
 	database.ensure_vector_binding_tables()!
 	mut ids_by_target := map[string]i64{}
 	mut missing := []memory.MarkdownEmbeddingTarget{}
-	mut next_id := i64(1)
 	mut branch_exists := false
 	mut session := DatabaseSession{}
 	if _ := database.checkout(branch_name) {
@@ -184,14 +213,6 @@ pub fn (mut database PersistentDatabase) ensure_vector_target_bindings(branch_na
 			}
 			ids_by_target[target.id] = required_typed_row_i64(row, 'int_id')
 		}
-		existing_rows := session.scan_table(mut database, vector_target_ids_table_name,
-			0) or { []TypedSchemaRow{} }
-		for row in existing_rows {
-			current := required_typed_row_i64(row, 'int_id')
-			if current >= next_id {
-				next_id = current + 1
-			}
-		}
 	} else {
 		missing = targets.clone()
 	}
@@ -199,10 +220,8 @@ pub fn (mut database PersistentDatabase) ensure_vector_target_bindings(branch_na
 		return ids_by_target
 	}
 	mut writes := TypedWriteSet.new()
-	mut assigned := next_id
 	for target in missing {
-		int_id := assigned
-		assigned++
+		int_id := stable_vector_int_id(target.id)
 		ids_by_target[target.id] = int_id
 		mut target_row := TypedRowData.new()
 		target_row.set('target_id', target.id)
@@ -263,10 +282,13 @@ pub fn (mut database PersistentDatabase) upsert_markdown_embedding_targets_for_s
 	if targets.len != vectors.len {
 		return error('embedding targets and vectors length mismatch')
 	}
+	vector_progress('upsert targets=${targets.len} source=${table_name}.${column_name} key=${primary_key.bytestr()}')
 	backend_kind := database.vector_index_backend_kind()
 	if backend_kind == .usearch {
+		vector_progress('ensure backend=${backend_kind}')
 		database.ensure_vector_index_backend_ready(backend_kind)!
 	}
+	vector_progress('ensure target bindings targets=${targets.len}')
 	int_ids_by_target := database.ensure_vector_target_bindings(branch_name, targets)!
 	mut writes := TypedWriteSet.new()
 	for idx, target in targets {
@@ -293,11 +315,14 @@ pub fn (mut database PersistentDatabase) upsert_markdown_embedding_targets_for_s
 		row.set('vector_text', encode_vector_text(vector))
 		writes.put(vector_records_table_name, target.id.bytes(), row)
 	}
+	vector_progress('apply vector record writes targets=${targets.len}')
 	database.apply_typed_write_set(branch_name, writes, ChunkConfig.default(), CommitMeta{
 		author:  'pollydb/vector'
 		message: 'upsert vector records'
 	})!
+	vector_progress('upsert sidecar index targets=${targets.len} backend=${backend_kind}')
 	database.upsert_vector_index(branch_name, targets, vectors, backend_kind)!
+	vector_progress('upsert done targets=${targets.len}')
 }
 
 pub fn (mut database PersistentDatabase) index_markdown_ref_embeddings(branch_name string, ref MarkdownRef, mut engine memory.EmbeddingEngine) ![]memory.MarkdownEmbeddingTarget {
@@ -306,16 +331,25 @@ pub fn (mut database PersistentDatabase) index_markdown_ref_embeddings(branch_na
 }
 
 pub fn (mut database PersistentDatabase) index_markdown_ref_embeddings_for_source(branch_name string, table_name string, primary_key []u8, column_name string, ref MarkdownRef, mut engine memory.EmbeddingEngine) ![]memory.MarkdownEmbeddingTarget {
-	targets := markdown_embedding_targets_from_ref(database, ref)!
+	mut targets := markdown_embedding_targets_from_ref(database, ref)!
+	target_limit := vector_embedding_target_limit()
+	if target_limit > 0 && targets.len > target_limit {
+		vector_progress('limit markdown targets ${targets.len}->${target_limit} source=${table_name}.${column_name} key=${primary_key.bytestr()}')
+		targets = targets[..target_limit].clone()
+	}
+	vector_progress('embed markdown targets=${targets.len} source=${table_name}.${column_name} key=${primary_key.bytestr()}')
 	vectors := engine.embed_batch(memory.markdown_embedding_texts(targets))!
+	vector_progress('embed markdown done targets=${targets.len} source=${table_name}.${column_name} key=${primary_key.bytestr()}')
 	dims := engine.dimensions()
 	for vector in vectors {
 		if vector.len != dims {
 			return error('embedding engine returned inconsistent dimensions')
 		}
 	}
+	vector_progress('persist markdown vectors targets=${targets.len} source=${table_name}.${column_name} key=${primary_key.bytestr()}')
 	database.upsert_markdown_embedding_targets_for_source(branch_name, table_name, primary_key,
 		column_name, targets, vectors)!
+	vector_progress('index markdown done targets=${targets.len} source=${table_name}.${column_name} key=${primary_key.bytestr()}')
 	return targets
 }
 

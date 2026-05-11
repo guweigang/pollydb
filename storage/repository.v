@@ -214,6 +214,7 @@ fn write_checkpoint_journal(root_dir string, node_records []u8, commit_records [
 		return
 	}
 	path := repository_checkpoint_journal_path(root_dir)
+	os.mkdir_all(os.dir(path))!
 	mut payload := []u8{}
 	repository_append_u32(mut payload, u32(node_records.len))
 	repository_append_u32(mut payload, u32(commit_records.len))
@@ -611,21 +612,35 @@ pub fn (mut persistent PersistentRepository) close() ! {
 	persistent.commit_store.close()
 }
 
-pub fn (mut persistent PersistentRepository) checkpoint() ! {
-	if persistent.meta_dirty {
-		persistent.repo.persist(persistent.path)!
-		$if darwin {
-			mut repo_file := os.open_file(persistent.path, 'rb', 0o666)!
-			defer {
-				repo_file.close()
-			}
-			repo_file.flush()
-			chunk_store_fsync_fd(repo_file.fd)!
+fn (mut persistent PersistentRepository) persist_pending_records_to_journal() ! {
+	write_checkpoint_journal(
+		repository_root_dir_from_metadata_path(persistent.path),
+		persistent.node_store.pending_journal_records(),
+		persistent.commit_store.pending_journal_records(),
+	)!
+	persistent.node_store.mark_journal_records_persisted()
+	persistent.commit_store.mark_journal_records_persisted()
+}
+
+fn fsync_repository_meta(path string) ! {
+	$if darwin {
+		mut repo_file := os.open_file(path, 'rb', 0o666)!
+		defer {
+			repo_file.close()
 		}
-		persistent.meta_dirty = false
+		repo_file.flush()
+		chunk_store_fsync_fd(repo_file.fd)!
 	}
+}
+
+pub fn (mut persistent PersistentRepository) checkpoint() ! {
 	persistent.node_store.checkpoint()!
 	persistent.commit_store.checkpoint()!
+	if persistent.meta_dirty {
+		persistent.repo.persist(persistent.path)!
+		fsync_repository_meta(persistent.path)!
+		persistent.meta_dirty = false
+	}
 	persistent.node_store.clear_journal_records()
 	persistent.commit_store.clear_journal_records()
 	os.rm(repository_checkpoint_journal_path(repository_root_dir_from_metadata_path(persistent.path))) or {}
@@ -640,34 +655,26 @@ pub fn (mut persistent PersistentRepository) refresh_index_snapshots() ! {
 }
 
 pub fn (mut persistent PersistentRepository) checkpoint_mode(mode CheckpointMode) ! {
-	if persistent.meta_dirty {
-		persistent.repo.persist(persistent.path)!
-		$if darwin {
-			mut repo_file := os.open_file(persistent.path, 'rb', 0o666)!
-			defer {
-				repo_file.close()
-			}
-			repo_file.flush()
-			chunk_store_fsync_fd(repo_file.fd)!
-		}
-		persistent.meta_dirty = false
-	}
 	match mode {
 		.full {
 			persistent.node_store.checkpoint_mode(mode)!
 			persistent.commit_store.checkpoint_mode(mode)!
+			if persistent.meta_dirty {
+				persistent.repo.persist(persistent.path)!
+				fsync_repository_meta(persistent.path)!
+				persistent.meta_dirty = false
+			}
 			persistent.node_store.clear_journal_records()
 			persistent.commit_store.clear_journal_records()
 			os.rm(repository_checkpoint_journal_path(repository_root_dir_from_metadata_path(persistent.path))) or {}
 		}
 		.data_only {
-			write_checkpoint_journal(
-				repository_root_dir_from_metadata_path(persistent.path),
-				persistent.node_store.pending_journal_records(),
-				persistent.commit_store.pending_journal_records(),
-			)!
-			persistent.node_store.mark_journal_records_persisted()
-			persistent.commit_store.mark_journal_records_persisted()
+			persistent.persist_pending_records_to_journal()!
+			if persistent.meta_dirty {
+				persistent.repo.persist(persistent.path)!
+				fsync_repository_meta(persistent.path)!
+				persistent.meta_dirty = false
+			}
 		}
 	}
 }
@@ -675,22 +682,15 @@ pub fn (mut persistent PersistentRepository) checkpoint_mode(mode CheckpointMode
 pub fn (mut persistent PersistentRepository) checkpoint_timed() !PersistentRepositoryCheckpointTimings {
 	mut total_sw := time.new_stopwatch()
 	mut repo_meta_us := i64(0)
+	node_store_timings := persistent.node_store.checkpoint_timed()!
+	commit_store_timings := persistent.commit_store.checkpoint_timed()!
 	if persistent.meta_dirty {
 		mut sw := time.new_stopwatch()
 		persistent.repo.persist(persistent.path)!
-		$if darwin {
-			mut repo_file := os.open_file(persistent.path, 'rb', 0o666)!
-			defer {
-				repo_file.close()
-			}
-			repo_file.flush()
-			chunk_store_fsync_fd(repo_file.fd)!
-		}
+		fsync_repository_meta(persistent.path)!
 		persistent.meta_dirty = false
 		repo_meta_us = sw.elapsed().microseconds()
 	}
-	node_store_timings := persistent.node_store.checkpoint_timed()!
-	commit_store_timings := persistent.commit_store.checkpoint_timed()!
 	return PersistentRepositoryCheckpointTimings{
 		repo_meta_us: repo_meta_us
 		node_store_data_us: node_store_timings.data_us
@@ -706,24 +706,17 @@ pub fn (mut persistent PersistentRepository) checkpoint_timed() !PersistentRepos
 pub fn (mut persistent PersistentRepository) checkpoint_timed_mode(mode CheckpointMode) !PersistentRepositoryCheckpointTimings {
 	mut total_sw := time.new_stopwatch()
 	mut repo_meta_us := i64(0)
-	if persistent.meta_dirty {
-		mut sw := time.new_stopwatch()
-		persistent.repo.persist(persistent.path)!
-		$if darwin {
-			mut repo_file := os.open_file(persistent.path, 'rb', 0o666)!
-			defer {
-				repo_file.close()
-			}
-			repo_file.flush()
-			chunk_store_fsync_fd(repo_file.fd)!
-		}
-		persistent.meta_dirty = false
-		repo_meta_us = sw.elapsed().microseconds()
-	}
 	match mode {
 		.full {
 			node_store_timings := persistent.node_store.checkpoint_timed_mode(mode)!
 			commit_store_timings := persistent.commit_store.checkpoint_timed_mode(mode)!
+			if persistent.meta_dirty {
+				mut sw := time.new_stopwatch()
+				persistent.repo.persist(persistent.path)!
+				fsync_repository_meta(persistent.path)!
+				persistent.meta_dirty = false
+				repo_meta_us = sw.elapsed().microseconds()
+			}
 			return PersistentRepositoryCheckpointTimings{
 				repo_meta_us: repo_meta_us
 				node_store_data_us: node_store_timings.data_us
@@ -737,14 +730,15 @@ pub fn (mut persistent PersistentRepository) checkpoint_timed_mode(mode Checkpoi
 		}
 		.data_only {
 			mut journal_sw := time.new_stopwatch()
-			write_checkpoint_journal(
-				repository_root_dir_from_metadata_path(persistent.path),
-				persistent.node_store.pending_journal_records(),
-				persistent.commit_store.pending_journal_records(),
-			)!
-			persistent.node_store.mark_journal_records_persisted()
-			persistent.commit_store.mark_journal_records_persisted()
+			persistent.persist_pending_records_to_journal()!
 			journal_us := journal_sw.elapsed().microseconds()
+			if persistent.meta_dirty {
+				mut sw := time.new_stopwatch()
+				persistent.repo.persist(persistent.path)!
+				fsync_repository_meta(persistent.path)!
+				persistent.meta_dirty = false
+				repo_meta_us = sw.elapsed().microseconds()
+			}
 			return PersistentRepositoryCheckpointTimings{
 				repo_meta_us: repo_meta_us
 				node_store_data_us: 0
@@ -791,7 +785,9 @@ pub fn (mut persistent PersistentRepository) persist() ! {
 	if !persistent.meta_dirty {
 		return
 	}
+	persistent.persist_pending_records_to_journal()!
 	persistent.repo.persist(persistent.path)!
+	fsync_repository_meta(persistent.path)!
 	persistent.meta_dirty = false
 }
 
@@ -819,6 +815,7 @@ pub fn (mut persistent PersistentRepository) create_branch(name string, from_com
 }
 
 pub fn (mut persistent PersistentRepository) compare_and_swap_branch_head(name string, old_commit_cid string, new_commit_cid string) !Branch {
+	persistent.persist_pending_records_to_journal()!
 	mut backend := LocalBranchHeadBackend{
 		path: persistent.path
 	}

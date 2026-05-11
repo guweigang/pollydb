@@ -119,6 +119,7 @@ pub fn (mut backend LocalRepositoryMetaBackend) load_repository() !Repository {
 
 pub fn (mut backend LocalRepositoryMetaBackend) save_repository(repo Repository) ! {
 	repo.persist(backend.path)!
+	fsync_repository_meta(backend.path)!
 }
 
 pub struct LocalBranchHeadBackend {
@@ -144,6 +145,7 @@ pub fn (mut backend LocalBranchHeadBackend) compare_and_swap_branch_head(branch 
 		}
 		repo.branches[branch] = new_commit_cid
 		repo.persist(backend.path)!
+		fsync_repository_meta(backend.path)!
 		return true
 	}
 	if current.commit_cid != old_commit_cid {
@@ -151,6 +153,7 @@ pub fn (mut backend LocalBranchHeadBackend) compare_and_swap_branch_head(branch 
 	}
 	repo.branches[branch] = new_commit_cid
 	repo.persist(backend.path)!
+	fsync_repository_meta(backend.path)!
 	return true
 }
 
