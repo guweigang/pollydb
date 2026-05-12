@@ -332,6 +332,13 @@ fn run_memory_command(args []string, store agentview.PollyDbStore) ! {
 
 fn run_memory_preview(args []string, store agentview.PollyDbStore) ! {
 	$if llama_cpp ? {
+		options := memory_distill_options_from_args(args)
+		report := store.inspect_recent_memory_salience(options.recent_sessions)!
+		print_memory_salience_report(report)
+		if report.embedding_candidate_entries == 0 {
+			print_memory_preview([])
+			return
+		}
 		embedding_model_path := memory_embedding_model_path()!
 		mut embedding_engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
 			model_path:   embedding_model_path
@@ -342,7 +349,6 @@ fn run_memory_preview(args []string, store agentview.PollyDbStore) ! {
 		defer {
 			embedding_engine.close()
 		}
-		options := memory_distill_options_from_args(args)
 		mut previews := []agentview.MemoryDistillPreviewCard{}
 		if memory_use_heuristic_distill() {
 			previews = store.preview_recent_memory_heuristic(mut embedding_engine, options)!
@@ -365,6 +371,13 @@ fn run_memory_preview(args []string, store agentview.PollyDbStore) ! {
 	} $else {
 		return error('agentview memory preview requires a binary built with `-d llama_cpp`')
 	}
+}
+
+fn print_memory_salience_report(report agentview.MemorySalienceReport) {
+	println('memory_salience raw=${report.raw_entries} candidates=${report.candidate_entries} embedding_candidates=${report.embedding_candidate_entries}')
+	println('memory_salience candidates_by_type=${format_memory_counts(report.candidates_by_type)}')
+	println('memory_salience skipped_by_reason=${format_memory_counts(report.skipped_by_reason)}')
+	println('memory_salience discarded_before_embedding=${format_memory_counts(report.discarded_before_embedding)}')
 }
 
 fn run_memory_distill(args []string, store agentview.PollyDbStore) ! {
