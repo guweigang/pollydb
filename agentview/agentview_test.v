@@ -752,6 +752,20 @@ fn test_memory_card_write_decision_keeps_durable_cards_and_discards_noise() {
 	assert !truncated_markdown_link.keep
 	assert truncated_markdown_link.reason == 'corrupt_title'
 
+	unclosed_markdown_label := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '对应回归我补在了 [test_vslim_psr7_server_request_clone_auth_attribute_chain.'
+		summary_md: '# 摘要\n\n- 对应回归我补在了 [test_vslim_psr7_server_request_clone_auth_attribute_chain.\n'
+	})
+	assert !unclosed_markdown_label.keep
+	assert unclosed_markdown_label.reason == 'corrupt_title'
+
+	corrupt_summary_char := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '`knowledge-studio` 崩溃定位'
+		summary_md: '# 摘要\n\n- 我也重新编译了 [vslim.so](/Users/demo/vslim.so)，并确认一Ɲ\n'
+	})
+	assert !corrupt_summary_char.keep
+	assert corrupt_summary_char.reason == 'bad_summary_point'
+
 	unbalanced_cjk_quotes := memory_card_write_decision(memory.ReflectionPersistInput{
 		title:      '2 attrs 不能回退”，一个看“3 attrs 能不能终于过'
 		summary_md: '# 摘要\n\n- 2 attrs 不能回退”，一个看“3 attrs 能不能终于过\n'

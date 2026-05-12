@@ -1498,6 +1498,12 @@ fn memory_looks_like_corrupt_or_truncated_fragment_for_card(text string) bool {
 	if cleaned.contains('�') {
 		return true
 	}
+	if cleaned.contains('Ɲ') {
+		return true
+	}
+	if cleaned.contains('[') && !cleaned.contains(']') {
+		return true
+	}
 	if cleaned.contains('](') && !cleaned.contains(')') {
 		return true
 	}
