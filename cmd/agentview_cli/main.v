@@ -2,6 +2,7 @@ module main
 
 import os
 import agentview
+import memory
 import storage
 import time
 
@@ -268,6 +269,8 @@ fn usage() string {
 		+ 'agentview memory list [--query TEXT] [--limit N] [--offset N] [--include-superseded] [--store-root <path>]\n'
 		+ 'agentview memory search <query> [--limit N] [--offset N] [--include-superseded] [--store-root <path>]\n'
 		+ 'agentview memory context <query> [--limit N] [--sources] [--store-root <path>]\n'
+		+ 'agentview memory preview [--recent-sessions N] [--max-jobs N] [--neighbor-limit N] [--candidate-limit N] [--candidate-offset N] [--store-root <path>]\n'
+		+ 'agentview memory distill [--recent-sessions N] [--max-jobs N] [--neighbor-limit N] [--candidate-limit N] [--candidate-offset N] [--store-root <path>]\n'
 		+ 'agentview context <query> [--limit N] [--sources] [--store-root <path>]\n'
 		+ 'default codex root: ~/.codex\n'
 		+ 'default store root: ~/.agentview/pollydb\n'
@@ -280,7 +283,8 @@ fn usage() string {
 		+ 'note: bench-split-materialize measures converting one mixed typed tree into split row/index trees\n'
 		+ 'note: bench-write-matrix runs insert/update/delete/mixed across index-count presets\n'
 		+ 'note: explain-browser shows whether browser list/transcript/search use indexes or scans\n'
-		+ 'note: bench-browser measures the real browser-facing list/transcript/search calls against your store'
+		+ 'note: bench-browser measures the real browser-facing list/transcript/search calls against your store\n'
+		+ 'note: memory preview/distill require -d llama_cpp and POLLYDB_MEMORY_EMBEDDING_MODEL; set POLLYDB_MEMORY_FAST_DISTILL=1 for heuristic text generation'
 }
 
 fn run_memory_command(args []string, store agentview.PollyDbStore) ! {
@@ -314,9 +318,89 @@ fn run_memory_command(args []string, store agentview.PollyDbStore) ! {
 			})!
 			print(context.markdown)
 		}
-		else {
-			return error('unknown memory command: ${subcommand}; expected list|search|context')
+		'preview' {
+			run_memory_preview(args, store)!
 		}
+		'distill' {
+			run_memory_distill(args, store)!
+		}
+		else {
+			return error('unknown memory command: ${subcommand}; expected list|search|context|preview|distill')
+		}
+	}
+}
+
+fn run_memory_preview(args []string, store agentview.PollyDbStore) ! {
+	$if llama_cpp ? {
+		embedding_model_path := memory_embedding_model_path()!
+		mut embedding_engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
+			model_path:   embedding_model_path
+			n_ctx:        512
+			n_batch:      512
+			n_gpu_layers: 0
+		})!
+		defer {
+			embedding_engine.close()
+		}
+		options := memory_distill_options_from_args(args)
+		mut previews := []agentview.MemoryDistillPreviewCard{}
+		if memory_use_heuristic_distill() {
+			previews = store.preview_recent_memory_heuristic(mut embedding_engine, options)!
+		} else {
+			generation_model_path := memory_generation_model_path()!
+			mut generator := memory.new_llama_generation_engine(memory.LlamaGenerationConfig{
+				model_path:       generation_model_path
+				n_ctx:            2048
+				n_batch:          512
+				n_gpu_layers:     0
+				max_tokens:       260
+				max_output_bytes: 12000
+			})!
+			defer {
+				generator.close()
+			}
+			previews = store.preview_recent_memory(mut embedding_engine, mut generator, options)!
+		}
+		print_memory_preview(previews)
+	} $else {
+		return error('agentview memory preview requires a binary built with `-d llama_cpp`')
+	}
+}
+
+fn run_memory_distill(args []string, store agentview.PollyDbStore) ! {
+	$if llama_cpp ? {
+		embedding_model_path := memory_embedding_model_path()!
+		mut embedding_engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
+			model_path:   embedding_model_path
+			n_ctx:        512
+			n_batch:      512
+			n_gpu_layers: 0
+		})!
+		defer {
+			embedding_engine.close()
+		}
+		options := memory_distill_options_from_args(args)
+		mut persisted := []memory.PersistedReflection{}
+		if memory_use_heuristic_distill() {
+			persisted = store.distill_recent_memory_heuristic(mut embedding_engine, options)!
+		} else {
+			generation_model_path := memory_generation_model_path()!
+			mut generator := memory.new_llama_generation_engine(memory.LlamaGenerationConfig{
+				model_path:       generation_model_path
+				n_ctx:            2048
+				n_batch:          512
+				n_gpu_layers:     0
+				max_tokens:       260
+				max_output_bytes: 12000
+			})!
+			defer {
+				generator.close()
+			}
+			persisted = store.distill_recent_memory(mut embedding_engine, mut generator, options)!
+		}
+		print_memory_distill_result(persisted)
+	} $else {
+		return error('agentview memory distill requires a binary built with `-d llama_cpp`')
 	}
 }
 
@@ -369,6 +453,78 @@ fn print_memory_list(result agentview.MemoryListResult) {
 	}
 }
 
+fn print_memory_preview(previews []agentview.MemoryDistillPreviewCard) {
+	mut keep_count := 0
+	mut discard_count := 0
+	mut discard_reasons := map[string]int{}
+	for preview in previews {
+		if preview.decision.keep {
+			keep_count++
+		} else {
+			discard_count++
+			reason := if preview.decision.reason.len > 0 { preview.decision.reason } else { 'discard' }
+			discard_reasons[reason] = discard_reasons[reason] + 1
+		}
+	}
+	println('memory_preview cards=${previews.len} keep=${keep_count} discard=${discard_count} discard_reasons=${format_memory_counts(discard_reasons)}')
+	for preview in previews {
+		println('')
+		println('action=${preview.write_plan.action} reason=${preview.write_plan.reason} score=${preview.write_plan.score} confidence=${preview.write_plan.trace.confidence}')
+		println('title=${preview.title}')
+		println('topic=${preview.topic_key} evidence=${preview.evidence_count} supersedes=${preview.supersedes_id}')
+		println('signals=${preview.write_plan.trace.signals.join(',')} blockers=${preview.write_plan.trace.blockers.join(',')}')
+		println('inference=${preview.write_plan.trace.inference}')
+		if preview.write_plan.action == 'discard' {
+			println('discarded candidate; no memory card will be written')
+			continue
+		}
+		println('')
+		println(preview.summary_md.trim_space())
+		if preview.insight_md.trim_space().len > 0 {
+			println('')
+			println(preview.insight_md.trim_space())
+		}
+	}
+}
+
+fn print_memory_distill_result(persisted []memory.PersistedReflection) {
+	println('memory_distill reflections=${persisted.len}')
+	if persisted.len == 0 {
+		println('no new reflections')
+		return
+	}
+	for reflection in persisted {
+		println('')
+		println('id=${reflection.reflection_id} kind=${reflection.reflection_kind} topic=${reflection.topic_key} sources=${reflection.source_refs.len}')
+		if reflection.supersedes_reflection_id.len > 0 {
+			println('supersedes=${reflection.supersedes_reflection_id}')
+		}
+		println('title=${reflection.title}')
+		println('')
+		println(reflection.summary_md.trim_space())
+		if reflection.insight_md.trim_space().len > 0 {
+			println('')
+			println(reflection.insight_md.trim_space())
+		}
+	}
+}
+
+fn format_memory_counts(counts map[string]int) string {
+	if counts.len == 0 {
+		return '{}'
+	}
+	mut keys := []string{cap: counts.len}
+	for key, _ in counts {
+		keys << key
+	}
+	keys.sort()
+	mut parts := []string{cap: keys.len}
+	for key in keys {
+		parts << '${key}:${counts[key]}'
+	}
+	return parts.join(',')
+}
+
 fn first_memory_summary_line(summary_md string) string {
 	for line in summary_md.split_into_lines() {
 		cleaned := line.trim_space()
@@ -378,6 +534,38 @@ fn first_memory_summary_line(summary_md string) string {
 		return cleaned
 	}
 	return ''
+}
+
+fn memory_distill_options_from_args(args []string) agentview.MemoryDistillOptions {
+	max_jobs := parse_flag_int(args, '--max-jobs', 4)
+	return agentview.MemoryDistillOptions{
+		recent_sessions:  parse_flag_int(args, '--recent-sessions', 64)
+		max_jobs:         max_jobs
+		neighbor_limit:   parse_flag_int(args, '--neighbor-limit', 8)
+		min_evidence:     parse_flag_int(args, '--min-evidence', 1)
+		candidate_limit:  parse_flag_int(args, '--candidate-limit', max_jobs * 16)
+		candidate_offset: parse_flag_int(args, '--candidate-offset', 0)
+	}
+}
+
+fn memory_use_heuristic_distill() bool {
+	return os.getenv('POLLYDB_MEMORY_FAST_DISTILL').trim_space() in ['1', 'true', 'yes']
+}
+
+fn memory_embedding_model_path() !string {
+	model_path := os.getenv('POLLYDB_MEMORY_EMBEDDING_MODEL').trim_space()
+	if model_path.len == 0 {
+		return error('missing embedding model path; set POLLYDB_MEMORY_EMBEDDING_MODEL')
+	}
+	return model_path
+}
+
+fn memory_generation_model_path() !string {
+	model_path := os.getenv('POLLYDB_MEMORY_GENERATION_MODEL').trim_space()
+	if model_path.len == 0 {
+		return error('missing generation model path; set POLLYDB_MEMORY_GENERATION_MODEL or POLLYDB_MEMORY_FAST_DISTILL=1')
+	}
+	return model_path
 }
 
 fn run_explain_browser(args []string) ! {

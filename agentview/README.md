@@ -18,6 +18,7 @@ Current scope:
 - `pollydb`-backed local cache and query store
 - incremental sync that skips unchanged sessions
 - sync progress events surfaced through the CLI
+- distilled memory records with source provenance
 - CLI queries through `cmd/agentview_cli`
 - a `term.ui` TUI browser for list/read/search flows
 
@@ -27,6 +28,9 @@ CLI supports:
 - transcript paging (`show <session_id> --offset N --limit N`)
 - scoped search (`search <query> --session-id ID --offset N --limit N`)
 - browse mode with auto-sync on empty stores (`browse`)
+- memory listing and search (`memory list`, `memory search <query>`)
+- memory preview and distillation (`memory preview`, `memory distill`)
+- model-facing memory context output (`context <query>`, `memory context <query>`)
 
 Browse mode supports:
 
@@ -46,10 +50,12 @@ Current architecture:
 - the first backend is `pollydb`, used as a local cache plus query/index engine
 - the store layer now exposes paging/filtering oriented APIs for future TUI work
 - the TUI browser stays on top of the same store interface as the CLI
+- memory is stored as versioned derived data in `pollydb`, separate from raw transcripts
 
 Planned next steps:
 
 - Claude and Copilot adapters
 - richer tool-call correlation
+- first-class memory page in the TUI browser
 - saved search presets and session facets
 - richer transcript navigation and tool-call drill-down
