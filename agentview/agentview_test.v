@@ -925,6 +925,13 @@ fn test_memory_card_sanitize_input_removes_low_context_points() {
 	})
 	assert !vague_side_gap.keep
 	assert vague_side_gap.reason == 'vague_title'
+
+	vague_difference := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '真实 app 的关键差异已经出来了'
+		summary_md: '# 摘要\n\n- 最小复现已经给出硬信号了：`session + access` 这条链一上去，请求就被稳定打回 `302`\n'
+	})
+	assert !vague_difference.keep
+	assert vague_difference.reason == 'vague_title'
 }
 
 fn test_memory_card_write_plan_explains_add_update_and_discard() {

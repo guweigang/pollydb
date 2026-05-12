@@ -1697,7 +1697,8 @@ fn memory_looks_like_vague_resolution_title_for_card(text string) bool {
 	for marker in ['定位到了', '已经定位到', '定位到原因了', '原因清楚了',
 		'这下原因清楚了', '表结构已经说明原因了', '已经说明原因了',
 		'又抓到一条很像根因', '有新信号', '编译这边有新信号',
-		'编译已经起了', '不能抢跑下结论', '顺手的缺口', '这条失败里'] {
+		'编译已经起了', '不能抢跑下结论', '顺手的缺口', '这条失败里',
+		'关键差异已经出来'] {
 		if lower == marker || lower.contains(marker) {
 			return true
 		}
