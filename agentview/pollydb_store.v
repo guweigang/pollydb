@@ -996,8 +996,22 @@ fn memory_card_write_decision(input memory.ReflectionPersistInput) MemoryCardWri
 fn memory_card_sanitize_input(input memory.ReflectionPersistInput) memory.ReflectionPersistInput {
 	return memory.ReflectionPersistInput{
 		...input
+		title:      memory_card_sanitize_phrase(input.title)
 		summary_md: memory_card_sanitize_summary_markdown(input.summary_md)
 	}
+}
+
+fn memory_card_sanitize_phrase(text string) string {
+	mut cleaned := text.trim_space()
+	for prefix in ['这刀只动了', '这次只动了'] {
+		if cleaned.starts_with(prefix) {
+			cleaned = '只动了' + cleaned[prefix.len..]
+		}
+	}
+	if cleaned.starts_with('我把') {
+		cleaned = cleaned['我把'.len..].trim_space()
+	}
+	return cleaned
 }
 
 fn memory_card_sanitize_summary_markdown(summary_md string) string {
@@ -1009,10 +1023,39 @@ fn memory_card_sanitize_summary_markdown(summary_md string) string {
 			if memory_card_point_is_discardable(point) {
 				continue
 			}
+			lines << '${trimmed[..2]}${memory_card_sanitize_phrase(point)}'
+			continue
 		}
 		lines << line
 	}
-	return memory_card_compact_markdown(lines).trim_space() + '\n'
+	return memory_card_compact_markdown(memory_card_remove_empty_markdown_sections(lines)).trim_space() + '\n'
+}
+
+fn memory_card_remove_empty_markdown_sections(lines []string) []string {
+	mut out := []string{}
+	for idx, line in lines {
+		trimmed := line.trim_space()
+		if trimmed.starts_with('## ') {
+			mut has_content := false
+			mut next_idx := idx + 1
+			for next_idx < lines.len {
+				next_trimmed := lines[next_idx].trim_space()
+				if next_trimmed.starts_with('## ') || next_trimmed.starts_with('# ') {
+					break
+				}
+				if next_trimmed.starts_with('- ') || next_trimmed.starts_with('* ') {
+					has_content = true
+					break
+				}
+				next_idx++
+			}
+			if !has_content {
+				continue
+			}
+		}
+		out << line
+	}
+	return out
 }
 
 fn memory_card_compact_markdown(lines []string) string {
@@ -1471,6 +1514,7 @@ fn memory_card_point_is_discardable(point string) bool {
 		}
 	}
 	return memory_looks_like_shell_prompt(cleaned) || memory_looks_like_raw_log(cleaned)
+		|| memory_looks_like_raw_error_fragment_for_card(cleaned)
 		|| memory_looks_like_context_dependent_short_note_for_card(cleaned)
 		|| memory_looks_like_ascii_label_for_card(cleaned)
 		|| memory_looks_like_isolated_artifact_for_card(cleaned)
@@ -1487,6 +1531,7 @@ fn memory_card_point_has_blocking_noise(point string) bool {
 		|| memory_looks_like_future_action_process_for_card(cleaned)
 		|| memory_looks_like_process_or_debug_card_point(cleaned)
 		|| memory_looks_like_raw_schema_fragment_for_card(cleaned)
+		|| memory_looks_like_raw_error_fragment_for_card(cleaned)
 		|| memory_looks_like_corrupt_or_truncated_fragment_for_card(cleaned)
 }
 
@@ -1629,6 +1674,7 @@ fn memory_looks_like_regression_confirmation_for_card(text string) bool {
 	return lower.contains('确认这个') || lower.contains('确认回归')
 		|| lower.contains('正式跑法') || lower.contains('确认没有漏掉')
 		|| lower.contains('确认不是偶发') || lower.contains('不是偶发现象')
+		|| lower.contains('收口验证')
 		|| lower.contains('你现在可以直接改') || lower.contains('你可以直接改')
 		|| lower.contains('现在可以直接改')
 }
@@ -1639,6 +1685,7 @@ fn memory_looks_like_hypothesis_validation_for_card(text string) bool {
 		|| lower.contains('如果它能') || lower.contains('如果能立刻')
 		|| lower.contains('如果 baseline') || lower.contains('如果baseline')
 		|| lower.contains('仍炸、而') || lower.contains('仍炸，而')
+		|| lower.contains('不能当结论') || lower.contains('不当结论')
 		|| lower.contains('说明崩点') || lower.contains('碰到正确层')
 		|| lower.contains('刚才那条改动') || lower.contains('如果成立')
 		|| lower.contains('如果真是') || lower.contains('不是我们要的')
@@ -1650,7 +1697,7 @@ fn memory_looks_like_vague_resolution_title_for_card(text string) bool {
 	for marker in ['定位到了', '已经定位到', '定位到原因了', '原因清楚了',
 		'这下原因清楚了', '表结构已经说明原因了', '已经说明原因了',
 		'又抓到一条很像根因', '有新信号', '编译这边有新信号',
-		'编译已经起了'] {
+		'编译已经起了', '不能抢跑下结论'] {
 		if lower == marker || lower.contains(marker) {
 			return true
 		}
@@ -1662,7 +1709,8 @@ fn memory_looks_like_process_or_debug_card_title(text string) bool {
 	lower := text.to_lower()
 	for marker in ['日志', 'stderr', '抓最后', '不对劲', '不需要再飘', '根因基本对上',
 		'不能完整返回', '这回栈', '看最后一段', '回打一遍 baseline', '回打一遍baseline',
-		'请求级验证'] {
+		'请求级验证', '真跑两条', '构建还在跑', '中间态', '这笔 commit',
+		'这笔提交'] {
 		if lower.contains(marker) {
 			return true
 		}
@@ -1674,7 +1722,9 @@ fn memory_looks_like_process_or_debug_card_point(text string) bool {
 	lower := text.to_lower()
 	for marker in ['不能完整返回', '日志文件', 'stderr 输出', '看到崩溃前最后', '我现在修的就是',
 		'不需要再飘', '根因基本对上', '空 body', 'controller not bound',
-		'本地起内置 server', '被沙箱拦住', '不影响我们验证逻辑'] {
+		'本地起内置 server', '被沙箱拦住', '不影响我们验证逻辑', '我不想凭感觉猜',
+		'我现在用这个真跑', '构建还在跑', '抢到了旧', '中间态', '这笔 commit',
+		'这笔提交', '收口验证'] {
 		if lower.contains(marker) {
 			return true
 		}
@@ -1687,6 +1737,17 @@ fn memory_looks_like_raw_schema_fragment_for_card(text string) bool {
 	for prefix in ['add column ', 'alter table ', 'create table ', 'drop table ', 'create index ',
 		'drop index '] {
 		if lower.starts_with(prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_looks_like_raw_error_fragment_for_card(text string) bool {
+	lower := text.to_lower().trim_space()
+	for marker in ['using password: no', 'access denied for user', 'connection refused',
+		'no such file or directory', 'permission denied'] {
+		if lower.contains(marker) {
 			return true
 		}
 	}
@@ -1748,6 +1809,9 @@ fn memory_looks_like_corrupt_or_truncated_fragment_for_card(text string) bool {
 	if cleaned.contains('](') && !cleaned.contains(')') {
 		return true
 	}
+	if cleaned.count('**') % 2 == 1 {
+		return true
+	}
 	if memory_has_unbalanced_cjk_quotes(cleaned) {
 		return true
 	}
@@ -1775,7 +1839,9 @@ fn memory_looks_like_transient_card_point(text string) bool {
 	for marker in ['我先', '我会先', '我准备', '我去看', '我要开始', '我要动',
 		'我再看一下', '我顺手', '我同意', '随后会', '现在把', '我在等',
 		'会直接指出', '找到具体 workflow', '我再确认一次', '本地起内置 server',
-		'被沙箱拦住', '不影响我们验证逻辑'] {
+		'被沙箱拦住', '不影响我们验证逻辑', '我现在用这个真跑',
+		'我不想凭感觉猜', '构建还在跑', '抢到了旧', '中间态', '这笔 commit',
+		'这笔提交', '收口验证'] {
 		if lower.contains(marker) {
 			return true
 		}

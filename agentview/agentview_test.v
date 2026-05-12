@@ -801,6 +801,27 @@ fn test_memory_card_write_decision_keeps_durable_cards_and_discards_noise() {
 	assert !sandbox_validation.keep
 	assert sandbox_validation.reason == 'process_title'
 
+	phpt_run_process := memory_card_write_decision(memory_card_sanitize_input(memory.ReflectionPersistInput{
+		title:      '/opt/homebrew/Cellar/php/8.5.4_1/lib/php/build/run-tests.php'
+		summary_md: '# 摘要\n\n- 我现在用这个真跑两条 PHPT\n- /opt/homebrew/Cellar/php/8.5.4_1/lib/php/build/run-tests.php\n'
+	}))
+	assert !phpt_run_process.keep
+	assert phpt_run_process.reason == 'title_replay_only'
+
+	generic_caution := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '不能抢跑下结论'
+		summary_md: '# 摘要\n\n- 单例控制器缓存 view\n- 我不想凭感觉猜了\n\n## 重要约束\n\n- 不能抢跑下结论\n'
+	})
+	assert !generic_caution.keep
+	assert generic_caution.reason == 'vague_title'
+
+	build_in_progress := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '构建还在跑，刚才两条 probe 又抢到了旧 `so`/中间态 不能当结论'
+		summary_md: '# 摘要\n\n- 构建还在跑，刚才两条 probe 又抢到了旧 `so`/中间态 不能当结论\n\n## 重要约束\n\n- 构建还在跑，刚才两条 probe 又抢到了旧 `so`/中间态 不能当结论\n'
+	})
+	assert !build_in_progress.keep
+	assert build_in_progress.reason == 'hypothesis_validation_title'
+
 	edit_permission_noise := memory_card_write_decision(memory.ReflectionPersistInput{
 		title:      '加了轻量加载器 [EnvLoader.php](/Users/demo/app/Support/EnvLoader.php)'
 		summary_md: '# 摘要\n\n- 你现在可以直接改这两个文件\n- 加了轻量加载器 [EnvLoader.php](/Users/demo/app/Support/EnvLoader.php)\n'
@@ -851,6 +872,52 @@ fn test_memory_card_sanitize_input_removes_low_context_points() {
 	assert !sanitized.summary_md.contains('骨架已经写进去了')
 	assert sanitized.summary_md.contains('不要顺手把 README 的启动说明补成可直接执行的版本')
 	assert memory_card_write_decision(sanitized).keep
+
+	env_input := memory.ReflectionPersistInput{
+		title:      '同一份 `.env`，PDO 能连、VSlim seed 不能连'
+		summary_md: '# 摘要\n\n- 命令执行环境没有带上你项目里的 `.env`\n- using password: NO\n\n## 关键决策\n\n- 命令执行环境没有带上你项目里的 `.env`\n\n## 重要约束\n\n- 同一份 `.env`，PDO 能连、VSlim seed 不能连\n'
+	}
+	env_sanitized := memory_card_sanitize_input(env_input)
+	assert !env_sanitized.summary_md.contains('using password: NO')
+	assert env_sanitized.summary_md.contains('命令执行环境没有带上你项目里的 `.env`')
+	assert memory_card_write_decision(env_sanitized).keep
+
+	bridge_input := memory.ReflectionPersistInput{
+		title:      '这刀只动了 `vphp` 的 C bridge 不需要重新转译 V，直接重链 `vslim.so` 就能验证'
+		summary_md: '# 摘要\n\n- 这刀只动了 `vphp` 的 C bridge 不需要重新转译 V，直接重链 `vslim.so` 就能验证\n'
+	}
+	bridge_sanitized := memory_card_sanitize_input(bridge_input)
+	assert bridge_sanitized.title.starts_with('只动了 `vphp`')
+	assert !bridge_sanitized.title.contains('这刀')
+	assert !bridge_sanitized.summary_md.contains('这刀')
+
+	commit_boundary := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '不把 `knowledge-studio` 目录和运行产物塞进这笔 commit'
+		summary_md: '# 摘要\n\n- 不把 `knowledge-studio` 目录和运行产物塞进这笔 commit\n'
+	})
+	assert !commit_boundary.keep
+	assert commit_boundary.reason == 'process_title'
+
+	closeout_validation := memory_card_write_decision(memory_card_sanitize_input(memory.ReflectionPersistInput{
+		title:      '我把迁移/seed 命令也挂上了，避免 `README` 和 CLI 再脱节'
+		summary_md: '# 摘要\n\n- 现在做一轮收口验证：语法、CLI 命令、以及 console 读 service/repository 之后是否还正常\n- 我把迁移/seed 命令也挂上了，避免 `README` 和 CLI 再脱节\n'
+	}))
+	assert !closeout_validation.keep
+	assert closeout_validation.reason == 'title_replay_only'
+
+	empty_section_input := memory_card_sanitize_input(memory.ReflectionPersistInput{
+		title:      '迁移/seed 命令也挂上了，避免 `README` 和 CLI 再脱节'
+		summary_md: '# 摘要\n\n- 迁移/seed 命令也挂上了，避免 `README` 和 CLI 再脱节\n\n## 关键决策\n\n## 重要约束\n\n- 迁移/seed 命令也挂上了，避免 `README` 和 CLI 再脱节\n'
+	})
+	assert !empty_section_input.summary_md.contains('## 关键决策')
+	assert empty_section_input.summary_md.contains('## 重要约束')
+
+	truncated_bold := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '不把结果放进模板，只看“调用本身”会不会污染链路'
+		summary_md: '# 摘要\n\n- 这说明不是某一个 repo 结果块，而是**只要把 service 读出来的结果塞进 render payload\n'
+	})
+	assert !truncated_bold.keep
+	assert truncated_bold.reason == 'bad_summary_point'
 }
 
 fn test_memory_card_write_plan_explains_add_update_and_discard() {
