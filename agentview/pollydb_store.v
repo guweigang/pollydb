@@ -1697,7 +1697,7 @@ fn memory_looks_like_vague_resolution_title_for_card(text string) bool {
 	for marker in ['定位到了', '已经定位到', '定位到原因了', '原因清楚了',
 		'这下原因清楚了', '表结构已经说明原因了', '已经说明原因了',
 		'又抓到一条很像根因', '有新信号', '编译这边有新信号',
-		'编译已经起了', '不能抢跑下结论'] {
+		'编译已经起了', '不能抢跑下结论', '顺手的缺口', '这条失败里'] {
 		if lower == marker || lower.contains(marker) {
 			return true
 		}
@@ -1817,6 +1817,11 @@ fn memory_looks_like_corrupt_or_truncated_fragment_for_card(text string) bool {
 	}
 	if cleaned.ends_with('...') || cleaned.ends_with('..') || cleaned.ends_with('……') {
 		return true
+	}
+	for suffix in ['sessio', 'controlle', 'servic', 'reposi'] {
+		if cleaned.to_lower().ends_with(suffix) {
+			return true
+		}
 	}
 	if cleaned.ends_with('.') && cleaned.len >= 2 {
 		prev := cleaned.bytes()[cleaned.len - 2]

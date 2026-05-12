@@ -918,6 +918,13 @@ fn test_memory_card_sanitize_input_removes_low_context_points() {
 	})
 	assert !truncated_bold.keep
 	assert truncated_bold.reason == 'bad_summary_point'
+
+	vague_side_gap := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '这条失败里还挖出一个顺手的缺口'
+		summary_md: '# 摘要\n\n- 这条失败里还挖出一个顺手的缺口：`Testing\\Harness->actingAs()` 在 app 尚未 boot 时走了默认 sessio\n'
+	})
+	assert !vague_side_gap.keep
+	assert vague_side_gap.reason == 'vague_title'
 }
 
 fn test_memory_card_write_plan_explains_add_update_and_discard() {
