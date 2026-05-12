@@ -573,9 +573,10 @@ fn (store PollyDbStore) distill_recent_memory_with_mode(mut embedding_engine mem
 		} else {
 			memory.generate_reflection_persist_input(job, mut generator, distill_options)!
 		}
-		card_topic_key := memory_card_topic_key(raw_input)
+		sanitized_input := memory_card_sanitize_input(raw_input)
+		card_topic_key := memory_card_topic_key(sanitized_input)
 		mut input := memory.ReflectionPersistInput{
-			...raw_input
+			...sanitized_input
 			topic_key: card_topic_key
 		}
 		memory_distill_progress('quality gate key=${primary_key.bytestr()} title=${input.title}')
@@ -667,9 +668,10 @@ fn (store PollyDbStore) preview_recent_memory_with_mode(mut embedding_engine mem
 		} else {
 			memory.generate_reflection_persist_input(job, mut generator, distill_options)!
 		}
-		card_topic_key := memory_card_topic_key(raw_input)
+		sanitized_input := memory_card_sanitize_input(raw_input)
+		card_topic_key := memory_card_topic_key(sanitized_input)
 		mut input := memory.ReflectionPersistInput{
-			...raw_input
+			...sanitized_input
 			topic_key: card_topic_key
 		}
 		profile := memory_card_quality_profile(input)
@@ -989,6 +991,45 @@ fn render_memory_context_markdown(request MemoryContextRequest, memories []Memor
 fn memory_card_write_decision(input memory.ReflectionPersistInput) MemoryCardWriteDecision {
 	profile := memory_card_quality_profile(input)
 	return memory_card_write_decision_from_profile(profile)
+}
+
+fn memory_card_sanitize_input(input memory.ReflectionPersistInput) memory.ReflectionPersistInput {
+	return memory.ReflectionPersistInput{
+		...input
+		summary_md: memory_card_sanitize_summary_markdown(input.summary_md)
+	}
+}
+
+fn memory_card_sanitize_summary_markdown(summary_md string) string {
+	mut lines := []string{}
+	for line in summary_md.split_into_lines() {
+		trimmed := line.trim_space()
+		if trimmed.starts_with('- ') || trimmed.starts_with('* ') {
+			point := trimmed[2..].trim_space()
+			if memory_card_point_is_discardable(point) {
+				continue
+			}
+		}
+		lines << line
+	}
+	return memory_card_compact_markdown(lines).trim_space() + '\n'
+}
+
+fn memory_card_compact_markdown(lines []string) string {
+	mut out := []string{}
+	mut previous_blank := false
+	for line in lines {
+		blank := line.trim_space().len == 0
+		if blank && previous_blank {
+			continue
+		}
+		out << line
+		previous_blank = blank
+	}
+	for out.len > 0 && out[out.len - 1].trim_space().len == 0 {
+		out.delete(out.len - 1)
+	}
+	return out.join('\n')
 }
 
 fn memory_card_write_decision_from_profile(profile MemoryCardQualityProfile) MemoryCardWriteDecision {
@@ -1532,7 +1573,8 @@ fn memory_looks_like_context_dependent_short_note_for_card(text string) bool {
 	}
 	lower := cleaned.to_lower()
 	for marker in ['传一遍', '走一遍', '做一遍', '调一下', '看一下', '这一块',
-		'这个点', '那一块', '这种方式', '没带回去', '没带回来'] {
+		'这个点', '那一块', '这种方式', '没带回去', '没带回来', '骨架已经',
+		'已经写进去了'] {
 		if lower.contains(marker) {
 			return true
 		}
@@ -1586,6 +1628,7 @@ fn memory_looks_like_regression_confirmation_for_card(text string) bool {
 	lower := text.to_lower()
 	return lower.contains('确认这个') || lower.contains('确认回归')
 		|| lower.contains('正式跑法') || lower.contains('确认没有漏掉')
+		|| lower.contains('确认不是偶发') || lower.contains('不是偶发现象')
 		|| lower.contains('你现在可以直接改') || lower.contains('你可以直接改')
 		|| lower.contains('现在可以直接改')
 }
@@ -1594,6 +1637,8 @@ fn memory_looks_like_hypothesis_validation_for_card(text string) bool {
 	lower := text.to_lower()
 	return lower.contains('不是最终') || lower.contains('不一定是最终')
 		|| lower.contains('如果它能') || lower.contains('如果能立刻')
+		|| lower.contains('如果 baseline') || lower.contains('如果baseline')
+		|| lower.contains('仍炸、而') || lower.contains('仍炸，而')
 		|| lower.contains('说明崩点') || lower.contains('碰到正确层')
 		|| lower.contains('刚才那条改动') || lower.contains('如果成立')
 		|| lower.contains('如果真是') || lower.contains('不是我们要的')
@@ -1616,7 +1661,8 @@ fn memory_looks_like_vague_resolution_title_for_card(text string) bool {
 fn memory_looks_like_process_or_debug_card_title(text string) bool {
 	lower := text.to_lower()
 	for marker in ['日志', 'stderr', '抓最后', '不对劲', '不需要再飘', '根因基本对上',
-		'不能完整返回', '这回栈', '看最后一段'] {
+		'不能完整返回', '这回栈', '看最后一段', '回打一遍 baseline', '回打一遍baseline',
+		'请求级验证'] {
 		if lower.contains(marker) {
 			return true
 		}
@@ -1627,7 +1673,8 @@ fn memory_looks_like_process_or_debug_card_title(text string) bool {
 fn memory_looks_like_process_or_debug_card_point(text string) bool {
 	lower := text.to_lower()
 	for marker in ['不能完整返回', '日志文件', 'stderr 输出', '看到崩溃前最后', '我现在修的就是',
-		'不需要再飘', '根因基本对上', '空 body', 'controller not bound'] {
+		'不需要再飘', '根因基本对上', '空 body', 'controller not bound',
+		'本地起内置 server', '被沙箱拦住', '不影响我们验证逻辑'] {
 		if lower.contains(marker) {
 			return true
 		}
@@ -1727,7 +1774,8 @@ fn memory_looks_like_transient_card_point(text string) bool {
 	lower := text.to_lower()
 	for marker in ['我先', '我会先', '我准备', '我去看', '我要开始', '我要动',
 		'我再看一下', '我顺手', '我同意', '随后会', '现在把', '我在等',
-		'会直接指出', '找到具体 workflow', '我再确认一次'] {
+		'会直接指出', '找到具体 workflow', '我再确认一次', '本地起内置 server',
+		'被沙箱拦住', '不影响我们验证逻辑'] {
 		if lower.contains(marker) {
 			return true
 		}

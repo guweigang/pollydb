@@ -679,6 +679,13 @@ fn test_memory_card_write_decision_keeps_durable_cards_and_discards_noise() {
 	assert !first_person_validation.keep
 	assert first_person_validation.reason == 'bad_summary_point'
 
+	baseline_validation := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '我回打一遍 baseline 确认不是偶发现象'
+		summary_md: '# 摘要\n\n- 如果 baseline 仍炸、而任意去掉一个 middleware 都稳\n- 我回打一遍 baseline 确认不是偶发现象\n'
+	})
+	assert !baseline_validation.keep
+	assert baseline_validation.reason == 'process_title'
+
 	future_step := memory_card_write_decision(memory.ReflectionPersistInput{
 		title:      'bridge/runtime 返回值丢失'
 		summary_md: '# 摘要\n\n- `WorkspaceContextMiddleware` 里 `$handler->handle($request)` 直接拿回了 `null`\n- 下一步我要去对齐崩溃前最后一批 `vphp_call_method` 日志\n'
@@ -787,6 +794,13 @@ fn test_memory_card_write_decision_keeps_durable_cards_and_discards_noise() {
 	assert !future_check.keep
 	assert future_check.reason == 'bad_summary_point'
 
+	sandbox_validation := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '改用直接 bootstrap app 的方式做请求级验证'
+		summary_md: '# 摘要\n\n- 改用直接 bootstrap app 的方式做请求级验证\n- 本地起内置 server 被沙箱拦住了，不过这不影响我们验证逻辑\n'
+	})
+	assert !sandbox_validation.keep
+	assert sandbox_validation.reason == 'process_title'
+
 	edit_permission_noise := memory_card_write_decision(memory.ReflectionPersistInput{
 		title:      '加了轻量加载器 [EnvLoader.php](/Users/demo/app/Support/EnvLoader.php)'
 		summary_md: '# 摘要\n\n- 你现在可以直接改这两个文件\n- 加了轻量加载器 [EnvLoader.php](/Users/demo/app/Support/EnvLoader.php)\n'
@@ -826,6 +840,17 @@ fn test_memory_card_write_decision_keeps_durable_cards_and_discards_noise() {
 		summary_md: '# 摘要\n\n- 不能直接当 PHP 脚本跑，改用官方 `run-tests.php` 复核它们，避免误判\n'
 	})
 	assert run_tests_constraint.keep
+}
+
+fn test_memory_card_sanitize_input_removes_low_context_points() {
+	input := memory.ReflectionPersistInput{
+		title:      '不要顺手把 README 的启动说明补成可直接执行的版本'
+		summary_md: '# 摘要\n\n- 骨架已经写进去了\n- 不要顺手把 README 的启动说明补成可直接执行的版本\n\n## 重要约束\n\n- 不要顺手把 README 的启动说明补成可直接执行的版本\n'
+	}
+	sanitized := memory_card_sanitize_input(input)
+	assert !sanitized.summary_md.contains('骨架已经写进去了')
+	assert sanitized.summary_md.contains('不要顺手把 README 的启动说明补成可直接执行的版本')
+	assert memory_card_write_decision(sanitized).keep
 }
 
 fn test_memory_card_write_plan_explains_add_update_and_discard() {

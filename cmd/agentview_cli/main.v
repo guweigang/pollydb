@@ -326,7 +326,7 @@ fn run_memory_command(args []string, store agentview.PollyDbStore) ! {
 			run_memory_distill(args, store)!
 		}
 		'delete' {
-			result := store.delete_memory(args[2..])!
+			result := store.delete_memory(positional_args_after(args, 2))!
 			print_memory_delete_result(result)
 		}
 		else {
@@ -1570,6 +1570,25 @@ fn parse_flag_int(args []string, name string, fallback int) int {
 		return value.int()
 	}
 	return fallback
+}
+
+fn positional_args_after(args []string, start int) []string {
+	mut out := []string{}
+	mut idx := start
+	for idx < args.len {
+		arg := args[idx]
+		if arg.starts_with('--') {
+			if idx + 1 < args.len && !args[idx + 1].starts_with('--') {
+				idx += 2
+			} else {
+				idx++
+			}
+			continue
+		}
+		out << arg
+		idx++
+	}
+	return out
 }
 
 fn parse_partition_mode(args []string) !string {
