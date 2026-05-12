@@ -271,6 +271,7 @@ fn usage() string {
 		+ 'agentview memory context <query> [--limit N] [--sources] [--store-root <path>]\n'
 		+ 'agentview memory preview [--recent-sessions N] [--max-jobs N] [--neighbor-limit N] [--candidate-limit N] [--candidate-offset N] [--store-root <path>]\n'
 		+ 'agentview memory distill [--recent-sessions N] [--max-jobs N] [--neighbor-limit N] [--candidate-limit N] [--candidate-offset N] [--store-root <path>]\n'
+		+ 'agentview memory delete <reflection_id...> [--store-root <path>]\n'
 		+ 'agentview context <query> [--limit N] [--sources] [--store-root <path>]\n'
 		+ 'default codex root: ~/.codex\n'
 		+ 'default store root: ~/.agentview/pollydb\n'
@@ -324,8 +325,12 @@ fn run_memory_command(args []string, store agentview.PollyDbStore) ! {
 		'distill' {
 			run_memory_distill(args, store)!
 		}
+		'delete' {
+			result := store.delete_memory(args[2..])!
+			print_memory_delete_result(result)
+		}
 		else {
-			return error('unknown memory command: ${subcommand}; expected list|search|context|preview|distill')
+			return error('unknown memory command: ${subcommand}; expected list|search|context|preview|distill|delete')
 		}
 	}
 }
@@ -519,6 +524,13 @@ fn print_memory_distill_result(persisted []memory.PersistedReflection) {
 			println('')
 			println(reflection.insight_md.trim_space())
 		}
+	}
+}
+
+fn print_memory_delete_result(result agentview.MemoryDeleteResult) {
+	println('memory_delete requested=${result.requested_ids.len} deleted_reflections=${result.deleted_reflections} deleted_links=${result.deleted_links} missing=${result.missing_ids.len}')
+	if result.missing_ids.len > 0 {
+		println('missing=${result.missing_ids.join(',')}')
 	}
 }
 

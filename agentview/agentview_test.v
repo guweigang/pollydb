@@ -367,6 +367,104 @@ fn test_pollydb_store_distills_memory_from_seeded_entries() {
 	assert context.markdown.contains('source_refs:')
 }
 
+fn test_pollydb_store_delete_memory_removes_reflection_and_links() {
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-delete')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	_ = store.ensure_memory_schema() or { panic(err) }
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	cfg := storage.ChunkConfig.default()
+	summary := SessionSummary{
+		id:          'session-memory-delete-001'
+		title:       'Delete memory'
+		updated_at:  '2026-04-01T10:00:09Z'
+		started_at:  '2026-04-01T10:00:00Z'
+		cwd:         '/tmp/work'
+		source:      'codex'
+		originator:  'Codex Desktop'
+		cli_version: '0.1.0'
+		path:        '/tmp/memory-delete-session.jsonl'
+		entry_count: 2
+		user_turns:  1
+	}
+	session_spec := sessions_spec() or { panic(err) }
+	entry_spec := entries_spec(false) or { panic(err) }
+	session_codec := storage.TypedRowCodec.new(session_spec.table)
+	entry_codec := storage.TypedRowCodec.new(entry_spec.table)
+	session_view := storage.TableView.new(storage.Tree{}, 'sessions')
+	entry_view := storage.TableView.new(storage.Tree{}, 'entries')
+	mut kvs := []storage.KVPair{}
+	kvs << storage.KVPair{
+		key:   session_view.row_key(summary.id.bytes())
+		value: session_codec.encode(build_session_row(summary)) or { panic(err) }
+	}
+	for idx, text in ['代码全面改成 import guweigang.vjsx。', '不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案。'] {
+		entry := SessionEntry{
+			seq:       idx
+			timestamp: '2026-04-01T10:00:0${idx + 1}Z'
+			kind:      .message
+			role:      'assistant'
+			text:      text
+		}
+		entry_id, entry_row := build_session_entry_row(summary, entry, ingest_markdown_for_store(mut db,
+			text) or { panic(err) })
+		kvs << storage.KVPair{
+			key:   entry_view.row_key(entry_id.bytes())
+			value: entry_codec.encode(entry_row) or { panic(err) }
+		}
+	}
+	mut tree := storage.Tree.build(kvs, cfg) or { panic(err) }
+	tree = storage.rebuild_typed_indexes_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	tree = storage.rebuild_typed_aggregates_for_specs(tree, [session_spec, ingest_state_spec()!,
+		search_state_spec()!, entry_ingest_state_spec()!, entry_spec], cfg) or { panic(err) }
+	_ = db.commit_to_branch('main', tree, storage.CommitMeta{
+		author:  'gwg'
+		message: 'seed agentview memory delete'
+	}) or { panic(err) }
+	db.close() or { panic(err) }
+
+	mut engine := AgentViewTestEmbeddingEngine{
+		dims:    2
+		vectors: {
+			'代码全面改成 import guweigang.vjsx。':                                                                           [
+				f32(0.99),
+				0.01,
+			]
+			'不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案。':                                                      [
+				f32(0.97),
+				0.03,
+			]
+			'代码全面改成 import guweigang.vjsx\n不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案': [
+				f32(0.985),
+				0.015,
+			]
+		}
+	}
+	persisted := store.distill_recent_memory_heuristic(mut engine, MemoryDistillOptions{
+		recent_sessions: 1
+		max_jobs:        1
+		neighbor_limit:  2
+		min_evidence:    1
+		candidate_limit: 5
+	}) or { panic(err) }
+	assert persisted.len == 1
+	result := store.delete_memory([persisted[0].reflection_id, 'missing-memory-id']) or { panic(err) }
+	assert result.deleted_reflections == 1
+	assert result.deleted_links >= 2
+	assert result.missing_ids == ['missing-memory-id']
+
+	db = storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	reflection_rows := session.scan_table(mut db, 'memory_reflections', 0) or { panic(err) }
+	link_rows := session.scan_table(mut db, 'memory_links', 0) or { panic(err) }
+	assert reflection_rows.len == 0
+	assert link_rows.len == 0
+}
+
 fn test_should_skip_markdown_index_skips_environment_context_blocks() {
 	entry := SessionEntry{
 		kind: .message

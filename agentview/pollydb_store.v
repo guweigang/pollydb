@@ -1,6 +1,7 @@
 module agentview
 
 import crypto.sha256
+import encoding.base64
 import math
 import memory
 import os
@@ -142,6 +143,14 @@ pub:
 	query    string
 	memories []MemoryCard
 	markdown string
+}
+
+pub struct MemoryDeleteResult {
+pub:
+	requested_ids        []string
+	deleted_reflections  int
+	deleted_links        int
+	missing_ids          []string
 }
 
 struct MemorySalienceDecision {
@@ -376,6 +385,132 @@ pub fn (store PollyDbStore) memory_context(request MemoryContextRequest) !Memory
 		memories: result.memories
 		markdown: markdown
 	}
+}
+
+pub fn (store PollyDbStore) delete_memory(reflection_ids []string) !MemoryDeleteResult {
+	mut normalized_ids := []string{}
+	mut seen := map[string]bool{}
+	for id in reflection_ids {
+		trimmed := id.trim_space()
+		if trimmed.len == 0 || trimmed in seen {
+			continue
+		}
+		seen[trimmed] = true
+		normalized_ids << trimmed
+	}
+	if normalized_ids.len == 0 {
+		return error('memory delete requires at least one reflection id')
+	}
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	if !db.has_table('memory_reflections') {
+		return MemoryDeleteResult{
+			requested_ids: normalized_ids
+			missing_ids:   normalized_ids
+		}
+	}
+	mut existing_ids := map[string]bool{}
+	for id in normalized_ids {
+		if _ := session.get_row(mut db, 'memory_reflections', id.bytes()) {
+			existing_ids[id] = true
+		}
+	}
+	mut reflection_keys := [][]u8{}
+	mut missing := []string{}
+	for id in normalized_ids {
+		if id in existing_ids {
+			reflection_keys << id.bytes()
+		} else {
+			missing << id
+		}
+	}
+	mut link_keys := [][]u8{}
+	if reflection_keys.len > 0 && db.has_table('memory_links') {
+		link_rows := session.scan_table(mut db, 'memory_links', 0) or { []storage.TypedSchemaRow{} }
+		for row in link_rows {
+			from_table := agentview_optional_row_string(row, 'from_table_name')
+			from_key_b64 := agentview_optional_row_string(row, 'from_primary_key_b64')
+			if from_table == 'memory_reflections' && base64_key_matches_any_id(from_key_b64,
+				existing_ids) {
+				link_keys << row.primary_key.clone()
+				continue
+			}
+			derived_from_root := agentview_optional_row_string(row, 'derived_from_root_hash')
+			if derived_from_root.len > 0
+				&& memory_link_root_matches_deleted_reflection(link_rows, derived_from_root,
+				existing_ids)
+				&& !memory_link_root_has_remaining_reflection(link_rows, derived_from_root,
+				existing_ids) {
+				link_keys << row.primary_key.clone()
+			}
+		}
+	}
+	if reflection_keys.len == 0 && link_keys.len == 0 {
+		return MemoryDeleteResult{
+			requested_ids: normalized_ids
+			missing_ids:   missing
+		}
+	}
+	mut writes := storage.TypedWriteSet.new()
+	if reflection_keys.len > 0 {
+		writes.delete_many('memory_reflections', reflection_keys)
+	}
+	if link_keys.len > 0 {
+		writes.delete_many('memory_links', link_keys)
+	}
+	_ = session.apply_write_set(mut db, writes, storage.ChunkConfig.default(), storage.CommitMeta{
+		author:  'agentview'
+		message: 'delete agentview memory'
+	})!
+	return MemoryDeleteResult{
+		requested_ids:       normalized_ids
+		deleted_reflections: reflection_keys.len
+		deleted_links:       link_keys.len
+		missing_ids:         missing
+	}
+}
+
+fn base64_key_matches_any_id(encoded string, ids map[string]bool) bool {
+	if encoded.len == 0 {
+		return false
+	}
+	key := base64.decode(encoded).bytestr()
+	return key in ids
+}
+
+fn memory_link_root_matches_deleted_reflection(rows []storage.TypedSchemaRow, root string, ids map[string]bool) bool {
+	for row in rows {
+		if agentview_optional_row_string(row, 'derived_from_root_hash') != root {
+			continue
+		}
+		if agentview_optional_row_string(row, 'from_table_name') != 'memory_reflections' {
+			continue
+		}
+		if base64_key_matches_any_id(agentview_optional_row_string(row, 'from_primary_key_b64'),
+			ids) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_link_root_has_remaining_reflection(rows []storage.TypedSchemaRow, root string, ids map[string]bool) bool {
+	for row in rows {
+		if agentview_optional_row_string(row, 'derived_from_root_hash') != root {
+			continue
+		}
+		if agentview_optional_row_string(row, 'from_table_name') != 'memory_reflections' {
+			continue
+		}
+		if !base64_key_matches_any_id(agentview_optional_row_string(row, 'from_primary_key_b64'),
+			ids) {
+			return true
+		}
+	}
+	return false
 }
 
 fn (store PollyDbStore) distill_recent_memory_with_mode(mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options MemoryDistillOptions, use_heuristic bool) ![]memory.PersistedReflection {
