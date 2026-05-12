@@ -932,6 +932,15 @@ fn test_memory_card_sanitize_input_removes_low_context_points() {
 	})
 	assert !vague_difference.keep
 	assert vague_difference.reason == 'vague_title'
+
+	root_cause_rescue := memory_card_sanitize_input(memory.ReflectionPersistInput{
+		title:      '改成直接让它跑到 `SIGSEGV`，只抓真实炸栈'
+		summary_md: '# 摘要\n\n- 改成直接让它跑到 `SIGSEGV`，只抓真实炸栈\n- 所以根因不在 sample，也不在 Query builder，直接落在底层 V mysql prepared-result 这条实现上\n'
+	})
+	assert root_cause_rescue.title.contains('根因不在 sample')
+	assert !root_cause_rescue.summary_md.contains('SIGSEGV')
+	assert root_cause_rescue.summary_md.contains('prepared-result')
+	assert memory_card_write_decision(root_cause_rescue).keep
 }
 
 fn test_memory_card_write_plan_explains_add_update_and_discard() {

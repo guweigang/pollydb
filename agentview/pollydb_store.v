@@ -994,11 +994,30 @@ fn memory_card_write_decision(input memory.ReflectionPersistInput) MemoryCardWri
 }
 
 fn memory_card_sanitize_input(input memory.ReflectionPersistInput) memory.ReflectionPersistInput {
+	summary_md := memory_card_sanitize_summary_markdown(input.summary_md)
 	return memory.ReflectionPersistInput{
 		...input
-		title:      memory_card_sanitize_phrase(input.title)
-		summary_md: memory_card_sanitize_summary_markdown(input.summary_md)
+		title:      memory_card_sanitize_title_with_summary(input.title, summary_md)
+		summary_md: summary_md
 	}
+}
+
+fn memory_card_sanitize_title_with_summary(title string, summary_md string) string {
+	cleaned_title := memory_card_sanitize_phrase(title)
+	if memory_card_title_blocking_reason(cleaned_title) !in ['process_title', 'vague_title'] {
+		return cleaned_title
+	}
+	for point in memory_card_summary_points(summary_md) {
+		candidate := memory_card_sanitize_phrase(point)
+		if memory_card_point_is_discardable(candidate) || memory_card_point_has_blocking_noise(candidate) {
+			continue
+		}
+		if candidate.contains('根因') || candidate.contains('原因')
+			|| memory_looks_like_constraint_text(candidate) {
+			return candidate
+		}
+	}
+	return cleaned_title
 }
 
 fn memory_card_sanitize_phrase(text string) string {
@@ -1331,9 +1350,9 @@ fn memory_card_single_replay_is_strong(profile MemoryCardQualityProfile, point s
 	if profile.score < 6 {
 		return false
 	}
-	return reflection_like_durable_artifact(point)
+	return (reflection_like_durable_artifact(point)
 		&& (memory_looks_like_decision_text(point) || memory_looks_like_unresolved_issue_text(point)
-		|| memory_looks_like_constraint_text(point))
+		|| memory_looks_like_constraint_text(point))) || memory_looks_like_root_cause_card_point(point)
 }
 
 fn memory_card_is_weak_single_evidence(profile MemoryCardQualityProfile) bool {
@@ -1544,6 +1563,9 @@ fn memory_card_point_score(point string) int {
 		|| point.contains('原因') || point.contains('触发点') || point.contains('说明') {
 		score += 2
 	}
+	if memory_looks_like_root_cause_card_point(point) {
+		score += 3
+	}
 	if point.contains('不要') || point.contains('不能') || point.contains('必须')
 		|| point.contains('不要求') || point.contains('约束') || point.contains('限制')
 		|| memory_looks_like_constraint_text(point) {
@@ -1711,12 +1733,17 @@ fn memory_looks_like_process_or_debug_card_title(text string) bool {
 	for marker in ['日志', 'stderr', '抓最后', '不对劲', '不需要再飘', '根因基本对上',
 		'不能完整返回', '这回栈', '看最后一段', '回打一遍 baseline', '回打一遍baseline',
 		'请求级验证', '真跑两条', '构建还在跑', '中间态', '这笔 commit',
-		'这笔提交'] {
+		'这笔提交', 'sigsegv', '真实炸栈'] {
 		if lower.contains(marker) {
 			return true
 		}
 	}
 	return false
+}
+
+fn memory_looks_like_root_cause_card_point(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('根因') || lower.contains('原因落在') || lower.contains('触发点')
 }
 
 fn memory_looks_like_process_or_debug_card_point(text string) bool {
@@ -1725,7 +1752,7 @@ fn memory_looks_like_process_or_debug_card_point(text string) bool {
 		'不需要再飘', '根因基本对上', '空 body', 'controller not bound',
 		'本地起内置 server', '被沙箱拦住', '不影响我们验证逻辑', '我不想凭感觉猜',
 		'我现在用这个真跑', '构建还在跑', '抢到了旧', '中间态', '这笔 commit',
-		'这笔提交', '收口验证'] {
+		'这笔提交', '收口验证', 'sigsegv', '真实炸栈'] {
 		if lower.contains(marker) {
 			return true
 		}
@@ -1847,7 +1874,7 @@ fn memory_looks_like_transient_card_point(text string) bool {
 		'会直接指出', '找到具体 workflow', '我再确认一次', '本地起内置 server',
 		'被沙箱拦住', '不影响我们验证逻辑', '我现在用这个真跑',
 		'我不想凭感觉猜', '构建还在跑', '抢到了旧', '中间态', '这笔 commit',
-		'这笔提交', '收口验证'] {
+		'这笔提交', '收口验证', 'sigsegv', '真实炸栈'] {
 		if lower.contains(marker) {
 			return true
 		}
