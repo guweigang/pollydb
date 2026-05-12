@@ -37,6 +37,8 @@ Browse mode supports:
 - left/right pane navigation
 - transcript reading with wrapped content and session metadata
 - global entry search from `/`
+- distilled memory view from `M`
+- memory search from `/` while the memory view is active
 - session text filtering from `f`
 - session cwd-prefix filtering from `c`
 - archived session toggle from `a`

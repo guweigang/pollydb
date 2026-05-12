@@ -25,6 +25,7 @@ enum BrowserPane {
 enum BrowserView {
 	transcript
 	search
+	memory
 }
 
 enum BrowserInputMode {
@@ -33,6 +34,7 @@ enum BrowserInputMode {
 	cwd
 	source
 	search
+	memory_search
 }
 
 enum SearchScope {
@@ -82,6 +84,11 @@ mut:
 	search_total               int
 	search_offset              int
 	search_selected            int
+	memory_query               string
+	memory_cards               []MemoryCard
+	memory_total               int
+	memory_offset              int
+	memory_selected            int
 	active_hit_seq             int = -1
 	session_page_cache         map[string]SessionListResult
 	transcript_page_cache      map[string]TranscriptPage
@@ -101,6 +108,7 @@ mut:
 	last_transcript_strategy   string
 	last_search_ms             i64
 	last_search_strategy       string
+	last_memory_ms             i64
 }
 
 pub fn browse_store(store PollyDbStore, options BrowserOptions) ! {
@@ -211,7 +219,11 @@ fn browser_event(e &tui.Event, x voidptr) {
 			}
 		}
 		.slash {
-			app.start_search_input()
+			if app.view == .memory {
+				app.start_memory_search_input()
+			} else {
+				app.start_search_input()
+			}
 		}
 		.f {
 			app.start_filter_input()
@@ -262,7 +274,11 @@ fn browser_event(e &tui.Event, x voidptr) {
 			app.toggle_search_scope()
 		}
 		.m {
-			app.toggle_search_kind()
+			if e.modifiers.has(.shift) {
+				app.open_memory_view()
+			} else {
+				app.toggle_search_kind()
+			}
 		}
 		.h {
 			app.show_help = true
@@ -308,6 +324,9 @@ fn (mut app BrowserApp) ensure_layout_synced() {
 	if app.view == .search && app.search_query.len > 0 {
 		app.run_search()
 	}
+	if app.view == .memory {
+		app.load_memory_page()
+	}
 	if app.should_reload_transcript_after_layout() {
 		app.load_selected_transcript()
 	}
@@ -315,6 +334,9 @@ fn (mut app BrowserApp) ensure_layout_synced() {
 }
 
 fn (app &BrowserApp) should_reload_transcript_after_layout() bool {
+	if app.view == .memory {
+		return false
+	}
 	if app.sessions.len == 0 {
 		return false
 	}
@@ -384,7 +406,11 @@ fn (mut app BrowserApp) refresh_active_view() {
 	if app.view == .search && app.search_query.len > 0 {
 		app.run_search()
 	}
-	app.load_selected_transcript()
+	if app.view == .memory {
+		app.load_memory_page()
+	} else {
+		app.load_selected_transcript()
+	}
 }
 
 fn (mut app BrowserApp) load_selected_transcript() {
@@ -517,6 +543,44 @@ fn (mut app BrowserApp) run_search() {
 	}
 }
 
+fn (mut app BrowserApp) load_memory_page() {
+	mut sw := time.new_stopwatch()
+	result := app.store.list_memory(MemoryListRequest{
+		query:  app.memory_query
+		limit:  max_int(app.effective_memory_limit(), 8)
+		offset: app.memory_offset
+	}) or {
+		app.status = 'memory error: ${err}'
+		return
+	}
+	app.last_memory_ms = sw.elapsed().milliseconds()
+	app.memory_total = result.total
+	app.memory_cards = result.memories.clone()
+	if app.memory_selected >= app.memory_cards.len {
+		app.memory_selected = max_int(app.memory_cards.len - 1, 0)
+	}
+	if app.memory_selected < 0 {
+		app.memory_selected = 0
+	}
+	app.view = .memory
+	app.focus = .transcript
+	if app.memory_total == 0 {
+		app.status = if app.memory_query.len > 0 {
+			'no memory matched "${app.memory_query}"'
+		} else {
+			'no distilled memory yet; run agentview memory preview/distill'
+		}
+		return
+	}
+	start := app.memory_offset + 1
+	end := app.memory_offset + app.memory_cards.len
+	app.status = 'memory ${start}-${end}/${app.memory_total}'
+}
+
+fn (app &BrowserApp) effective_memory_limit() int {
+	return max_int(browser_content_height(app.tui.window_height) / 4, 8)
+}
+
 fn (mut app BrowserApp) handle_enter() {
 	match app.focus {
 		.sessions {
@@ -526,6 +590,8 @@ fn (mut app BrowserApp) handle_enter() {
 		.transcript {
 			if app.view == .search {
 				app.open_selected_search_hit()
+			} else if app.view == .memory {
+				app.status = app.memory_card_status()
 			} else {
 				app.toggle_selected_tool_entry()
 			}
@@ -550,6 +616,8 @@ fn (mut app BrowserApp) move_down() {
 		.transcript {
 			if app.view == .search {
 				app.move_search_down()
+			} else if app.view == .memory {
+				app.move_memory_down()
 			} else if app.transcript_offset + 1 < app.transcript_page.total_entries {
 				app.transcript_offset += 1
 				app.transcript_selected = 0
@@ -576,6 +644,8 @@ fn (mut app BrowserApp) move_up() {
 		.transcript {
 			if app.view == .search {
 				app.move_search_up()
+			} else if app.view == .memory {
+				app.move_memory_up()
 			} else if app.transcript_offset > 0 {
 				app.transcript_offset = max_int(app.transcript_offset - 1, 0)
 				app.reload_transcript_page()
@@ -593,6 +663,8 @@ fn (mut app BrowserApp) move_cursor_down() {
 		.transcript {
 			if app.view == .search {
 				app.move_search_down()
+			} else if app.view == .memory {
+				app.move_memory_down()
 			} else if app.transcript_selected + 1 < app.transcript_page.entries.len {
 				app.transcript_selected++
 				app.status = app.transcript_entry_status()
@@ -609,6 +681,8 @@ fn (mut app BrowserApp) move_cursor_up() {
 		.transcript {
 			if app.view == .search {
 				app.move_search_up()
+			} else if app.view == .memory {
+				app.move_memory_up()
 			} else if app.transcript_selected > 0 {
 				app.transcript_selected--
 				app.status = app.transcript_entry_status()
@@ -625,6 +699,10 @@ fn (mut app BrowserApp) scroll_line_down() {
 		.transcript {
 			if app.view == .search {
 				app.move_search_down()
+				return
+			}
+			if app.view == .memory {
+				app.move_memory_down()
 				return
 			}
 			max_scroll := app.transcript_max_line_scroll()
@@ -650,6 +728,10 @@ fn (mut app BrowserApp) scroll_line_up() {
 		.transcript {
 			if app.view == .search {
 				app.move_search_up()
+				return
+			}
+			if app.view == .memory {
+				app.move_memory_up()
 				return
 			}
 			if app.transcript_line_scroll > 0 {
@@ -758,6 +840,12 @@ fn (mut app BrowserApp) page_down() {
 					app.search_selected = 0
 					app.run_search()
 				}
+			} else if app.view == .memory {
+				if app.memory_offset + app.memory_cards.len < app.memory_total {
+					app.memory_offset += max_int(app.memory_cards.len, 1)
+					app.memory_selected = 0
+					app.load_memory_page()
+				}
 			} else if app.transcript_offset + app.effective_transcript_limit() < app.transcript_page.total_entries {
 				app.transcript_offset += app.effective_transcript_limit()
 				app.transcript_selected = 0
@@ -786,6 +874,13 @@ fn (mut app BrowserApp) page_up() {
 						1), 0)
 					app.search_selected = 0
 					app.run_search()
+				}
+			} else if app.view == .memory {
+				if app.memory_offset > 0 {
+					app.memory_offset = max_int(app.memory_offset - max_int(app.memory_cards.len,
+						1), 0)
+					app.memory_selected = 0
+					app.load_memory_page()
 				}
 			} else if app.transcript_offset > 0 {
 				app.transcript_offset = max_int(app.transcript_offset - app.effective_transcript_limit(),
@@ -816,6 +911,13 @@ fn (mut app BrowserApp) half_page_down() {
 					app.search_offset += step
 					app.search_selected = 0
 					app.run_search()
+				}
+			} else if app.view == .memory {
+				step := max_int(max_int(app.memory_cards.len, 1) / 2, 1)
+				if app.memory_offset + app.memory_cards.len < app.memory_total {
+					app.memory_offset += step
+					app.memory_selected = 0
+					app.load_memory_page()
 				}
 			} else {
 				step := max_int(app.transcript_viewport_height() / 2, 1)
@@ -857,6 +959,13 @@ fn (mut app BrowserApp) half_page_up() {
 					app.search_selected = 0
 					app.run_search()
 				}
+			} else if app.view == .memory {
+				step := max_int(max_int(app.memory_cards.len, 1) / 2, 1)
+				if app.memory_offset > 0 {
+					app.memory_offset = max_int(app.memory_offset - step, 0)
+					app.memory_selected = 0
+					app.load_memory_page()
+				}
 			} else {
 				step := max_int(app.transcript_viewport_height() / 2, 1)
 				if app.transcript_line_scroll > 0 {
@@ -889,6 +998,10 @@ fn (mut app BrowserApp) jump_top() {
 				app.search_offset = 0
 				app.search_selected = 0
 				app.run_search()
+			} else if app.view == .memory {
+				app.memory_offset = 0
+				app.memory_selected = 0
+				app.load_memory_page()
 			} else {
 				app.transcript_offset = 0
 				app.transcript_selected = 0
@@ -920,6 +1033,13 @@ fn (mut app BrowserApp) jump_bottom() {
 				}
 				app.run_search()
 				app.search_selected = max_int(app.search_results.len - 1, 0)
+			} else if app.view == .memory {
+				if app.memory_total > max_int(app.memory_cards.len, 1) {
+					app.memory_offset = max_int(app.memory_total - max_int(app.memory_cards.len,
+						1), 0)
+				}
+				app.load_memory_page()
+				app.memory_selected = max_int(app.memory_cards.len - 1, 0)
 			} else {
 				if app.transcript_page.total_entries > app.effective_transcript_limit() {
 					app.transcript_offset = max_int(app.transcript_page.total_entries - app.effective_transcript_limit(),
@@ -958,6 +1078,42 @@ fn (mut app BrowserApp) move_search_up() {
 		app.run_search()
 		app.search_selected = max_int(app.search_results.len - 1, 0)
 	}
+}
+
+fn (mut app BrowserApp) move_memory_down() {
+	if app.memory_selected + 1 < app.memory_cards.len {
+		app.memory_selected++
+		app.status = app.memory_card_status()
+		return
+	}
+	if app.memory_offset + app.memory_cards.len < app.memory_total {
+		app.memory_offset += max_int(app.memory_cards.len, 1)
+		app.memory_selected = 0
+		app.load_memory_page()
+	}
+}
+
+fn (mut app BrowserApp) move_memory_up() {
+	if app.memory_selected > 0 {
+		app.memory_selected--
+		app.status = app.memory_card_status()
+		return
+	}
+	if app.memory_offset > 0 {
+		app.memory_offset = max_int(app.memory_offset - max_int(app.memory_cards.len, 1),
+			0)
+		app.load_memory_page()
+		app.memory_selected = max_int(app.memory_cards.len - 1, 0)
+	}
+}
+
+fn (app &BrowserApp) memory_card_status() string {
+	if app.memory_total == 0 || app.memory_selected < 0
+		|| app.memory_selected >= app.memory_cards.len {
+		return 'no selected memory'
+	}
+	card := app.memory_cards[app.memory_selected]
+	return 'memory ${app.memory_offset + app.memory_selected + 1}/${app.memory_total} ${card.title}'
 }
 
 fn (mut app BrowserApp) search_next() {
@@ -1072,6 +1228,12 @@ fn (mut app BrowserApp) dismiss_secondary_view() {
 		app.status = 'search results hidden'
 		return
 	}
+	if app.view == .memory {
+		app.view = .transcript
+		app.focus = .sessions
+		app.status = 'memory hidden'
+		return
+	}
 	app.status = 'press q to quit'
 }
 
@@ -1085,6 +1247,18 @@ fn (mut app BrowserApp) start_search_input() {
 	app.input_mode = .search
 	app.command_input = app.search_query
 	app.status = 'search all entries and press Enter'
+}
+
+fn (mut app BrowserApp) start_memory_search_input() {
+	app.input_mode = .memory_search
+	app.command_input = app.memory_query
+	app.status = 'search distilled memory and press Enter'
+}
+
+fn (mut app BrowserApp) open_memory_view() {
+	app.memory_offset = 0
+	app.memory_selected = 0
+	app.load_memory_page()
 }
 
 fn (mut app BrowserApp) start_cwd_input() {
@@ -1319,6 +1493,12 @@ fn (mut app BrowserApp) commit_input_mode() {
 			app.search_selected = 0
 			app.run_search()
 		}
+		.memory_search {
+			app.memory_query = value
+			app.memory_offset = 0
+			app.memory_selected = 0
+			app.load_memory_page()
+		}
 		else {}
 	}
 }
@@ -1327,7 +1507,11 @@ fn (mut app BrowserApp) draw_header() {
 	width := app.tui.window_width
 	title := ' AgentView '
 	focus := if app.focus == .sessions { 'Sessions' } else { 'Transcript' }
-	view := if app.view == .search { 'Search' } else { 'Browse' }
+	view := match app.view {
+		.search { 'Search' }
+		.memory { 'Memory' }
+		.transcript { 'Browse' }
+	}
 	density := if app.list_density == .compact { 'Compact' } else { 'Comfortable' }
 	mut chips := [' ${focus} ', ' ${view} ', ' ${app.sessions_total} sessions ', ' ${density} ']
 	if app.session_query.len > 0 {
@@ -1341,6 +1525,9 @@ fn (mut app BrowserApp) draw_header() {
 	}
 	if app.search_query.len > 0 {
 		chips << ' search:${clip_plain(app.search_mode_summary(), 18)} '
+	}
+	if app.view == .memory && app.memory_query.len > 0 {
+		chips << ' memory:${clip_plain(app.memory_query, 18)} '
 	}
 	if !app.include_archived {
 		chips << ' archived:off '
@@ -1382,6 +1569,8 @@ fn (mut app BrowserApp) draw_sessions_pane() {
 fn (mut app BrowserApp) draw_right_pane() {
 	if app.view == .search {
 		app.draw_search_pane()
+	} else if app.view == .memory {
+		app.draw_memory_pane()
 	} else {
 		app.draw_transcript_pane()
 	}
@@ -1443,6 +1632,30 @@ fn (mut app BrowserApp) draw_search_pane() {
 	}
 }
 
+fn (mut app BrowserApp) draw_memory_pane() {
+	list_width := browser_list_width(app.tui.window_width)
+	x := list_width + 1
+	width := max_int(app.tui.window_width - x, 1)
+	height := browser_content_height(app.tui.window_height)
+	query := if app.memory_query.len > 0 { app.memory_query } else { 'all' }
+	current := if app.memory_total == 0 { 0 } else { app.memory_offset + app.memory_selected + 1 }
+	header_title := ' Memory ${clip_plain(query, 16)}  ${current}/${app.memory_total} '
+	app.tui.draw_text(x, 1, pane_header(header_title, app.focus == .transcript, width))
+	mut lines := browser_memory_lines(app.memory_cards, app.memory_selected, app.memory_query,
+		width)
+	if lines.len > height - 1 {
+		lines = lines[..height - 1].clone()
+	}
+	for i in 0 .. height - 1 {
+		y := i + 2
+		app.tui.draw_text(x, y, style_right_pane_blank(width))
+		if i >= lines.len {
+			continue
+		}
+		app.tui.draw_text(x, y, fit_ansi_line(lines[i], width))
+	}
+}
+
 fn (mut app BrowserApp) draw_command_bar() {
 	y := max_int(app.tui.window_height - 2, 0)
 	width := app.tui.window_width
@@ -1458,6 +1671,9 @@ fn (mut app BrowserApp) draw_command_bar() {
 		}
 		.search {
 			' search[${app.search_scope_label()}/${app.search_kind_label()}]> ${app.command_input}'
+		}
+		.memory_search {
+			' memory> ${app.command_input}'
 		}
 		else {
 			match app.view {
@@ -1478,6 +1694,20 @@ fn (mut app BrowserApp) draw_command_bar() {
 				}
 				.transcript {
 					context := app.transcript_context_summary()
+					if app.status.len > 0 {
+						' ${clip_plain(app.status, max_int(width / 3, 18))}  |  ${clip_plain(context,
+							max_int(width - max_int(width / 3, 18) - 7, 1))} '
+					} else {
+						' ${clip_plain(context, max_int(width - 2, 1))} '
+					}
+				}
+				.memory {
+					current := if app.memory_total == 0 {
+						0
+					} else {
+						app.memory_offset + app.memory_selected + 1
+					}
+					context := 'Memory ${clip_plain(app.memory_query, 22)}  ${current}/${app.memory_total}'
 					if app.status.len > 0 {
 						' ${clip_plain(app.status, max_int(width / 3, 18))}  |  ${clip_plain(context,
 							max_int(width - max_int(width / 3, 18) - 7, 1))} '
@@ -1510,6 +1740,9 @@ fn (app &BrowserApp) browser_debug_summary() string {
 	if app.view == .search && app.last_search_strategy.len > 0 {
 		parts << 'S:${app.short_debug_strategy(app.last_search_strategy)} ${app.last_search_ms}ms'
 	}
+	if app.view == .memory {
+		parts << 'M:${app.last_memory_ms}ms'
+	}
 	return parts.join(' | ')
 }
 
@@ -1538,8 +1771,10 @@ fn (mut app BrowserApp) draw_footer() {
 			.transcript {
 				if app.view == .search {
 					' j/k move | ^d/^u half page | Enter open | e scope | m kind | p project | x clear | s source | n/N next prev | Esc close | Tab switch | h help '
+				} else if app.view == .memory {
+					' j/k move | ^d/^u half page | / search memory | r refresh | t transcript | Esc close | Tab switch | h help '
 				} else {
-					' j/k line | ^d/^u half page | J/K entry | ↑/↓ select | Enter toggle | o tools | / search | e scope | m kind | p project | x clear | s source | n/N hits | Tab switch | h help '
+					' j/k line | ^d/^u half page | J/K entry | ↑/↓ select | Enter toggle | o tools | / search | M memory | e scope | m kind | p project | x clear | s source | n/N hits | Tab switch | h help '
 				}
 			}
 		}
@@ -1608,6 +1843,8 @@ fn help_overlay_lines() []string {
 		'Enter              : open or toggle selected item',
 		'/                  : search all entries',
 		'                     note: requires "agentview index-search" for indexed results',
+		'M                  : open distilled memory view',
+		'/ in memory view   : search distilled memory',
 		'e                  : cycle search scope all/session/project',
 		'm                  : cycle search kind all/message/tool/reasoning',
 		'n / N              : next / previous search hit',
@@ -1952,6 +2189,54 @@ fn browser_search_lines(hits []SearchHit, selected int, query string, width int)
 		out << style_search_divider(width, idx == selected)
 	}
 	return out
+}
+
+fn browser_memory_lines(cards []MemoryCard, selected int, query string, width int) []string {
+	if cards.len == 0 {
+		return ['No distilled memory. Run `agentview memory preview` or `agentview memory distill`.']
+	}
+	mut out := []string{}
+	for idx, card in cards {
+		prefix := if idx == selected { '▸ ' } else { '' }
+		head := highlight_plain_text('${prefix}${idx + 1}. ${card.title}', query, width)
+		out << style_search_head(head, width, idx == selected)
+		mut meta_parts := [
+			if card.active { 'active' } else { 'superseded' },
+			'sources=${card.source_count}',
+		]
+		if card.score > 0 {
+			meta_parts << 'score=${card.score}'
+		}
+		if card.created_at.len > 0 {
+			meta_parts << card.created_at
+		}
+		out << style_search_meta(clip_plain(meta_parts.join(' • '), width), width,
+			idx == selected)
+		summary := memory_card_first_summary_line(card.summary_md)
+		if summary.len > 0 {
+			for line in wrap_browser_text(summary, width) {
+				rendered := highlight_plain_text(line, query, max_int(width - 2, 1))
+				out << style_search_snippet('  ' + rendered, width, idx == selected)
+			}
+		}
+		if card.topic_key.len > 0 {
+			out << style_search_meta('topic=' + clip_plain(card.topic_key, max_int(width - 6,
+				1)), width, idx == selected)
+		}
+		out << style_search_divider(width, idx == selected)
+	}
+	return out
+}
+
+fn memory_card_first_summary_line(summary_md string) string {
+	for line in summary_md.split_into_lines() {
+		cleaned := line.trim_space()
+		if cleaned.len == 0 || cleaned.starts_with('#') {
+			continue
+		}
+		return cleaned
+	}
+	return ''
 }
 
 fn style_entry_header(entry SessionEntry, width int, selected bool, active_hit bool) string {
