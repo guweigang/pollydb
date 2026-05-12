@@ -358,8 +358,8 @@ fn test_pollydb_store_distills_memory_from_seeded_entries() {
 	assert listed.memories[0].title.len > 0
 	assert listed.memories[0].source_count >= 1
 	context := store.memory_context(MemoryContextRequest{
-		query: 'vjsx'
-		limit: 3
+		query:           'vjsx'
+		limit:           3
 		include_sources: true
 	}) or { panic(err) }
 	assert context.memories.len == 1
@@ -407,6 +407,39 @@ fn test_memory_salience_gate_keeps_durable_candidates_and_skips_transient_update
 	})
 	assert !update.memory_worthy
 	assert update.skip_reason == 'transient_status'
+}
+
+fn test_memory_salience_claim_gate_filters_dialogue_controls_and_keeps_procedures() {
+	dialogue := classify_memory_salience(SessionEntry{
+		kind: .message
+		role: 'user'
+		text: '好的，同意，你继续'
+	})
+	assert !dialogue.memory_worthy
+	assert dialogue.skip_reason == 'dialogue_control'
+
+	procedure := classify_memory_salience(SessionEntry{
+		kind: .message
+		role: 'assistant'
+		text: '不能直接当 PHP 脚本跑，改用官方 `run-tests.php` 复核它们，避免误判。'
+	})
+	assert procedure.memory_worthy
+	assert procedure.candidate_type == 'constraint'
+	assert procedure.claims.len == 1
+	assert procedure.claims[0].text.contains('run-tests.php')
+}
+
+fn test_memory_salience_claim_gate_extracts_best_claim_from_mixed_text() {
+	decision := classify_memory_salience(SessionEntry{
+		kind: .message
+		role: 'assistant'
+		text: '我这轮主要做了三件事。\n最终做法是返回值从 box 中取出 zval 后再交给 ctx 管理。\n跑一个相关测试把 warning 确认清掉。'
+	})
+	assert decision.memory_worthy
+	assert decision.candidate_type == 'decision'
+	assert decision.claims.len == 1
+	assert decision.claims[0].text.contains('zval')
+	assert !decision.claims[0].text.contains('跑一个相关测试')
 }
 
 fn test_memory_card_topic_key_is_derived_from_polished_card_content() {
@@ -1135,7 +1168,8 @@ fn test_memory_candidates_for_embedding_limit_skips_undistillable_noise_before_w
 	}
 	assert candidates.len == 1
 	assert candidates[0].entry.text.contains('write plan')
-	assert report.discarded_before_embedding['undistillable_outline_before_embedding'] >= 2
+	assert report.skipped_by_reason['dialogue_control'] == 1
+	assert report.discarded_before_embedding['undistillable_outline_before_embedding'] >= 1
 }
 
 fn test_build_memory_segment_anchors_prefers_technical_over_workflow_status() {

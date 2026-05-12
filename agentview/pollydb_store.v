@@ -149,6 +149,13 @@ struct MemorySalienceDecision {
 	candidate_type string
 	skip_reason    string
 	score          int
+	claims         []MemoryClaim
+}
+
+struct MemoryClaim {
+	text       string
+	claim_type string
+	score      int
 }
 
 struct MemoryCandidate {
@@ -302,8 +309,8 @@ pub fn (store PollyDbStore) list_memory(request MemoryListRequest) !MemoryListRe
 	}
 	all_rows := session.scan_table(mut db, 'memory_reflections', 0)!
 	superseded := superseded_memory_reflection_ids(all_rows)
-	mut candidate_rows := memory_list_candidate_rows(mut db, session, all_rows, superseded,
-		request)!
+	mut candidate_rows :=
+		memory_list_candidate_rows(mut db, session, all_rows, superseded, request)!
 	terms := normalized_search_terms(request.query)
 	mut cards := []MemoryCard{cap: candidate_rows.len}
 	for row in candidate_rows {
@@ -719,10 +726,9 @@ fn memory_list_candidate_rows(mut db storage.PersistentDatabase, session storage
 					continue
 				}
 				rows := session.lookup_index_prefix_projected(mut db, 'memory_reflections',
-					index_name, term, 32, ['reflection_id', 'reflection_kind', 'title',
-					'summary_md', 'insight_md', 'source_refs', 'parent_ref', 'topic_key',
-					'derived_from_root_hash', 'supersedes_reflection_id',
-					'created_at']) or { []storage.TypedSchemaRow{} }
+					index_name, term, 32, ['reflection_id', 'reflection_kind', 'title', 'summary_md',
+					'insight_md', 'source_refs', 'parent_ref', 'topic_key', 'derived_from_root_hash',
+					'supersedes_reflection_id', 'created_at']) or { []storage.TypedSchemaRow{} }
 				for row in rows {
 					reflection_id := agentview_optional_row_string(row, 'reflection_id')
 					if reflection_id.len == 0 {
@@ -752,7 +758,9 @@ fn memory_card_from_row(mut db storage.PersistentDatabase, row storage.TypedSche
 	insight_md := load_memory_reflection_markdown(mut db, row, 'insight_md') or { '' }
 	title := agentview_optional_row_string(row, 'title')
 	source_refs_raw := agentview_optional_row_string(row, 'source_refs')
-	source_refs := memory.decode_reflection_source_refs(source_refs_raw) or { []memory.ReflectionSourceRef{} }
+	source_refs := memory.decode_reflection_source_refs(source_refs_raw) or {
+		[]memory.ReflectionSourceRef{}
+	}
 	active := reflection_id.len > 0 && reflection_id !in superseded
 	score := score_memory_card(title, summary_md, terms)
 	return MemoryCard{
@@ -1942,7 +1950,7 @@ fn (candidate MemoryCandidate) primary_key() []u8 {
 
 fn (candidate MemoryCandidate) horizon() string {
 	match candidate.decision.candidate_type {
-		'decision', 'root_cause', 'constraint', 'unresolved_issue' {
+		'decision', 'root_cause', 'constraint', 'procedure', 'preference', 'unresolved_issue' {
 			return 'durable'
 		}
 		'artifact', 'fact' {
@@ -2009,6 +2017,8 @@ fn (candidate MemoryCandidate) embedding_rank() int {
 		'decision' { return 60 }
 		'root_cause' { return 58 }
 		'constraint' { return 56 }
+		'procedure' { return 54 }
+		'preference' { return 52 }
 		'unresolved_issue' { return 50 }
 		'artifact' { return 40 }
 		'fact' { return 36 }
@@ -2035,6 +2045,14 @@ fn classify_memory_salience(entry SessionEntry) MemorySalienceDecision {
 	}
 	if memory_looks_like_raw_log(text) {
 		return memory_skip_decision('raw_log', -620)
+	}
+	if memory_looks_like_dialogue_control_text(text) {
+		return memory_skip_decision('dialogue_control', -610)
+	}
+	claims := memory_extract_salient_claims(entry)
+	if claims.len > 0 {
+		best := memory_best_claim(claims)
+		return memory_claim_decision(best, claims)
 	}
 	if reflection_like_execution_context_text(text) {
 		return memory_candidate_decision('execution_context', memory_seed_entry_score(entry))
@@ -2075,10 +2093,204 @@ fn memory_candidate_decision(candidate_type string, score int) MemorySalienceDec
 	}
 }
 
+fn memory_claim_decision(claim MemoryClaim, claims []MemoryClaim) MemorySalienceDecision {
+	return MemorySalienceDecision{
+		memory_worthy:  true
+		candidate_type: claim.claim_type
+		score:          claim.score
+		claims:         claims
+	}
+}
+
 fn memory_skip_decision(reason string, score int) MemorySalienceDecision {
 	return MemorySalienceDecision{
 		skip_reason: reason
 		score:       score
+	}
+}
+
+fn memory_extract_salient_claims(entry SessionEntry) []MemoryClaim {
+	base_score := memory_seed_entry_score(entry)
+	mut claims := []MemoryClaim{}
+	for piece in memory_candidate_claim_texts(entry.text) {
+		claim := memory_claim_from_text(piece, base_score) or { continue }
+		claims << claim
+	}
+	return claims
+}
+
+fn memory_candidate_claim_texts(text string) []string {
+	mut out := []string{}
+	for line in text.split_into_lines() {
+		trimmed := line.trim_space().trim_left('-*0123456789.、) ')
+		if trimmed.len == 0 {
+			continue
+		}
+		if trimmed.len <= 220 {
+			out << trimmed
+			continue
+		}
+		for sentence in memory_split_claim_sentences(trimmed) {
+			if sentence.len > 0 {
+				out << sentence
+			}
+		}
+	}
+	if out.len == 0 {
+		for sentence in memory_split_claim_sentences(text) {
+			if sentence.len > 0 {
+				out << sentence
+			}
+		}
+	}
+	return out
+}
+
+fn memory_split_claim_sentences(text string) []string {
+	mut normalized := text.replace('。', '\n').replace('；', '\n').replace(';', '\n')
+	normalized = normalized.replace('！', '\n').replace('？', '\n')
+	mut out := []string{}
+	for part in normalized.split_into_lines() {
+		cleaned := part.trim_space()
+		if cleaned.len > 0 {
+			out << cleaned
+		}
+	}
+	return out
+}
+
+fn memory_claim_from_text(text string, base_score int) ?MemoryClaim {
+	claim_text := memory_normalize_claim_text(text)
+	if !memory_claim_has_evidence_shape(claim_text) {
+		return none
+	}
+	if memory_claim_looks_like_noise(claim_text) {
+		return none
+	}
+	claim_type := memory_claim_type(claim_text) or { return none }
+	return MemoryClaim{
+		text:       claim_text
+		claim_type: claim_type
+		score:      base_score + memory_claim_type_bonus(claim_type)
+	}
+}
+
+fn memory_normalize_claim_text(text string) string {
+	mut cleaned := text.trim_space()
+	for cleaned.starts_with('我确认了：') || cleaned.starts_with('确认了：')
+		|| cleaned.starts_with('定位到了：') || cleaned.starts_with('结论是：') {
+		cleaned = cleaned.all_after('：').trim_space()
+	}
+	return cleaned
+}
+
+fn memory_claim_has_evidence_shape(text string) bool {
+	if text.len < 18 {
+		return false
+	}
+	if text.contains('`') || text.contains('/') || text.contains('.') || text.contains('_')
+		|| text.contains('-') {
+		return true
+	}
+	lower := text.to_lower()
+	return lower.contains('因为') || lower.contains('原因') || lower.contains('根因')
+		|| lower.contains('决定') || lower.contains('采用') || lower.contains('改用')
+		|| lower.contains('不能') || lower.contains('不要') || lower.contains('必须')
+		|| lower.contains('只服务于') || lower.contains('最终') || lower.contains('约束')
+}
+
+fn memory_claim_looks_like_noise(text string) bool {
+	lower := text.to_lower()
+	if reflection_like_process_status_text(text) || reflection_like_execution_update_text(text) {
+		return true
+	}
+	if lower.contains('你继续') || lower.contains('好的') || lower.contains('同意，你')
+		|| lower.contains('开始吧') || lower.contains('继续吧') {
+		return true
+	}
+	if lower.contains('我直接改掉') || lower.contains('跑一个相关测试')
+		|| lower.contains('你现在可以直接改') {
+		return true
+	}
+	return false
+}
+
+fn memory_claim_type(text string) ?string {
+	lower := text.to_lower()
+	if reflection_like_root_cause_text(text) {
+		return 'root_cause'
+	}
+	if reflection_like_constraint_text(text) || memory_looks_like_constraint_text(text) {
+		return 'constraint'
+	}
+	if lower.contains('偏好') || lower.contains('更喜欢') || lower.contains('倾向于') {
+		return 'preference'
+	}
+	if lower.contains('流程') || lower.contains('步骤') || lower.contains('命令')
+		|| lower.contains('run-tests.php') || lower.contains('复核') {
+		return 'procedure'
+	}
+	if memory_looks_like_decision_text(text) {
+		return 'decision'
+	}
+	if memory_looks_like_unresolved_issue_text(text) {
+		return 'unresolved_issue'
+	}
+	if reflection_like_artifact_text(text) {
+		return 'artifact'
+	}
+	if memory_seed_like_stable_fact(text) {
+		return 'fact'
+	}
+	return none
+}
+
+fn memory_seed_like_stable_fact(text string) bool {
+	lower := text.to_lower()
+	return lower.contains('是') || lower.contains('需要') || lower.contains('使用')
+		|| lower.contains('依赖') || lower.contains('来自') || lower.contains('支持')
+}
+
+fn memory_claim_type_bonus(claim_type string) int {
+	return match claim_type {
+		'decision' { 18 }
+		'root_cause' { 16 }
+		'constraint' { 14 }
+		'procedure' { 12 }
+		'preference' { 12 }
+		'unresolved_issue' { 10 }
+		'artifact' { 6 }
+		'fact' { 4 }
+		else { 0 }
+	}
+}
+
+fn memory_best_claim(claims []MemoryClaim) MemoryClaim {
+	mut best := claims[0]
+	for claim in claims[1..] {
+		if claim.score > best.score {
+			best = claim
+			continue
+		}
+		if claim.score == best.score
+			&& memory_claim_rank(claim.claim_type) > memory_claim_rank(best.claim_type) {
+			best = claim
+		}
+	}
+	return best
+}
+
+fn memory_claim_rank(claim_type string) int {
+	return match claim_type {
+		'decision' { 8 }
+		'root_cause' { 7 }
+		'constraint' { 6 }
+		'procedure' { 5 }
+		'preference' { 4 }
+		'unresolved_issue' { 3 }
+		'artifact' { 2 }
+		'fact' { 1 }
+		else { 0 }
 	}
 }
 
@@ -2093,6 +2305,15 @@ fn memory_looks_like_unresolved_issue_text(text string) bool {
 	lower := text.to_lower()
 	return lower.contains('待解决') || lower.contains('还需要') || lower.contains('风险')
 		|| lower.contains('阻塞') || lower.contains('失败') || lower.contains('不通过')
+}
+
+fn memory_looks_like_dialogue_control_text(text string) bool {
+	lower := text.to_lower().trim_space()
+	if lower in ['好的', '好', '同意', '继续', '好的，同意', '好的，继续'] {
+		return true
+	}
+	return lower.contains('同意，你继续') || lower.contains('好的，同意，你继续')
+		|| lower.contains('你继续') || lower.contains('开始吧') || lower.contains('继续吧')
 }
 
 fn memory_looks_like_constraint_text(text string) bool {
