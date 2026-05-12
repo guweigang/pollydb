@@ -27,6 +27,12 @@ static void polly_set_error_with_code(const char* message, int code) {
 	snprintf(polly_llama_embedding_error, sizeof(polly_llama_embedding_error), "%s: %d", message, code);
 }
 
+static void polly_llama_embedding_log_callback(enum ggml_log_level level, const char* text, void* user_data) {
+	(void) level;
+	(void) text;
+	(void) user_data;
+}
+
 const char* polly_llama_embedding_last_error(void) {
 	return polly_llama_embedding_error;
 }
@@ -55,6 +61,7 @@ PollyLlamaEmbeddingHandle* polly_llama_embedding_open(
 	int n_threads,
 	int n_gpu_layers) {
 	polly_set_error("");
+	llama_log_set(polly_llama_embedding_log_callback, NULL);
 	ggml_backend_load_all();
 	llama_backend_init();
 
@@ -177,11 +184,11 @@ int polly_llama_embedding_embed(
 	batch.n_tokens = n_tokens;
 
 	llama_memory_clear(llama_get_memory(handle->ctx), true);
-	const int decode_code = llama_decode(handle->ctx, batch);
+	const int decode_code = llama_encode(handle->ctx, batch);
 	free(tokens);
 	llama_batch_free(batch);
 	if (decode_code < 0) {
-		polly_set_error_with_code("llama.cpp failed to decode embedding batch", decode_code);
+		polly_set_error_with_code("llama.cpp failed to encode embedding batch", decode_code);
 		return -7;
 	}
 

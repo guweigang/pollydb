@@ -1020,6 +1020,7 @@ fn query_rows_from_database_index_profiled(session DatabaseSession, mut db Persi
 }
 
 fn query_rows_from_database_scan(session DatabaseSession, mut db PersistentDatabase, spec TypedTableSpec, plan QueryPlan) ![]TypedSchemaRow {
+	_ = spec
 	return session.scan_table(mut db, plan.table_name, 0)
 }
 
@@ -1065,6 +1066,7 @@ fn query_rows_from_transaction_index_profiled(session TransactionSession, spec T
 }
 
 fn query_rows_from_transaction_scan(session TransactionSession, spec TypedTableSpec, plan QueryPlan) ![]TypedSchemaRow {
+	_ = spec
 	return session.scan_table(plan.table_name, 0)
 }
 
@@ -1552,6 +1554,7 @@ fn plan_fts_query(spec TypedTableSpec, query FtsQuery) FtsQueryPlan {
 }
 
 fn build_fts_query_preview(spec TypedTableSpec, query FtsQuery, plan FtsQueryPlan) FtsQueryPreview {
+	_ = spec
 	return FtsQueryPreview{
 		plan:     plan
 		warnings: core.query_fts_preview_warnings(plan.index_name)
@@ -2809,6 +2812,7 @@ fn query_column_type_supports_filter_op(typ ColumnType, op QueryFilterOp) bool {
 }
 
 fn query_index_score(spec TypedTableSpec, index SchemaIndexDef, filter QueryFilter, select_columns []string) int {
+	_ = spec
 	return core.query_index_score(query_filter_op_name(filter.op), index.stores_row, filter.is_field_selector(),
 		select_columns.len)
 }
