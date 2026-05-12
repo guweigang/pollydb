@@ -1155,13 +1155,28 @@ fn test_heuristic_reflection_filters_future_action_process() {
 				path_hint:   'blocks[1]'
 				text:        'prepared-query 写接口需要避开 VSlim Query 包装。'
 			},
+			ReflectionEvidence{
+				table_name:  'entries'
+				primary_key: 'entry-4'.bytes()
+				column_name: 'content_md'
+				target_id:   'target-4'
+				score:       0.89
+				scope:       .block
+				kind:        'paragraph'
+				anchor:      '/'
+				path_hint:   'blocks[2]'
+				text:        '这处很小，我直接改掉：保留原来的时序，但不再绑定没用到的局部变量。'
+			},
 		]
 	}
 	input := heuristic_reflection_persist_input(job, ReflectionDistillOptions{})
 	assert !input.title.contains('把范围压到')
 	assert !input.title.contains('这条链')
+	assert !input.title.contains('这处很小')
+	assert !input.title.contains('直接改掉')
 	assert !input.summary_md.contains('接下来就把')
 	assert !input.summary_md.contains('一次性补')
+	assert !input.summary_md.contains('直接改掉')
 	assert !input.summary_md.contains('�')
 }
 
@@ -1569,6 +1584,18 @@ fn test_reflection_job_has_distillable_outline_rejects_isolated_symbols_and_dial
 		seed_text:       '同意，你继续，一定要挖出 vslim 或 vphp 的 bug。'
 	}
 	assert !reflection_job_has_distillable_outline(dialogue_job, ReflectionDistillOptions{})
+
+	permission_job := ReflectionJob{
+		branch_name:     'main'
+		table_name:      'entries'
+		primary_key:     'entry-5'.bytes()
+		column_name:     'content_md'
+		reflection_kind: 'summary'
+		seed_scope:      .path
+		seed_anchor:     '/'
+		seed_text:       '你现在可以直接改这两个文件。'
+	}
+	assert !reflection_job_has_distillable_outline(permission_job, ReflectionDistillOptions{})
 }
 
 fn test_heuristic_reflection_removes_isolated_artifact_points_from_summary() {

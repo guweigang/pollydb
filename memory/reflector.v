@@ -1842,7 +1842,9 @@ fn reflection_looks_like_future_action_process(line string) bool {
 		|| lower.contains('接下来再') || lower.contains('然后再')
 		|| lower.contains('下一步我要') || lower.contains('下一步我会')
 		|| lower.contains('这轮要等') || lower.contains('如果是，我会')
-		|| lower.contains('如果是我会') {
+		|| lower.contains('如果是我会') || lower.contains('我直接改掉')
+		|| lower.contains('直接改掉') || lower.contains('这处很小')
+		|| lower.contains('跑一个相关测试') {
 		return true
 	}
 	if lower.starts_with('我去把') || lower.starts_with('我会把')
@@ -1876,6 +1878,8 @@ fn reflection_looks_like_dialogue_control_fragment(line string) bool {
 		}
 	}
 	return lower.contains('你继续') || lower.contains('开始验证吧')
+		|| lower.contains('你现在可以直接改') || lower.contains('你可以直接改')
+		|| lower.contains('现在可以直接改')
 }
 
 fn reflection_looks_like_unresolved_question_fragment(line string) bool {

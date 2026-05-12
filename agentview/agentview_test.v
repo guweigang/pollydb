@@ -503,6 +503,13 @@ fn test_memory_card_write_decision_keeps_durable_cards_and_discards_noise() {
 	assert !process_title.keep
 	assert process_title.reason == 'process_title'
 
+	tiny_fix_title := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '这处很小，我直接改掉'
+		summary_md: '# 摘要\n\n- 这处很小，我直接改掉：保留原来的时序，但不再绑定没用到的局部变量\n- 跑一个相关测试把 warning 确认清掉\n'
+	})
+	assert !tiny_fix_title.keep
+	assert tiny_fix_title.reason == 'process_title'
+
 	truncated_point := memory_card_write_decision(memory.ReflectionPersistInput{
 		title:      'prepared-query 写接口'
 		summary_md: '# 摘要\n\n- 确认 query builder 的写接口能直接用，接下来就把 console 页的表单和 controller action 一次性补�...\n'
@@ -634,6 +641,13 @@ fn test_memory_card_write_decision_keeps_durable_cards_and_discards_noise() {
 	})
 	assert !future_check.keep
 	assert future_check.reason == 'bad_summary_point'
+
+	edit_permission_noise := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '加了轻量加载器 [EnvLoader.php](/Users/demo/app/Support/EnvLoader.php)'
+		summary_md: '# 摘要\n\n- 你现在可以直接改这两个文件\n- 加了轻量加载器 [EnvLoader.php](/Users/demo/app/Support/EnvLoader.php)\n'
+	})
+	assert !edit_permission_noise.keep
+	assert edit_permission_noise.reason == 'bad_summary_point'
 
 	title_replay := memory_card_write_decision(memory.ReflectionPersistInput{
 		title:      '污染源不在 `authUser`，也不在 `resolveContext`，而是在 `dashboard()`'

@@ -1271,6 +1271,8 @@ fn memory_looks_like_regression_confirmation_for_card(text string) bool {
 	lower := text.to_lower()
 	return lower.contains('确认这个') || lower.contains('确认回归')
 		|| lower.contains('正式跑法') || lower.contains('确认没有漏掉')
+		|| lower.contains('你现在可以直接改') || lower.contains('你可以直接改')
+		|| lower.contains('现在可以直接改')
 }
 
 fn memory_looks_like_hypothesis_validation_for_card(text string) bool {
@@ -1324,7 +1326,9 @@ fn memory_looks_like_future_action_process_for_card(text string) bool {
 		|| lower.contains('接下来再') || lower.contains('然后再')
 		|| lower.contains('下一步我要') || lower.contains('下一步我会')
 		|| lower.contains('这轮要等') || lower.contains('我再确认一次')
-		|| lower.contains('如果是，我会') || lower.contains('如果是我会') {
+		|| lower.contains('如果是，我会') || lower.contains('如果是我会')
+		|| lower.contains('我直接改掉') || lower.contains('直接改掉')
+		|| lower.contains('这处很小') || lower.contains('跑一个相关测试') {
 		return true
 	}
 	if lower.starts_with('我要去') || lower.starts_with('我去把')
