@@ -187,6 +187,7 @@ struct MemoryCardQualityProfile {
 mut:
 	durable_points  int
 	score           int
+	overlap_score   int
 	blocking_reason string
 	title_reason    string
 }
@@ -1003,6 +1004,12 @@ fn memory_card_write_decision_from_profile(profile MemoryCardQualityProfile) Mem
 	if profile.blocking_reason.len > 0 {
 		return memory_card_discard_decision(profile.blocking_reason, profile.score)
 	}
+	if memory_card_title_code_terms_mismatch(profile) {
+		return memory_card_discard_decision('title_summary_mismatch', profile.score)
+	}
+	if memory_card_requires_title_summary_overlap(profile) && profile.overlap_score == 0 {
+		return memory_card_discard_decision('title_summary_mismatch', profile.score)
+	}
 	if profile.durable_points == 0 {
 		return memory_card_discard_decision('no_durable_points', profile.score)
 	}
@@ -1022,24 +1029,39 @@ fn memory_card_write_decision_from_profile(profile MemoryCardQualityProfile) Mem
 fn memory_card_write_plan(input memory.ReflectionPersistInput, profile MemoryCardQualityProfile, decision MemoryCardWriteDecision, evidence_count int, supersedes_id string) MemoryWritePlan {
 	mut action := 'discard'
 	mut reason := decision.reason
-	if decision.keep {
+	evidence_decision := memory_card_evidence_decision(profile, evidence_count, decision)
+	if evidence_decision.keep {
 		if supersedes_id.len > 0 {
 			action = 'update'
 			reason = 'similar_existing_memory'
 		} else {
 			action = 'add'
 		}
+	} else {
+		reason = evidence_decision.reason
 	}
-	trace := memory_card_reasoning_trace(input, profile, decision, evidence_count, supersedes_id,
-		action)
+	trace := memory_card_reasoning_trace(input, profile, evidence_decision, evidence_count,
+		supersedes_id, action)
 	return MemoryWritePlan{
 		action:        action
 		reason:        reason
-		score:         decision.score
+		score:         evidence_decision.score
 		topic_key:     input.topic_key
 		supersedes_id: supersedes_id
 		trace:         trace
 	}
+}
+
+fn memory_card_evidence_decision(profile MemoryCardQualityProfile, evidence_count int, decision MemoryCardWriteDecision) MemoryCardWriteDecision {
+	if evidence_count <= 1 && memory_card_is_weak_single_evidence(profile) {
+		if decision.keep || decision.reason in ['process_title', 'bad_summary_point', 'low_card_value'] {
+			return memory_card_discard_decision('weak_single_evidence', profile.score)
+		}
+	}
+	if !decision.keep {
+		return decision
+	}
+	return decision
 }
 
 fn memory_card_reasoning_trace(input memory.ReflectionPersistInput, profile MemoryCardQualityProfile, decision MemoryCardWriteDecision, evidence_count int, supersedes_id string, action string) MemoryReasoningTrace {
@@ -1083,6 +1105,15 @@ fn memory_card_reasoning_trace(input memory.ReflectionPersistInput, profile Memo
 	}
 	if memory_card_is_title_replay_only(profile) {
 		blockers << 'title_replay_only'
+	}
+	if memory_card_requires_title_summary_overlap(profile) && profile.overlap_score == 0 {
+		blockers << 'title_summary_mismatch'
+	}
+	if memory_card_title_code_terms_mismatch(profile) {
+		blockers << 'title_summary_mismatch'
+	}
+	if evidence_count <= 1 && memory_card_is_weak_single_evidence(profile) {
+		blockers << 'weak_single_evidence'
 	}
 	if profile.score < 3 && decision.keep == false && decision.reason == 'low_card_value' {
 		blockers << 'low_card_value'
@@ -1141,6 +1172,7 @@ fn memory_card_quality_profile(input memory.ReflectionPersistInput) MemoryCardQu
 		summary_points: summary_points
 	}
 	profile.title_reason = memory_card_title_blocking_reason(title)
+	profile.overlap_score = memory_card_title_summary_overlap(title, summary_points)
 	for point in summary_points {
 		if reason := memory_card_point_blocking_reason(point) {
 			profile.blocking_reason = reason
@@ -1167,6 +1199,12 @@ fn memory_card_title_blocking_reason(title string) string {
 	}
 	if memory_looks_like_vague_resolution_title_for_card(title) {
 		return 'vague_title'
+	}
+	if memory_looks_like_context_dependent_short_note_for_card(title) {
+		return 'vague_title'
+	}
+	if memory_looks_like_process_or_debug_card_title(title) {
+		return 'process_title'
 	}
 	if memory_looks_like_unresolved_question_for_card(title) {
 		return 'question_title'
@@ -1212,6 +1250,139 @@ fn memory_card_single_replay_is_strong(profile MemoryCardQualityProfile, point s
 	return reflection_like_durable_artifact(point)
 		&& (memory_looks_like_decision_text(point) || memory_looks_like_unresolved_issue_text(point)
 		|| memory_looks_like_constraint_text(point))
+}
+
+fn memory_card_is_weak_single_evidence(profile MemoryCardQualityProfile) bool {
+	if memory_card_has_explicit_constraint(profile) && profile.overlap_score > 0 {
+		return false
+	}
+	if profile.score >= 14 && profile.durable_points >= 2 && profile.overlap_score > 0 {
+		return false
+	}
+	if profile.durable_points < 2 {
+		return true
+	}
+	if memory_looks_like_process_or_debug_card_title(profile.title) {
+		return true
+	}
+	for point in profile.summary_points {
+		if memory_looks_like_process_or_debug_card_point(point) {
+			return true
+		}
+	}
+	return profile.score < 10
+}
+
+fn memory_card_has_explicit_constraint(profile MemoryCardQualityProfile) bool {
+	if memory_looks_like_constraint_text(profile.title) {
+		return true
+	}
+	for point in profile.summary_points {
+		if memory_looks_like_constraint_text(point) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_card_title_summary_overlap(title string, points []string) int {
+	title_terms := memory_card_salient_terms(title)
+	if title_terms.len == 0 {
+		return 0
+	}
+	mut point_terms := map[string]bool{}
+	for point in points {
+		for term in memory_card_salient_terms(point) {
+			point_terms[term] = true
+		}
+	}
+	mut overlap := 0
+	for term in title_terms {
+		if term in point_terms {
+			overlap++
+		}
+	}
+	return overlap
+}
+
+fn memory_card_title_code_terms_mismatch(profile MemoryCardQualityProfile) bool {
+	title_terms := memory_card_inline_code_terms(profile.title)
+	if title_terms.len == 0 {
+		return false
+	}
+	mut summary_terms := map[string]bool{}
+	for point in profile.summary_points {
+		for term in memory_card_inline_code_terms(point) {
+			summary_terms[term] = true
+		}
+	}
+	for term in title_terms {
+		if memory_card_code_term_requires_exact_overlap(term) && term !in summary_terms {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_card_code_term_requires_exact_overlap(term string) bool {
+	return term.contains('()') || term.contains('fn') || term.contains('method')
+		|| term.runes().len >= 12
+}
+
+fn memory_card_requires_title_summary_overlap(profile MemoryCardQualityProfile) bool {
+	if reflection_like_durable_artifact(profile.title) {
+		return true
+	}
+	if profile.title.contains('`') || profile.title.contains('/') || profile.title.contains('(')
+		|| profile.title.contains(')') {
+		return true
+	}
+	return false
+}
+
+fn memory_card_salient_terms(text string) []string {
+	mut out := []string{}
+	mut seen := map[string]bool{}
+	for token in memory_card_inline_code_terms(text) {
+		seen[token] = true
+		out << token
+	}
+	mut normalized := text.replace('`', ' ').replace('[', ' ').replace(']', ' ')
+	normalized = normalized.replace('(', ' ').replace(')', ' ').replace('/', ' ')
+	normalized = normalized.replace('：', ' ').replace(':', ' ').replace('，', ' ')
+	normalized = normalized.replace('。', ' ').replace(',', ' ').replace('.', ' ')
+	normalized = normalized.replace('-', ' ').replace('_', ' ')
+	for raw in normalized.split(' ') {
+		term := memory_card_canonical_text(raw)
+		if term.runes().len < 3 {
+			continue
+		}
+		if term in ['摘要', '关键决策', '重要约束', '后续关注', '当前主题'] {
+			continue
+		}
+		if term !in seen {
+			seen[term] = true
+			out << term
+		}
+	}
+	return out
+}
+
+fn memory_card_inline_code_terms(text string) []string {
+	parts := text.split('`')
+	if parts.len < 3 {
+		return []string{}
+	}
+	mut out := []string{}
+	mut idx := 1
+	for idx < parts.len {
+		term := memory_card_canonical_text(parts[idx])
+		if term.runes().len >= 3 {
+			out << term
+		}
+		idx += 2
+	}
+	return out
 }
 
 fn memory_card_summary_points(summary_md string) []string {
@@ -1273,6 +1444,7 @@ fn memory_card_point_has_blocking_noise(point string) bool {
 		|| memory_looks_like_hypothesis_validation_for_card(cleaned)
 		|| memory_looks_like_unresolved_question_for_card(cleaned)
 		|| memory_looks_like_future_action_process_for_card(cleaned)
+		|| memory_looks_like_process_or_debug_card_point(cleaned)
 		|| memory_looks_like_raw_schema_fragment_for_card(cleaned)
 		|| memory_looks_like_corrupt_or_truncated_fragment_for_card(cleaned)
 }
@@ -1435,6 +1607,28 @@ fn memory_looks_like_vague_resolution_title_for_card(text string) bool {
 		'又抓到一条很像根因', '有新信号', '编译这边有新信号',
 		'编译已经起了'] {
 		if lower == marker || lower.contains(marker) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_looks_like_process_or_debug_card_title(text string) bool {
+	lower := text.to_lower()
+	for marker in ['日志', 'stderr', '抓最后', '不对劲', '不需要再飘', '根因基本对上',
+		'不能完整返回', '这回栈', '看最后一段'] {
+		if lower.contains(marker) {
+			return true
+		}
+	}
+	return false
+}
+
+fn memory_looks_like_process_or_debug_card_point(text string) bool {
+	lower := text.to_lower()
+	for marker in ['不能完整返回', '日志文件', 'stderr 输出', '看到崩溃前最后', '我现在修的就是',
+		'不需要再飘', '根因基本对上', '空 body', 'controller not bound'] {
+		if lower.contains(marker) {
 			return true
 		}
 	}

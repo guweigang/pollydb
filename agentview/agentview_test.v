@@ -801,6 +801,13 @@ fn test_memory_card_write_decision_keeps_durable_cards_and_discards_noise() {
 	assert !title_replay.keep
 	assert title_replay.reason == 'title_replay_only'
 
+	title_summary_mismatch := memory_card_write_decision(memory.ReflectionPersistInput{
+		title:      '`clone_psr7_response()` 直接复用 `body_ref`'
+		summary_md: '# 摘要\n\n- `clone_psr7_server_request()` 直接复用 `body_ref` 和 `uri_ref`\n- 找到了关键不对劲的地方\n'
+	})
+	assert !title_summary_mismatch.keep
+	assert title_summary_mismatch.reason == 'title_summary_mismatch'
+
 	isolated_artifact := memory_card_write_decision(memory.ReflectionPersistInput{
 		title:      '`make ext` 编译环境缺少 mysql.h'
 		summary_md: '# 摘要\n\n- `make ext` 失败是个已知编译环境问题，不是这次 bug 本身：它少了 `mysql.h` include\n- vslim.so\n'
@@ -856,6 +863,30 @@ fn test_memory_card_write_plan_explains_add_update_and_discard() {
 	assert discard_plan.reason == 'title_replay_only'
 	assert discard_plan.trace.inference == 'candidate failed the durable-memory quality gate'
 	assert 'title_replay_only' in discard_plan.trace.blockers
+
+	weak_single := memory.ReflectionPersistInput{
+		title:      '日志文件这条没留下来，改用直接 stderr 输出去抓最后一段'
+		topic_key:  'agentview:weak-debug-process'
+		summary_md: '# 摘要\n\n- 日志文件这条没留下来，改用直接 stderr 输出去抓最后一段\n- 现在最重要的是看到崩溃前最后释放的是哪一类对象\n\n## 关键决策\n\n- 日志文件这条没留下来，改用直接 stderr 输出去抓最后一段\n'
+	}
+	weak_profile := memory_card_quality_profile(weak_single)
+	weak_decision := memory_card_write_decision_from_profile(weak_profile)
+	weak_plan := memory_card_write_plan(weak_single, weak_profile, weak_decision, 1, '')
+	assert weak_plan.action == 'discard'
+	assert weak_plan.reason == 'weak_single_evidence'
+	assert 'weak_single_evidence' in weak_plan.trace.blockers
+
+	strong_single := memory.ReflectionPersistInput{
+		title:      '不能直接当 PHP 脚本跑，改用官方 `run-tests.php` 复核它们，避免误判'
+		topic_key:  'agentview:run-tests-constraint'
+		summary_md: '# 摘要\n\n- 不能直接当 PHP 脚本跑，改用官方 `run-tests.php` 复核它们，避免误判\n'
+	}
+	strong_profile := memory_card_quality_profile(strong_single)
+	strong_decision := memory_card_write_decision_from_profile(strong_profile)
+	strong_plan := memory_card_write_plan(strong_single, strong_profile, strong_decision, 1,
+		'')
+	assert strong_plan.action == 'add'
+	assert strong_plan.reason == 'keep'
 }
 
 fn test_pollydb_store_discards_low_value_memory_from_synced_fixture() {
