@@ -177,6 +177,136 @@ Reference:
 
 - https://huggingface.co/papers/2305.10250
 
+## Open-Source Quality Patterns
+
+The open-source memory ecosystem is moving away from "summarize everything and
+append it" pipelines. The stronger systems use staged extraction, consolidation,
+hybrid retrieval, and provenance.
+
+### Mem0 v3-style extraction and retrieval
+
+Mem0's newer open-source algorithm moved to a simpler extraction path:
+
+```text
+input conversation
+  -> retrieve related existing memories for context
+  -> one LLM call extracts distinct new facts
+  -> exact hash dedup
+  -> batch embedding
+  -> entity extraction/linking
+```
+
+The important quality lesson is not "ADD-only forever"; `pollydb` has better
+versioning primitives than a plain vector store, so we should still support
+`revise`, `replace`, `reinforce`, and `contradict`. The reusable idea is that
+the model should spend most of its capacity extracting clean, distinct memory
+claims, while deterministic storage logic handles deduplication, linking, and
+versioned update decisions.
+
+Reusable ideas for AgentView:
+
+- retrieve related memory before distillation so the model can avoid repeats
+- extract distinct memory claims before writing any card
+- hash normalized titles and summaries to block exact duplicates cheaply
+- extract entities from each memory and use them as ranking/linking features
+- use hybrid retrieval for both user queries and add/update checks
+
+References:
+
+- https://docs.mem0.ai/migration/oss-v2-to-v3
+- https://github.com/mem0ai/mem0
+
+### Graphiti-style temporal graph memory
+
+Graphiti stores raw inputs as episodes, extracts entities and facts, and keeps
+temporal validity for relationships. Its practical contribution is that
+changing information is not treated as a destructive overwrite.
+
+Reusable ideas for AgentView:
+
+- treat Codex sessions as episodes
+- keep every derived memory linked to source entries
+- extract lightweight entities: file paths, commands, modules, libraries,
+  project names, user preferences, constraints, and decisions
+- model contradictions as temporal/versioned facts instead of silently deleting
+  old memory
+- use graph-like links even if the first implementation is table-backed rather
+  than a full graph database
+
+References:
+
+- https://github.com/getzep/graphiti
+- https://help.getzep.com/graphiti/getting-started/overview
+
+### LangMem / LangGraph-style memory taxonomy
+
+LangMem and LangGraph distinguish memory by both scope and type. The useful
+types for AgentView are:
+
+- semantic memory: durable facts, project rules, constraints, preferences
+- episodic memory: examples of how a task was solved or failed
+- procedural memory: reusable operating instructions and workflows
+
+This taxonomy gives us a generic way to avoid domain-specific rules. Instead of
+hardcoding "execution_context" or one project's vocabulary, the extractor should
+ask whether a candidate is a fact, episode, procedure, decision, preference, or
+constraint. If it fits none of these, it should usually be discarded.
+
+Reusable ideas for AgentView:
+
+- store memory type explicitly
+- allow background consolidation instead of forcing memory writes in the hot
+  path
+- merge related memories periodically to avoid memory hoarding
+- use type-aware retrieval: procedures and constraints should rank differently
+  from episodic examples
+
+References:
+
+- https://github.com/langchain-ai/langmem
+- https://docs.langchain.com/oss/python/langgraph/memory
+
+### Letta / MemGPT-style memory tiers
+
+Letta separates always-visible core memory, searchable recall memory, and
+archival memory. This matters for quality because not every good memory should
+be injected into every prompt.
+
+Reusable ideas for AgentView:
+
+- keep raw transcripts as recall memory, not prompt-ready memory
+- keep distilled cards as archival memory
+- later build a small "core memory" surface for stable user/project preferences
+- let context assembly decide which tier is appropriate for a model call
+
+References:
+
+- https://docs.letta.com/guides/agents/architectures/memgpt
+- https://docs.letta.com/guides/agents/memory
+- https://docs.letta.com/guides/agents/context-hierarchy/
+- https://docs.letta.com/guides/agents/archival-memory/
+
+### Quality gates that should become first-class
+
+From these systems, AgentView should promote quality checks from scattered
+heuristics into explicit stages:
+
+- `claim_extraction`: convert segment evidence into atomic memory claims
+- `claim_typing`: classify each claim as semantic, episodic, procedural, or
+  discard
+- `evidence_check`: require source refs for every claim
+- `novelty_check`: compare against existing memory with normalized hash, FTS,
+  vectors, and entities
+- `conflict_check`: detect whether new evidence revises or contradicts existing
+  memory
+- `card_synthesis`: produce a compact card only after claims pass the above
+  gates
+- `critic_check`: reject cards with vague titles, unsupported sections,
+  conversation filler, progress chatter, or test-run bookkeeping
+
+This gives us a general quality architecture: deterministic gates protect the
+database, while the model is used for language understanding and synthesis.
+
 ## Proposed Pipeline
 
 AgentView memory distillation should be a staged pipeline.
