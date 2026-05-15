@@ -474,9 +474,12 @@ fn print_memory_list(result agentview.MemoryListResult) {
 fn print_memory_preview(previews []agentview.MemoryDistillPreviewCard) {
 	mut keep_count := 0
 	mut discard_count := 0
+	mut defer_count := 0
 	mut discard_reasons := map[string]int{}
 	for preview in previews {
-		if preview.decision.keep {
+		if preview.write_plan.action == 'defer' {
+			defer_count++
+		} else if preview.decision.keep {
 			keep_count++
 		} else {
 			discard_count++
@@ -484,7 +487,7 @@ fn print_memory_preview(previews []agentview.MemoryDistillPreviewCard) {
 			discard_reasons[reason] = discard_reasons[reason] + 1
 		}
 	}
-	println('memory_preview cards=${previews.len} keep=${keep_count} discard=${discard_count} discard_reasons=${format_memory_counts(discard_reasons)}')
+	println('memory_preview cards=${previews.len} keep=${keep_count} defer=${defer_count} discard=${discard_count} discard_reasons=${format_memory_counts(discard_reasons)}')
 	for preview in previews {
 		println('')
 		println('action=${preview.write_plan.action} reason=${preview.write_plan.reason} score=${preview.write_plan.score} confidence=${preview.write_plan.trace.confidence}')
@@ -492,6 +495,10 @@ fn print_memory_preview(previews []agentview.MemoryDistillPreviewCard) {
 		println('topic=${preview.topic_key} evidence=${preview.evidence_count} supersedes=${preview.supersedes_id}')
 		println('signals=${preview.write_plan.trace.signals.join(',')} blockers=${preview.write_plan.trace.blockers.join(',')}')
 		println('inference=${preview.write_plan.trace.inference}')
+		if preview.write_plan.action == 'defer' {
+			println('deferred candidate; no L1 memory card will be written yet')
+			continue
+		}
 		if preview.write_plan.action == 'discard' {
 			println('discarded candidate; no memory card will be written')
 			continue

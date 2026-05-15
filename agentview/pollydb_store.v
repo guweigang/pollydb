@@ -580,9 +580,16 @@ fn (store PollyDbStore) distill_recent_memory_with_mode(mut embedding_engine mem
 			topic_key: card_topic_key
 		}
 		memory_distill_progress('quality gate key=${primary_key.bytestr()} title=${input.title}')
-		write_decision := memory_card_write_decision(input)
-		if !write_decision.keep {
-			eprintln('agentview memory: discard reflection card for ${primary_key.bytestr()}: ${write_decision.reason}')
+		profile := memory_card_quality_profile(input)
+		write_decision := memory_card_write_decision_from_profile(profile)
+		write_plan := memory_card_write_plan(input, profile, write_decision, job.evidence.len,
+			'')
+		if write_plan.action == 'defer' {
+			eprintln('agentview memory: defer reflection card for ${primary_key.bytestr()}: ${write_plan.reason}')
+			continue
+		}
+		if write_plan.action == 'discard' {
+			eprintln('agentview memory: discard reflection card for ${primary_key.bytestr()}: ${write_plan.reason}')
 			reflected_sources[source_key] = true
 			continue
 		}
@@ -1140,6 +1147,9 @@ fn memory_card_write_plan(input memory.ReflectionPersistInput, profile MemoryCar
 		} else {
 			action = 'add'
 		}
+	} else if memory_card_should_defer_to_scene(evidence_decision.reason) {
+		action = 'defer'
+		reason = evidence_decision.reason
 	} else {
 		reason = evidence_decision.reason
 	}
@@ -1165,6 +1175,10 @@ fn memory_card_evidence_decision(profile MemoryCardQualityProfile, evidence_coun
 		return decision
 	}
 	return decision
+}
+
+fn memory_card_should_defer_to_scene(reason string) bool {
+	return reason in ['process_title', 'vague_title', 'weak_single_evidence']
 }
 
 fn memory_card_reasoning_trace(input memory.ReflectionPersistInput, profile MemoryCardQualityProfile, decision MemoryCardWriteDecision, evidence_count int, supersedes_id string, action string) MemoryReasoningTrace {
@@ -1239,6 +1253,9 @@ fn memory_card_reasoning_trace(input memory.ReflectionPersistInput, profile Memo
 fn memory_card_plan_inference(action string) string {
 	if action == 'discard' {
 		return 'candidate failed the durable-memory quality gate'
+	}
+	if action == 'defer' {
+		return 'candidate is not stable enough for L1 and should be revisited by scene-level memory'
 	}
 	if action == 'update' {
 		return 'candidate is durable and should revise a matching existing memory'

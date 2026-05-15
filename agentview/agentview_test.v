@@ -987,8 +987,9 @@ fn test_memory_card_write_plan_explains_add_update_and_discard() {
 	weak_profile := memory_card_quality_profile(weak_single)
 	weak_decision := memory_card_write_decision_from_profile(weak_profile)
 	weak_plan := memory_card_write_plan(weak_single, weak_profile, weak_decision, 1, '')
-	assert weak_plan.action == 'discard'
+	assert weak_plan.action == 'defer'
 	assert weak_plan.reason == 'weak_single_evidence'
+	assert weak_plan.trace.inference == 'candidate is not stable enough for L1 and should be revisited by scene-level memory'
 	assert 'weak_single_evidence' in weak_plan.trace.blockers
 
 	strong_single := memory.ReflectionPersistInput{
