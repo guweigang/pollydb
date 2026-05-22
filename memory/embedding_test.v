@@ -11,7 +11,7 @@ fn test_markdown_embedding_targets_emit_block_and_path_layers() {
 	assert block_targets.len == 3
 	assert path_targets.len == 2
 	assert block_targets.any(it.kind == 'paragraph' && it.text == 'Hello PollyDB memory.')
-	assert block_targets.any(it.kind == 'code_block' && it.text == 'v\nprintln("ok")')
+	assert block_targets.any(it.kind == 'code_block' && it.text == 'println("ok")')
 	assert path_targets.any(it.kind == 'heading_path' && it.text.contains('Intro'))
 	assert path_targets.any(it.kind == 'heading_path' && it.text.contains('Ship vectors.'))
 }

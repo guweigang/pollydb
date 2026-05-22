@@ -1818,3 +1818,104 @@ fn test_pollydb_store_sync_codex_resume_state_across_batches() {
 	db.close() or { panic(err) }
 	assert resume.name == ''
 }
+
+fn test_hierarchical_memory_context() {
+	println("=== [DEBUG] Start test_hierarchical_memory_context")
+	codex_root := os.join_path(os.dir(@FILE), 'testdata', 'codex_fixture')
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-hierarchical-memory-context')
+	os.rmdir_all(store_root) or {}
+	println("=== [DEBUG] store open")
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	println("=== [DEBUG] sync_codex")
+	_ = store.sync_codex(codex_root) or { panic(err) }
+	println("=== [DEBUG] ensure_memory_schema")
+	_ = store.ensure_memory_schema() or { panic(err) }
+
+	// 1. 测试 L3 Persona 偏好管理
+	println("=== [DEBUG] list_personas 1")
+	mut list := store.list_personas() or { panic(err) }
+	assert list.len == 0
+
+	println("=== [DEBUG] add_persona 1")
+	p1 := store.add_persona('Prefer KISS style code') or { panic(err) }
+	println("=== [DEBUG] add_persona 2")
+	p2 := store.add_persona('Do not use Tailwind CSS') or { panic(err) }
+	println("=== [DEBUG] list_personas 2")
+	list = store.list_personas() or { panic(err) }
+	assert list.len == 2
+	
+	mut has_p1 := false
+	mut has_tailwind_pref := false
+	for p in list {
+		if p.persona_id == p1.persona_id {
+			has_p1 = true
+		}
+		if p.content == 'Do not use Tailwind CSS' {
+			has_tailwind_pref = true
+		}
+	}
+	assert has_p1
+	assert has_tailwind_pref
+
+	println("=== [DEBUG] delete_persona")
+	store.delete_persona(p2.persona_id) or { panic(err) }
+	println("=== [DEBUG] list_personas 3")
+	list = store.list_personas() or { panic(err) }
+	assert list.len == 1
+	assert list[0].persona_id == p1.persona_id
+
+	// 2. 测试 L1/L2 保存与匹配
+	// 写入一个 L1 Memory Card
+	println("=== [DEBUG] save_memory")
+	store.save_memory(memory.PersistedReflection{
+		reflection_id: 'ref_001'
+		reflection_kind: 'fact'
+		title: 'Use vjsx import'
+		summary_md: 'We decided to use import guweigang.vjsx'
+		insight_md: 'Some evidence text'
+		topic_key: 'vjsx'
+		supersedes_reflection_id: ''
+		created_at: storage.current_datetime_string()
+	}) or { panic(err) }
+
+	// 保存一个 L2 Scene Block
+	println("=== [DEBUG] save_scene")
+	store.save_scene(memory.SceneBlock{
+		scene_id: 'scene_001'
+		repo: 'pollytree'
+		cwd: '/users/work/pollytree'
+		topic: 'vjsx_development'
+		workflow: 'refactoring'
+		time_start: storage.current_datetime_string()
+		time_end: storage.current_datetime_string()
+		atomic_memory_ids: ['ref_001']
+		metadata_json: ''
+		created_at: storage.current_datetime_string()
+		updated_at: storage.current_datetime_string()
+	}) or { panic(err) }
+
+	// 3. 测试三阶段 Context 装配 (MemoryContextRequest)
+	// 用已匹配 CWD 访问
+	println("=== [DEBUG] memory_context 1")
+	context1 := store.memory_context(MemoryContextRequest{
+		query: 'vjsx'
+		cwd: '/users/work/pollytree'
+		repo: 'pollytree'
+		limit: 5
+	}) or { panic(err) }
+	
+	// 期望 markdown 里包含 CWD/Repo 场景标题、L1 卡片信息、L3 Persona 习惯
+	assert context1.markdown.contains('pollytree')
+	assert context1.markdown.contains('We decided to use import guweigang.vjsx')
+	assert context1.markdown.contains('Prefer KISS style code')
+
+	// 用未匹配的 CWD/Repo 访问，不匹配 L2，但叠加 L3 Persona
+	context2 := store.memory_context(MemoryContextRequest{
+		query: 'unrelated'
+		cwd: '/users/work/other'
+		repo: 'other'
+		limit: 5
+	}) or { panic(err) }
+	assert !context2.markdown.contains('pollytree')
+	assert context2.markdown.contains('Prefer KISS style code')
+}

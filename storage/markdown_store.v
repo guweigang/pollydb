@@ -535,7 +535,7 @@ fn markdown_diff_entries(previous []MarkdownOccurrence, current []MarkdownOccurr
 	return entries
 }
 
-pub fn (mut database PersistentDatabase) ingest_markdown(raw string) !MarkdownRef {
+pub fn (database &PersistentDatabase) ingest_markdown(raw string) !MarkdownRef {
 	mut store := new_markdown_file_store(database.root_dir)!
 	plan := vmarkdown.plan_ingest(raw, store)!
 	_ = vmarkdown.commit_ingest_plan(mut store, plan)!
@@ -567,7 +567,7 @@ pub fn (database &PersistentDatabase) diff_markdown_refs(left MarkdownRef, right
 	}
 }
 
-pub fn (mut database PersistentDatabase) preview_markdown_merge_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) !MarkdownMergePreview {
+pub fn (database &PersistentDatabase) preview_markdown_merge_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) !MarkdownMergePreview {
 	base_to_ours := database.diff_markdown_refs(base, ours)!
 	base_to_theirs := database.diff_markdown_refs(base, theirs)!
 	merged_ref := database.try_merge_markdown_refs(base, ours, theirs) or { MarkdownRef{} }
@@ -588,7 +588,7 @@ pub fn (mut database PersistentDatabase) preview_markdown_merge_refs(base Markdo
 	}
 }
 
-pub fn (mut database PersistentDatabase) merge_markdown_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) !MarkdownRef {
+pub fn (database &PersistentDatabase) merge_markdown_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) !MarkdownRef {
 	return database.try_merge_markdown_refs(base, ours, theirs) or {
 		return error('markdown refs could not be merged automatically')
 	}
@@ -1076,7 +1076,7 @@ fn merge_markdown_documents(base vmarkdown.Document, ours vmarkdown.Document, th
 	return none
 }
 
-pub fn (mut database PersistentDatabase) try_merge_markdown_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) ?MarkdownRef {
+pub fn (database &PersistentDatabase) try_merge_markdown_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) ?MarkdownRef {
 	base_raw := database.load_markdown(base) or { return none }
 	ours_raw := database.load_markdown(ours) or { return none }
 	theirs_raw := database.load_markdown(theirs) or { return none }

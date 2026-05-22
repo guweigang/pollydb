@@ -1,6 +1,7 @@
 module storage
 
 import encoding.base64
+import json
 import memory
 import rand
 
@@ -148,8 +149,46 @@ fn memory_links_spec() !TypedTableSpec {
 	])!
 }
 
-fn (mut database PersistentDatabase) ensure_memory_reflections_table() ! {
+fn scene_blocks_spec() !TypedTableSpec {
+	return TypedTableSpec.new(TableDef.new('scene_blocks', [
+		ColumnDef.new('scene_id', .string_, false)!,
+		ColumnDef.new('repo', .string_, true)!,
+		ColumnDef.new('cwd', .string_, true)!,
+		ColumnDef.new('topic', .string_, true)!,
+		ColumnDef.new('workflow', .string_, true)!,
+		ColumnDef.new('time_start', .string_, false)!,
+		ColumnDef.new('time_end', .string_, false)!,
+		ColumnDef.new('atomic_memory_ids', .json_, false)!,
+		ColumnDef.new('metadata_json', .json_, true)!,
+		ColumnDef.datetime_with_current_timestamp('created_at', false, false)!,
+		ColumnDef.datetime_with_current_timestamp('updated_at', false, true)!,
+	], ['scene_id'])!, [
+		SchemaIndexDef.new('repo_idx', 'repo')!,
+		SchemaIndexDef.new('cwd_idx', 'cwd')!,
+	])!
+}
+
+fn persona_profiles_spec() !TypedTableSpec {
+	return TypedTableSpec.new(TableDef.new('persona_profiles', [
+		ColumnDef.new('persona_id', .string_, false)!,
+		ColumnDef.new('preference_kind', .string_, false)!,
+		ColumnDef.new('content', .string_, false)!,
+		ColumnDef.datetime_with_current_timestamp('created_at', false, false)!,
+	], ['persona_id'])!, [
+		SchemaIndexDef.new('preference_kind_idx', 'preference_kind')!,
+	])!
+}
+
+pub fn (mut database PersistentDatabase) ensure_memory_reflections_table() ! {
 	database.register_or_update_table(memory_reflections_spec()!)!
+}
+
+pub fn (mut database PersistentDatabase) ensure_scene_blocks_table() ! {
+	database.register_or_update_table(scene_blocks_spec()!)!
+}
+
+pub fn (mut database PersistentDatabase) ensure_persona_profiles_table() ! {
+	database.register_or_update_table(persona_profiles_spec()!)!
 }
 
 fn (mut database PersistentDatabase) ensure_memory_reflector_state_table() ! {
@@ -779,7 +818,8 @@ fn (mut database PersistentDatabase) persist_reflection_job(job memory.Reflectio
 	source_refs := memory.reflection_job_source_refs(job)
 	mut row := TypedRowData.new()
 	row.set('reflection_id', reflection_id)
-	row.set('reflection_kind', job.reflection_kind)
+	reflection_kind := if input.reflection_kind.len > 0 { input.reflection_kind } else { job.reflection_kind }
+	row.set('reflection_kind', reflection_kind)
 	row.set('title', input.title)
 	row.set('summary_md', summary_ref)
 	if input.insight_md.trim_space().len > 0 {
@@ -837,7 +877,7 @@ fn (mut database PersistentDatabase) persist_reflection_job(job memory.Reflectio
 	vector_progress('persist reflection apply done title=${input.title} links=${links.len}')
 	return memory.PersistedReflection{
 		reflection_id:            reflection_id
-		reflection_kind:          job.reflection_kind
+		reflection_kind:          reflection_kind
 		title:                    input.title
 		summary_md:               input.summary_md
 		insight_md:               input.insight_md
@@ -872,4 +912,137 @@ fn reflection_seed_text(targets []memory.MarkdownEmbeddingTarget) string {
 		parts << target.text
 	}
 	return parts.join('\n\n')
+}
+
+pub fn (mut database PersistentDatabase) save_scene_block(branch_name string, block memory.SceneBlock, cfg ChunkConfig, meta CommitMeta) ! {
+	database.ensure_scene_blocks_table()!
+	mut row := TypedRowData.new()
+	row.set('scene_id', block.scene_id)
+	if block.repo.len > 0 {
+		row.set('repo', block.repo)
+	} else {
+		row.set('repo', NullValue{})
+	}
+	if block.cwd.len > 0 {
+		row.set('cwd', block.cwd)
+	} else {
+		row.set('cwd', NullValue{})
+	}
+	if block.topic.len > 0 {
+		row.set('topic', block.topic)
+	} else {
+		row.set('topic', NullValue{})
+	}
+	if block.workflow.len > 0 {
+		row.set('workflow', block.workflow)
+	} else {
+		row.set('workflow', NullValue{})
+	}
+	row.set('time_start', block.time_start)
+	row.set('time_end', block.time_end)
+	row.set('atomic_memory_ids', json.encode(block.atomic_memory_ids))
+	if block.metadata_json.len > 0 {
+		row.set('metadata_json', block.metadata_json)
+	} else {
+		row.set('metadata_json', NullValue{})
+	}
+	created_at := if block.created_at.len > 0 { block.created_at } else { current_datetime_string() }
+	updated_at := if block.updated_at.len > 0 { block.updated_at } else { current_datetime_string() }
+	row.set('created_at', created_at)
+	row.set('updated_at', updated_at)
+
+	mut writes := TypedWriteSet.new()
+	writes.put('scene_blocks', block.scene_id.bytes(), row)
+	database.apply_typed_write_set(branch_name, writes, cfg, meta)!
+}
+
+pub fn (mut database PersistentDatabase) get_scene_block(branch_name string, scene_id string) !memory.SceneBlock {
+	database.ensure_scene_blocks_table()!
+	session := database.open_session(branch_name)!
+	row := session.get_row(mut database, 'scene_blocks', scene_id.bytes())!
+	return decode_scene_block_row(row)!
+}
+
+pub fn (mut database PersistentDatabase) list_scene_blocks(branch_name string) ![]memory.SceneBlock {
+	database.ensure_scene_blocks_table()!
+	session := database.open_session(branch_name)!
+	rows := session.scan_table(mut database, 'scene_blocks', 0) or { []TypedSchemaRow{} }
+	mut out := []memory.SceneBlock{}
+	for row in rows {
+		out << decode_scene_block_row(row)!
+	}
+	return out
+}
+
+fn decode_scene_block_row(row TypedSchemaRow) !memory.SceneBlock {
+	scene_id := required_row_string(row, 'scene_id')!
+	repo := optional_row_string(row, 'repo')
+	cwd := optional_row_string(row, 'cwd')
+	topic := optional_row_string(row, 'topic')
+	workflow := optional_row_string(row, 'workflow')
+	time_start := required_row_string(row, 'time_start')!
+	time_end := required_row_string(row, 'time_end')!
+	atomic_memory_ids_raw := required_row_string(row, 'atomic_memory_ids')!
+	atomic_memory_ids := json.decode([]string, atomic_memory_ids_raw) or { []string{} }
+	metadata_json := optional_row_string(row, 'metadata_json')
+	created_at := required_row_string(row, 'created_at')!
+	updated_at := required_row_string(row, 'updated_at')!
+	return memory.SceneBlock{
+		scene_id: scene_id
+		repo: repo
+		cwd: cwd
+		topic: topic
+		workflow: workflow
+		time_start: time_start
+		time_end: time_end
+		atomic_memory_ids: atomic_memory_ids
+		metadata_json: metadata_json
+		created_at: created_at
+		updated_at: updated_at
+	}
+}
+
+pub fn (mut database PersistentDatabase) save_persona_profile(branch_name string, profile memory.PersonaProfile, cfg ChunkConfig, meta CommitMeta) ! {
+	database.ensure_persona_profiles_table()!
+	mut row := TypedRowData.new()
+	row.set('persona_id', profile.persona_id)
+	row.set('preference_kind', profile.preference_kind)
+	row.set('content', profile.content)
+	created_at := if profile.created_at.len > 0 { profile.created_at } else { current_datetime_string() }
+	row.set('created_at', created_at)
+
+	mut writes := TypedWriteSet.new()
+	writes.put('persona_profiles', profile.persona_id.bytes(), row)
+	database.apply_typed_write_set(branch_name, writes, cfg, meta)!
+}
+
+pub fn (mut database PersistentDatabase) list_persona_profiles(branch_name string) ![]memory.PersonaProfile {
+	database.ensure_persona_profiles_table()!
+	session := database.open_session(branch_name)!
+	rows := session.scan_table(mut database, 'persona_profiles', 0) or { []TypedSchemaRow{} }
+	mut out := []memory.PersonaProfile{}
+	for row in rows {
+		out << decode_persona_profile_row(row)!
+	}
+	return out
+}
+
+pub fn (mut database PersistentDatabase) delete_persona_profile(branch_name string, persona_id string, cfg ChunkConfig, meta CommitMeta) ! {
+	database.ensure_persona_profiles_table()!
+	mut writes := TypedWriteSet.new()
+	writes.delete('persona_profiles', persona_id.bytes())
+	database.apply_typed_write_set(branch_name, writes, cfg, meta)!
+}
+
+fn decode_persona_profile_row(row TypedSchemaRow) !memory.PersonaProfile {
+	persona_id := required_row_string(row, 'persona_id')!
+	preference_kind := required_row_string(row, 'preference_kind')!
+	content := required_row_string(row, 'content')!
+	created_at := required_row_string(row, 'created_at')!
+	return memory.PersonaProfile{
+		persona_id: persona_id
+		preference_kind: preference_kind
+		content: content
+		created_at: created_at
+	}
 }

@@ -2348,6 +2348,10 @@ pub fn (mut database PersistentDatabase) close() ! {
 	database.engine.close()!
 }
 
+pub fn (mut database PersistentDatabase) root_cid_at_branch(branch_name string) !string {
+	return database.engine.root_cid_at_branch(branch_name)
+}
+
 pub fn (mut database PersistentDatabase) checkpoint() ! {
 	if database.catalog_dirty {
 		database.persist_catalog()!

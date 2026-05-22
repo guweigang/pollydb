@@ -6,6 +6,7 @@ import math
 import memory
 import os
 import query as queryapi
+import rand
 import storage
 import time
 
@@ -136,6 +137,8 @@ pub:
 	query           string
 	limit           int = 6
 	include_sources bool
+	cwd             string
+	repo            string
 }
 
 pub struct MemoryContextResult {
@@ -375,15 +378,131 @@ pub fn (store PollyDbStore) list_memory(request MemoryListRequest) !MemoryListRe
 }
 
 pub fn (store PollyDbStore) memory_context(request MemoryContextRequest) !MemoryContextResult {
-	result := store.list_memory(MemoryListRequest{
-		query:  request.query
-		limit:  if request.limit > 0 { request.limit } else { 6 }
-		offset: 0
-	})!
-	markdown := render_memory_context_markdown(request, result.memories)
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	if store_branch !in db.branch_names() {
+		return MemoryContextResult{
+			markdown: ''
+			memories: []MemoryCard{}
+		}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+
+	// 1. 匹配当前 Scene Block (L2)
+	scene_blocks := db.list_scene_blocks(store_branch) or { []memory.SceneBlock{} }
+	mut best_scene := memory.SceneBlock{}
+	mut max_cwd_len := -1
+	for block in scene_blocks {
+		if request.repo.len > 0 && block.repo == request.repo {
+			if block.cwd.len > 0 {
+				if request.cwd.starts_with(block.cwd) {
+					if block.cwd.len > max_cwd_len {
+						max_cwd_len = block.cwd.len
+						best_scene = block
+					}
+				}
+			} else {
+				if max_cwd_len < 0 {
+					best_scene = block
+				}
+			}
+		}
+		if request.repo.len == 0 && request.cwd.len > 0 && block.cwd.len > 0 {
+			if request.cwd.starts_with(block.cwd) {
+				if block.cwd.len > max_cwd_len {
+					max_cwd_len = block.cwd.len
+					best_scene = block
+				}
+			}
+		}
+	}
+	if best_scene.scene_id.len == 0 && request.query.len > 0 {
+		for block in scene_blocks {
+			if (block.topic.len > 0 && request.query.to_lower().contains(block.topic.to_lower())) || 
+			   (block.workflow.len > 0 && request.query.to_lower().contains(block.workflow.to_lower())) {
+				best_scene = block
+				break
+			}
+		}
+	}
+
+	// 2. 根据 Scene 拉取关联的 L1 记忆，若无 Scene 则 fallback 到全局 list_memory
+	mut memories := []MemoryCard{}
+	mut use_fallback := true
+
+	if best_scene.scene_id.len > 0 && best_scene.atomic_memory_ids.len > 0 {
+		if db.has_table('memory_reflections') {
+			mut scene_memories := []MemoryCard{}
+			all_rows := session.scan_table(mut db, 'memory_reflections', 0) or { []storage.TypedSchemaRow{} }
+			superseded := superseded_memory_reflection_ids(all_rows)
+			terms := normalized_search_terms(request.query)
+			
+			for block_mem_id in best_scene.atomic_memory_ids {
+				if row := session.get_row(mut db, 'memory_reflections', block_mem_id.bytes()) {
+					card := memory_card_from_row(mut db, row, superseded, terms)!
+					if !card.active {
+						continue
+					}
+					scene_memories << card
+				}
+			}
+			if scene_memories.len > 0 {
+				use_fallback = false
+				// 评分和排序
+				if request.query.len > 0 {
+					scene_memories.sort_with_compare(fn (a &MemoryCard, b &MemoryCard) int {
+						if a.score > b.score {
+							return -1
+						}
+						if a.score < b.score {
+							return 1
+						}
+						if a.created_at > b.created_at {
+							return -1
+						}
+						if a.created_at < b.created_at {
+							return 1
+						}
+						return 0
+					})
+				} else {
+					scene_memories.sort_with_compare(fn (a &MemoryCard, b &MemoryCard) int {
+						if a.created_at > b.created_at {
+							return -1
+						}
+						if a.created_at < b.created_at {
+							return 1
+						}
+						return 0
+					})
+				}
+				limit := if request.limit > 0 { request.limit } else { 6 }
+				end := if scene_memories.len < limit { scene_memories.len } else { limit }
+				memories = scene_memories[0..end].clone()
+			}
+		}
+	}
+
+	if use_fallback {
+		result := store.list_memory(MemoryListRequest{
+			query:  request.query
+			limit:  if request.limit > 0 { request.limit } else { 6 }
+			offset: 0
+		})!
+		memories = result.memories.clone()
+	}
+
+	// 3. 叠加全局 L3 Persona
+	persona_profiles := db.list_persona_profiles(store_branch) or { []memory.PersonaProfile{} }
+
+	// 4. 组装并渲染 Context Markdown
+	markdown := render_hierarchical_memory_context_markdown(request, best_scene, memories, persona_profiles)
+
 	return MemoryContextResult{
 		query:    request.query
-		memories: result.memories
+		memories: memories
 		markdown: markdown
 	}
 }
@@ -473,6 +592,155 @@ pub fn (store PollyDbStore) delete_memory(reflection_ids []string) !MemoryDelete
 		missing_ids:         missing
 	}
 }
+
+pub fn (store PollyDbStore) list_scenes() ![]memory.SceneBlock {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	if store_branch !in db.branch_names() {
+		return []memory.SceneBlock{}
+	}
+	db.ensure_scene_blocks_table()!
+	return db.list_scene_blocks(store_branch)!
+}
+
+pub fn (store PollyDbStore) list_personas() ![]memory.PersonaProfile {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	if store_branch !in db.branch_names() {
+		return []memory.PersonaProfile{}
+	}
+	db.ensure_persona_profiles_table()!
+	return db.list_persona_profiles(store_branch)!
+}
+
+pub fn (store PollyDbStore) add_persona(content string) !memory.PersonaProfile {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	db.ensure_persona_profiles_table()!
+	persona_id := 'persona_' + rand.uuid_v4().replace('-', '')[..16]
+	profile := memory.PersonaProfile{
+		persona_id: persona_id
+		preference_kind: 'preference'
+		content: content
+		created_at: storage.current_datetime_string()
+	}
+	db.save_persona_profile(store_branch, profile, storage.ChunkConfig.default(), storage.CommitMeta{
+		author: 'agentview'
+		message: 'add persona profile'
+	})!
+	return profile
+}
+
+pub fn (store PollyDbStore) delete_persona(persona_id string) ! {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	db.ensure_persona_profiles_table()!
+	db.delete_persona_profile(store_branch, persona_id, storage.ChunkConfig.default(), storage.CommitMeta{
+		author: 'agentview'
+		message: 'delete persona profile'
+	})!
+}
+
+pub fn (store PollyDbStore) save_scene(scene memory.SceneBlock) ! {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	db.ensure_scene_blocks_table()!
+	db.save_scene_block(store_branch, scene, storage.ChunkConfig.default(), storage.CommitMeta{
+		author: 'agentview'
+		message: 'save scene block'
+	})!
+}
+
+pub fn (store PollyDbStore) save_memory(reflection memory.PersistedReflection) ! {
+	// 1. Ensure table exists
+	{
+		mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+		defer { db.close() or {} }
+		db.ensure_memory_reflections_table()!
+	}
+
+	// 2. Ingest summary markdown
+	mut summary_ref := storage.MarkdownRef{}
+	{
+		mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+		defer { db.close() or {} }
+		summary_ref = db.ingest_markdown(reflection.summary_md)!
+	}
+
+	// 3. Ingest insight markdown if present
+	mut insight_ref := storage.MarkdownRef{}
+	if reflection.insight_md.trim_space().len > 0 {
+		mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+		defer { db.close() or {} }
+		insight_ref = db.ingest_markdown(reflection.insight_md)!
+	}
+
+	// 4. Resolve derived_from_root_hash
+	mut derived_hash := reflection.derived_from_root_hash
+	if derived_hash.len == 0 {
+		mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+		defer { db.close() or {} }
+		derived_hash = db.root_cid_at_branch(store_branch)!
+	}
+
+	// 5. Apply the write set
+	{
+		mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+		defer { db.close() or {} }
+
+		mut row := storage.TypedRowData.new()
+		row.set('reflection_id', reflection.reflection_id)
+		row.set('reflection_kind', reflection.reflection_kind)
+		row.set('title', reflection.title)
+		row.set('summary_md', summary_ref)
+		if reflection.insight_md.trim_space().len > 0 {
+			row.set('insight_md', insight_ref)
+		} else {
+			row.set('insight_md', storage.NullValue{})
+		}
+		if reflection.parent_ref.len > 0 {
+			row.set('parent_ref', reflection.parent_ref)
+		} else {
+			row.set('parent_ref', storage.NullValue{})
+		}
+		if reflection.topic_key.len > 0 {
+			row.set('topic_key', reflection.topic_key)
+		} else {
+			row.set('topic_key', storage.NullValue{})
+		}
+
+		row.set('source_refs', memory.encode_reflection_source_refs(reflection.source_refs))
+		row.set('derived_from_root_hash', derived_hash)
+
+		if reflection.supersedes_reflection_id.len > 0 {
+			row.set('supersedes_reflection_id', reflection.supersedes_reflection_id)
+		} else {
+			row.set('supersedes_reflection_id', storage.NullValue{})
+		}
+		row.set('active', true)
+		row.set('created_at', reflection.created_at)
+		row.set('updated_at', reflection.created_at)
+
+		mut writes := storage.TypedWriteSet.new()
+		writes.put('memory_reflections', reflection.reflection_id.bytes(), row)
+		db.apply_typed_write_set(store_branch, writes, storage.ChunkConfig.default(), storage.CommitMeta{
+			author: 'agentview'
+			message: 'save memory card'
+		})!
+	}
+}
+
+
 
 fn base64_key_matches_any_id(encoded string, ids map[string]bool) bool {
 	if encoded.len == 0 {
@@ -611,6 +879,62 @@ fn (store PollyDbStore) distill_recent_memory_with_mode(mut embedding_engine mem
 			continue
 		}
 		persisted << reflection
+		// L2 Scene Block 自动后置关联
+		if reflection.reflection_id.len > 0 {
+			mut cwd := ''
+			if anchor.session_id.len > 0 {
+				if session_row := session.get_row(mut db, 'sessions', anchor.session_id.bytes()) {
+					cwd = opt_string(session_row, 'cwd')
+				}
+			}
+			if cwd.len > 0 {
+				repo := find_repo_from_cwd(cwd)
+				mut scene_blocks := db.list_scene_blocks(store_branch) or { []memory.SceneBlock{} }
+				mut found_idx := -1
+				for s_idx, s in scene_blocks {
+					if s.cwd == cwd {
+						found_idx = s_idx
+						break
+					}
+				}
+				if found_idx >= 0 {
+					block := scene_blocks[found_idx]
+					if reflection.reflection_id !in block.atomic_memory_ids {
+						mut ids := block.atomic_memory_ids.clone()
+						ids << reflection.reflection_id
+						updated_block := memory.SceneBlock{
+							...block
+							atomic_memory_ids: ids
+							updated_at: storage.current_datetime_string()
+						}
+						db.save_scene_block(store_branch, updated_block, storage.ChunkConfig.default(), storage.CommitMeta{
+							author: 'pollydb-cli'
+							message: 'associate memory card with scene'
+						}) or {
+							eprintln('agentview memory: failed to associate memory with scene: ${err}')
+						}
+					}
+				} else {
+					new_scene := memory.SceneBlock{
+						scene_id: 'scene_' + rand.uuid_v4().replace('-', '')
+						repo: repo
+						cwd: cwd
+						topic: if input.topic_key.len > 0 { input.topic_key } else { '' }
+						time_start: storage.current_datetime_string()
+						time_end: storage.current_datetime_string()
+						atomic_memory_ids: [reflection.reflection_id]
+						created_at: storage.current_datetime_string()
+						updated_at: storage.current_datetime_string()
+					}
+					db.save_scene_block(store_branch, new_scene, storage.ChunkConfig.default(), storage.CommitMeta{
+						author: 'pollydb-cli'
+						message: 'create new scene block for memory card'
+					}) or {
+						eprintln('agentview memory: failed to create scene block: ${err}')
+					}
+				}
+			}
+		}
 		memory_distill_progress('persisted reflection ${persisted.len}/${max_jobs} id=${reflection.reflection_id} title=${reflection.title}')
 		reflected_sources[source_key] = true
 		if persisted.len >= max_jobs {
@@ -989,6 +1313,79 @@ fn render_memory_context_markdown(request MemoryContextRequest, memories []Memor
 			lines << '- source_refs: ${card.source_count}'
 			if card.derived_from_root_hash.len > 0 {
 				lines << '- source_root: `${card.derived_from_root_hash}`'
+			}
+		}
+	}
+	return lines.join('\n') + '\n'
+}
+
+fn render_hierarchical_memory_context_markdown(request MemoryContextRequest, scene memory.SceneBlock, memories []MemoryCard, personas []memory.PersonaProfile) string {
+	mut lines := []string{}
+	lines << '# Agent Memory Context'
+	
+	// 1. 全局 Persona L3
+	if personas.len > 0 {
+		lines << ''
+		lines << '## User Persona & Preferences'
+		for p in personas {
+			lines << '- ${p.content}'
+		}
+	}
+
+	// 2. 匹配的场景 L2
+	if scene.scene_id.len > 0 {
+		lines << ''
+		lines << '## Current Scene'
+		if scene.topic.len > 0 {
+			lines << '- Topic: `${scene.topic}`'
+		}
+		if scene.workflow.len > 0 {
+			lines << '- Workflow: `${scene.workflow}`'
+		}
+		if scene.repo.len > 0 {
+			lines << '- Repo: `${scene.repo}`'
+		}
+		if scene.cwd.len > 0 {
+			lines << '- Directory: `${scene.cwd}`'
+		}
+	}
+
+	// 3. 关联的 L1 原子记忆
+	lines << ''
+	lines << '## Distilled Knowledge & Decisions'
+	if memories.len == 0 {
+		lines << 'No matching distilled memory was found.'
+	} else {
+		for idx, card in memories {
+			lines << ''
+			kind_str := if card.reflection_kind.len > 0 { '[${card.reflection_kind.to_upper()}] ' } else { '' }
+			lines << '### ${idx + 1}. ${kind_str}${card.title}'
+			if card.summary_md.trim_space().len > 0 {
+				lines << ''
+				lines << card.summary_md.trim_space()
+			}
+			if card.reflection_kind in ['fact', 'constraint', 'decision', 'state'] {
+				if card.insight_md.trim_space().len > 0 {
+					lines << ''
+					lines << '**Evidence:**'
+					lines << card.insight_md.trim_space()
+				}
+			} else {
+				if card.insight_md.trim_space().len > 0 {
+					lines << ''
+					lines << card.insight_md.trim_space()
+				}
+			}
+			if request.include_sources {
+				lines << ''
+				lines << '- memory_id: `${card.reflection_id}`'
+				if card.topic_key.len > 0 {
+					lines << '- topic_key: `${card.topic_key}`'
+				}
+				lines << '- source_refs: ${card.source_count}'
+				if card.derived_from_root_hash.len > 0 {
+					lines << '- source_root: `${card.derived_from_root_hash}`'
+				}
 			}
 		}
 	}
@@ -6704,4 +7101,23 @@ fn paginate_ranked_search_hits(hits []RankedSearchHit, request SearchRequest) Se
 		total: total
 		hits:  out
 	}
+}
+
+fn find_repo_from_cwd(cwd string) string {
+	if cwd.len == 0 {
+		return ''
+	}
+	mut dir := cwd
+	for {
+		git_dir := os.join_path(dir, '.git')
+		if os.exists(git_dir) && os.is_dir(git_dir) {
+			return os.file_name(dir)
+		}
+		parent := os.dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ''
 }

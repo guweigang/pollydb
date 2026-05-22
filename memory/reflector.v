@@ -39,6 +39,7 @@ pub:
 	parent_ref               string
 	topic_key                string
 	supersedes_reflection_id string
+	reflection_kind          string
 }
 
 pub struct PersistedReflection {
@@ -55,6 +56,29 @@ pub:
 	supersedes_reflection_id string
 	created_at               string
 	links                    []MemoryLink
+}
+
+pub struct SceneBlock {
+pub:
+	scene_id          string
+	repo              string
+	cwd               string
+	topic             string
+	workflow          string
+	time_start        string
+	time_end          string
+	atomic_memory_ids []string
+	metadata_json     string
+	created_at        string
+	updated_at        string
+}
+
+pub struct PersonaProfile {
+pub:
+	persona_id      string
+	preference_kind string
+	content         string
+	created_at      string
 }
 
 pub struct ReflectionSourceRef {
@@ -387,43 +411,37 @@ pub fn reflection_distillation_prompt(job ReflectionJob, options ReflectionDisti
 		'未命名记忆复盘'
 	}
 	topic_hint := if options.topic_key.len > 0 { options.topic_key } else { '' }
+	kind_hint := if job.reflection_kind.len > 0 { job.reflection_kind } else { 'fact' }
 	return [
 		'你是 PollyDB Agent 记忆系统的本地反思器。',
-		'请基于给定 seed 和 evidence 生成一条可复盘的 Markdown 蒸馏记忆。',
-		'先信任给定的结构化抽取结果，再用原始证据补足，不要遗漏任何主要事实簇。',
+		'请基于给定 seed 和 evidence 蒸馏提取一条短小、高价值的原子记忆。',
 		'要求：',
-		'1. 不要编造 evidence 之外的事实。',
+		'1. 不要编造 evidence 之外的事实，只提取确实存在且极具参考价值的内容。',
 		'2. 用中文输出；代码名、文件名、函数名保持原样。',
 		'3. 输出必须严格包在 ${reflection_begin_marker} 和 ${reflection_end_marker} 之间。',
-		'4. 输出格式必须包含 TITLE、TOPIC、SUMMARY_MD、INSIGHT_MD 四段。',
-		'5. TITLE 必须是可复用的主题标题，禁止使用“你说得对”“所以我已经”“好的”“现在我来”这类对话口吻开头。',
-		'6. SUMMARY_MD 必须是 Markdown，且必须包含 `# 摘要`；只有确有证据时才写 `## 关键决策` 和 `## 重要约束`。',
-		'7. `# 摘要` 用 1-2 条要点概括主题；`## 关键决策` 只写已经确定的做法；`## 重要约束` 只写明确边界、限制或禁止事项。',
-		'8. INSIGHT_MD 必须是 Markdown，写 `## 后续关注`，只保留 1-2 条后续观察或待跟进点。',
-		'9. 如果 evidence 已经很明确，只总结决策和约束，不要复述聊天语气，不要展开背景知识。',
-		'10. 禁止把 SQLite 或 USearch 描述成真相存储；SQLite 只能是 FTS，USearch 只能是 ANN 派生索引。',
-		'11. 先覆盖结构化抽取里的主要点，再做语言压缩；不要把多个段落压成一条重复废话。',
+		'4. 输出格式必须为：',
+		'   TITLE: <单行标题，如：对 L1/L2/L3 分层记忆设计的物理层映射决策>',
+		'   KIND: <以下四个分类之一：fact, constraint, decision, state>',
+		'   TOPIC: <单行主题，通常可以用作索引关联标签，如：memory_refactoring>',
+		'   CONTENT:',
+		'   <核心陈述内容，可以是单行或 1-2 行极其精炼的 Markdown，禁止废话和客套>',
+		'   EVIDENCE:',
+		'   <直接引用原始对话、日志或代码行片段的核心证据，指明出处，用作追溯依据>',
+		'5. 绝对不要包含 "# 摘要", "## 关键决策", "## 重要约束", "## 后续关注" 等臃肿的 Markdown 二级标题标签，只写极简的原生内容！',
+		'6. KIND 分类准则：',
+		'   - fact: 客观物理事实、环境事实或不可变的基本面；',
+		'   - constraint: 限制性规则、禁止项、编码边界或硬性约束（如“绝对禁止...”）；',
+		'   - decision: 技术、方案或设计上的已定决策，避免未来重复纠结（如“决定使用...”）；',
+		'   - state: 开发进度、任务所处的状态（如“正在重构...”）；',
 		'',
 		'期望格式：',
 		reflection_begin_marker,
 		'TITLE: ${title_hint}',
+		'KIND: ${kind_hint}',
 		'TOPIC: ${topic_hint}',
-		'SUMMARY_MD:',
-		'# 摘要',
-		'',
+		'CONTENT:',
 		'- ...',
-		'',
-		'## 关键决策',
-		'',
-		'- ...',
-		'',
-		'## 重要约束',
-		'',
-		'- ...',
-		'',
-		'INSIGHT_MD:',
-		'## 后续关注',
-		'',
+		'EVIDENCE:',
 		'- ...',
 		reflection_end_marker,
 		'',
@@ -438,7 +456,7 @@ pub fn reflection_distillation_prompt(job ReflectionJob, options ReflectionDisti
 		'后续关注候选:',
 		outline.insight_points.join('\n'),
 		'',
-		'Reflection kind: ${job.reflection_kind}',
+		'Reflection kind: ${kind_hint}',
 		'Seed scope: ${job.seed_scope.str()}',
 		'Seed anchor: ${job.seed_anchor}',
 		'Seed:',
@@ -521,51 +539,54 @@ pub fn parse_reflection_generation(raw string) !ReflectionPersistInput {
 	}
 	lines := body.split_into_lines()
 	mut title := ''
+	mut kind := ''
 	mut topic_key := ''
 	mut section := ''
-	mut summary_lines := []string{}
-	mut insight_lines := []string{}
+	mut content_lines := []string{}
+	mut evidence_lines := []string{}
 	for line in lines {
 		trimmed := line.trim_space()
 		if trimmed.starts_with('TITLE:') {
 			title = trimmed['TITLE:'.len..].trim_space()
 			continue
 		}
+		if trimmed.starts_with('KIND:') {
+			kind = trimmed['KIND:'.len..].trim_space().to_lower()
+			continue
+		}
 		if trimmed.starts_with('TOPIC:') {
 			topic_key = trimmed['TOPIC:'.len..].trim_space()
 			continue
 		}
-		if trimmed == 'SUMMARY_MD:' {
-			section = 'summary'
+		if trimmed == 'CONTENT:' || trimmed == 'SUMMARY_MD:' {
+			section = 'content'
 			continue
 		}
-		if trimmed == 'INSIGHT_MD:' || trimmed == 'INSIGHT:' || trimmed == '## Insight'
-			|| trimmed == '# Insight' {
-			section = 'insight'
-			if trimmed.starts_with('#') {
-				insight_lines << line
-			}
+		if trimmed == 'EVIDENCE:' || trimmed == 'INSIGHT_MD:' || trimmed == 'INSIGHT:' || trimmed == '## Insight' || trimmed == '# Insight' {
+			section = 'evidence'
 			continue
 		}
 		match section {
-			'summary' { summary_lines << line }
-			'insight' { insight_lines << line }
+			'content' { content_lines << line }
+			'evidence' { evidence_lines << line }
 			else {}
 		}
 	}
-	summary_md := summary_lines.join('\n').trim_space()
+	summary_md := content_lines.join('\n').trim_space()
+	insight_md := evidence_lines.join('\n').trim_space()
 	if summary_md.len == 0 {
-		return error('reflection generation missing SUMMARY_MD')
+		return error('reflection generation missing CONTENT or SUMMARY_MD')
 	}
 	return ReflectionPersistInput{
 		title:      title
 		summary_md: summary_md + '\n'
-		insight_md: if insight_lines.len > 0 {
-			insight_lines.join('\n').trim_space() + '\n'
+		insight_md: if insight_md.len > 0 {
+			insight_md + '\n'
 		} else {
 			''
 		}
-		topic_key:  topic_key
+		topic_key:       topic_key
+		reflection_kind: kind
 	}
 }
 
@@ -589,6 +610,9 @@ fn strip_llama_cli_tail(raw string) string {
 }
 
 fn normalize_reflection_persist_input(job ReflectionJob, input ReflectionPersistInput) ReflectionPersistInput {
+	if input.reflection_kind in ['fact', 'constraint', 'decision', 'state'] {
+		return input
+	}
 	return ReflectionPersistInput{
 		...input
 		summary_md: compact_reflection_summary_markdown(input.summary_md)
@@ -601,6 +625,9 @@ fn normalize_reflection_persist_input(job ReflectionJob, input ReflectionPersist
 }
 
 fn reconcile_reflection_with_outline(input ReflectionPersistInput, outline ReflectionOutline) ReflectionPersistInput {
+	if input.reflection_kind in ['fact', 'constraint', 'decision', 'state'] {
+		return input
+	}
 	summary_points := reflection_section_points(input.summary_md, '# 摘要')
 	insight_points := reflection_summary_points(input.insight_md)
 	final_summary := if reflection_points_match_outline(summary_points, outline.summary_points) {
@@ -840,6 +867,9 @@ fn reflection_fallback_insight(job ReflectionJob) string {
 
 fn reflection_persist_input_needs_fallback(outline ReflectionOutline, input ReflectionPersistInput) bool {
 	_ = outline
+	if input.reflection_kind in ['fact', 'constraint', 'decision', 'state'] {
+		return false
+	}
 	if strip_reflection_title_prefix(input.title).len == 0 {
 		return true
 	}

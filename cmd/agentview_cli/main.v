@@ -222,6 +222,18 @@ fn main() {
 				exit(1)
 			}
 		}
+		'scenes' {
+			run_scenes_command(args, store) or {
+				eprintln(err.msg())
+				exit(1)
+			}
+		}
+		'persona' {
+			run_persona_command(args, store) or {
+				eprintln(err.msg())
+				exit(1)
+			}
+		}
 		'context' {
 			run_context_command(args, store) or {
 				eprintln(err.msg())
@@ -268,11 +280,15 @@ fn usage() string {
 		+ 'agentview browse [--query TEXT] [--cwd-prefix PATH] [--source NAME] [--no-archived] [--list-limit N] [--transcript-limit N] [--store-root <path>]\n'
 		+ 'agentview memory list [--query TEXT] [--limit N] [--offset N] [--include-superseded] [--store-root <path>]\n'
 		+ 'agentview memory search <query> [--limit N] [--offset N] [--include-superseded] [--store-root <path>]\n'
-		+ 'agentview memory context <query> [--limit N] [--sources] [--store-root <path>]\n'
+		+ 'agentview memory context <query> [--limit N] [--sources] [--cwd <path>] [--repo <name>] [--store-root <path>]\n'
 		+ 'agentview memory preview [--recent-sessions N] [--max-jobs N] [--neighbor-limit N] [--candidate-limit N] [--candidate-offset N] [--store-root <path>]\n'
 		+ 'agentview memory distill [--recent-sessions N] [--max-jobs N] [--neighbor-limit N] [--candidate-limit N] [--candidate-offset N] [--store-root <path>]\n'
 		+ 'agentview memory delete <reflection_id...> [--store-root <path>]\n'
-		+ 'agentview context <query> [--limit N] [--sources] [--store-root <path>]\n'
+		+ 'agentview context <query> [--limit N] [--sources] [--cwd <path>] [--repo <name>] [--store-root <path>]\n'
+		+ 'agentview scenes [--store-root <path>]\n'
+		+ 'agentview persona [list] [--store-root <path>]\n'
+		+ 'agentview persona add <content> [--store-root <path>]\n'
+		+ 'agentview persona delete <persona_id> [--store-root <path>]\n'
 		+ 'default codex root: ~/.codex\n'
 		+ 'default store root: ~/.agentview/pollydb\n'
 		+ 'note: sessions/show/search/browse will auto-sync from ~/.codex when the store is empty\n'
@@ -312,10 +328,14 @@ fn run_memory_command(args []string, store agentview.PollyDbStore) ! {
 		}
 		'context' {
 			query := memory_query_arg(args)!
+			cwd := parse_flag_value(args, '--cwd')
+			repo := parse_flag_value(args, '--repo')
 			context := store.memory_context(agentview.MemoryContextRequest{
-				query: query
-				limit: parse_limit(args, 6)
+				query:           query
+				limit:           parse_limit(args, 6)
 				include_sources: has_flag(args, '--sources')
+				cwd:             cwd
+				repo:            repo
 			})!
 			print(context.markdown)
 		}
@@ -431,12 +451,60 @@ fn run_context_command(args []string, store agentview.PollyDbStore) ! {
 	} else {
 		args[1]
 	}
+	cwd := parse_flag_value(args, '--cwd')
+	repo := parse_flag_value(args, '--repo')
 	context := store.memory_context(agentview.MemoryContextRequest{
-		query: query
-		limit: parse_limit(args, 6)
+		query:           query
+		limit:           parse_limit(args, 6)
 		include_sources: has_flag(args, '--sources')
+		cwd:             cwd
+		repo:            repo
 	})!
 	print(context.markdown)
+}
+
+fn run_scenes_command(args []string, store agentview.PollyDbStore) ! {
+	_ = args
+	scenes := store.list_scenes()!
+	println('scenes total=${scenes.len}')
+	for scene in scenes {
+		println('${scene.scene_id} | repo=${scene.repo} | cwd=${scene.cwd} | topic=${scene.topic} | workflow=${scene.workflow}')
+		println('  time: ${scene.time_start} to ${scene.time_end}')
+		println('  atomic_memories: ${scene.atomic_memory_ids.join(", ")}')
+		println('')
+	}
+}
+
+fn run_persona_command(args []string, store agentview.PollyDbStore) ! {
+	subcommand := if args.len > 1 { args[1] } else { 'list' }
+	match subcommand {
+		'list' {
+			personas := store.list_personas()!
+			println('personas total=${personas.len}')
+			for p in personas {
+				println('${p.persona_id} | kind=${p.preference_kind} | content="${p.content}" | created_at=${p.created_at}')
+			}
+		}
+		'add' {
+			if args.len < 3 {
+				return error('persona add requires <content>')
+			}
+			content := args[2]
+			profile := store.add_persona(content)!
+			println('added persona id=${profile.persona_id} kind=${profile.preference_kind}')
+		}
+		'delete' {
+			if args.len < 3 {
+				return error('persona delete requires <persona_id>')
+			}
+			persona_id := args[2]
+			store.delete_persona(persona_id)!
+			println('deleted persona id=${persona_id}')
+		}
+		else {
+			return error('unknown persona command: ${subcommand}; expected list|add|delete')
+		}
+	}
 }
 
 fn memory_query_arg(args []string) !string {
