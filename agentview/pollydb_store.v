@@ -3904,7 +3904,7 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 	mut last_completed_session_id := existing_resume.last_completed_session_id
 	mut waiting_for_resume_anchor := resume_anchor_present
 	mut stopped_after_batch := false
-	use_split_group_commit := cfg.enable_split_backed_working_set && existing_ingest.len > 0
+	use_split_group_commit := cfg.enable_split_backed_working_set
 	mut seeded := store_branch_exists(mut db)
 	mut active_group_commit := false
 	mut session := storage.GroupCommitSession{}
