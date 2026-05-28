@@ -810,6 +810,9 @@ fn (store PollyDbStore) distill_recent_memory_with_mode(mut embedding_engine mem
 	mut reflected_sources := db.reflected_source_keys(store_branch) or {
 		map[string]bool{}
 	}
+	// 关闭准备阶段的数据库句柄，避免其在耗时的大模型推理阶段一直保持开启
+	db.close() or {}
+
 	max_jobs := if options.max_jobs > 0 { options.max_jobs } else { 4 }
 	neighbor_limit := if options.neighbor_limit > 0 { options.neighbor_limit } else { 8 }
 	min_evidence := if options.min_evidence > 0 { options.min_evidence } else { 1 }
@@ -861,80 +864,12 @@ fn (store PollyDbStore) distill_recent_memory_with_mode(mut embedding_engine mem
 			reflected_sources[source_key] = true
 			continue
 		}
-		memory_distill_progress('dedupe reflection key=${primary_key.bytestr()} topic=${input.topic_key}')
-		if existing_reflection_id := find_existing_reflection_for_memory_card(mut db, session,
-			input, mut embedding_engine)
-		{
-			input = memory.ReflectionPersistInput{
-				...input
-				supersedes_reflection_id: existing_reflection_id
-			}
-		}
-		memory_distill_progress('persist reflection key=${primary_key.bytestr()} sources=${job.evidence.len}')
-		reflection := db.persist_prebuilt_reflection_job(job, input, storage.ChunkConfig.default(), storage.CommitMeta{
-			author:  'pollydb-cli'
-			message: 'distill agentview memory'
-		}) or {
+		memory_distill_progress('dedupe and persist reflection key=${primary_key.bytestr()} topic=${input.topic_key}')
+		reflection := store.save_distilled_reflection(job, input, anchor, mut embedding_engine) or {
 			eprintln('agentview memory: skip persisting reflection for ${primary_key.bytestr()}: ${err}')
 			continue
 		}
 		persisted << reflection
-		// L2 Scene Block 自动后置关联
-		if reflection.reflection_id.len > 0 {
-			mut cwd := ''
-			if anchor.session_id.len > 0 {
-				if session_row := session.get_row(mut db, 'sessions', anchor.session_id.bytes()) {
-					cwd = opt_string(session_row, 'cwd')
-				}
-			}
-			if cwd.len > 0 {
-				repo := find_repo_from_cwd(cwd)
-				mut scene_blocks := db.list_scene_blocks(store_branch) or { []memory.SceneBlock{} }
-				mut found_idx := -1
-				for s_idx, s in scene_blocks {
-					if s.cwd == cwd {
-						found_idx = s_idx
-						break
-					}
-				}
-				if found_idx >= 0 {
-					block := scene_blocks[found_idx]
-					if reflection.reflection_id !in block.atomic_memory_ids {
-						mut ids := block.atomic_memory_ids.clone()
-						ids << reflection.reflection_id
-						updated_block := memory.SceneBlock{
-							...block
-							atomic_memory_ids: ids
-							updated_at: storage.current_datetime_string()
-						}
-						db.save_scene_block(store_branch, updated_block, storage.ChunkConfig.default(), storage.CommitMeta{
-							author: 'pollydb-cli'
-							message: 'associate memory card with scene'
-						}) or {
-							eprintln('agentview memory: failed to associate memory with scene: ${err}')
-						}
-					}
-				} else {
-					new_scene := memory.SceneBlock{
-						scene_id: 'scene_' + rand.uuid_v4().replace('-', '')
-						repo: repo
-						cwd: cwd
-						topic: if input.topic_key.len > 0 { input.topic_key } else { '' }
-						time_start: storage.current_datetime_string()
-						time_end: storage.current_datetime_string()
-						atomic_memory_ids: [reflection.reflection_id]
-						created_at: storage.current_datetime_string()
-						updated_at: storage.current_datetime_string()
-					}
-					db.save_scene_block(store_branch, new_scene, storage.ChunkConfig.default(), storage.CommitMeta{
-						author: 'pollydb-cli'
-						message: 'create new scene block for memory card'
-					}) or {
-						eprintln('agentview memory: failed to create scene block: ${err}')
-					}
-				}
-			}
-		}
 		memory_distill_progress('persisted reflection ${persisted.len}/${max_jobs} id=${reflection.reflection_id} title=${reflection.title}')
 		reflected_sources[source_key] = true
 		if persisted.len >= max_jobs {
@@ -942,6 +877,85 @@ fn (store PollyDbStore) distill_recent_memory_with_mode(mut embedding_engine mem
 		}
 	}
 	return persisted
+}
+
+fn (store PollyDbStore) save_distilled_reflection(job memory.ReflectionJob, input memory.ReflectionPersistInput, anchor MemorySegmentAnchor, mut embedding_engine memory.EmbeddingEngine) !memory.PersistedReflection {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	mut final_input := input
+	if existing_reflection_id := find_existing_reflection_for_memory_card(mut db, session,
+		input, mut embedding_engine)
+	{
+		final_input = memory.ReflectionPersistInput{
+			...input
+			supersedes_reflection_id: existing_reflection_id
+		}
+	}
+	reflection := db.persist_prebuilt_reflection_job(job, final_input, storage.ChunkConfig.default(), storage.CommitMeta{
+		author:  'pollydb-cli'
+		message: 'distill agentview memory'
+	})!
+
+	// L2 Scene Block 自动后置关联
+	if reflection.reflection_id.len > 0 {
+		mut cwd := ''
+		if anchor.session_id.len > 0 {
+			if session_row := session.get_row(mut db, 'sessions', anchor.session_id.bytes()) {
+				cwd = opt_string(session_row, 'cwd')
+			}
+		}
+		if cwd.len > 0 {
+			repo := find_repo_from_cwd(cwd)
+			mut scene_blocks := db.list_scene_blocks(store_branch) or { []memory.SceneBlock{} }
+			mut found_idx := -1
+			for s_idx, s in scene_blocks {
+				if s.cwd == cwd {
+					found_idx = s_idx
+					break
+				}
+			}
+			if found_idx >= 0 {
+				block := scene_blocks[found_idx]
+				if reflection.reflection_id !in block.atomic_memory_ids {
+					mut ids := block.atomic_memory_ids.clone()
+					ids << reflection.reflection_id
+					updated_block := memory.SceneBlock{
+						...block
+						atomic_memory_ids: ids
+						updated_at: storage.current_datetime_string()
+					}
+					db.save_scene_block(store_branch, updated_block, storage.ChunkConfig.default(), storage.CommitMeta{
+						author: 'pollydb-cli'
+						message: 'associate memory card with scene'
+					}) or {
+						eprintln('agentview memory: failed to associate memory with scene: ${err}')
+					}
+				}
+			} else {
+				new_scene := memory.SceneBlock{
+					scene_id: 'scene_' + rand.uuid_v4().replace('-', '')
+					repo: repo
+					cwd: cwd
+					topic: if final_input.topic_key.len > 0 { final_input.topic_key } else { '' }
+					time_start: storage.current_datetime_string()
+					time_end: storage.current_datetime_string()
+					atomic_memory_ids: [reflection.reflection_id]
+					created_at: storage.current_datetime_string()
+					updated_at: storage.current_datetime_string()
+				}
+				db.save_scene_block(store_branch, new_scene, storage.ChunkConfig.default(), storage.CommitMeta{
+					author: 'pollydb-cli'
+					message: 'create new scene block for memory card'
+				}) or {
+					eprintln('agentview memory: failed to create scene block: ${err}')
+				}
+			}
+		}
+	}
+	return reflection
 }
 
 fn (store PollyDbStore) preview_recent_memory_with_mode(mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options MemoryDistillOptions, use_heuristic bool) ![]MemoryDistillPreviewCard {
