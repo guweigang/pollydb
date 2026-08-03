@@ -511,8 +511,11 @@ fn (store ChunkStore) persist_index_snapshot(sync_snapshot bool) ! {
 	chunk_store_write_u32_le(mut out, 16, checksum)
 	out << payload
 	mut tmp_file := os.open_file(tmp_path, 'wb', 0o666)!
+	mut tmp_file_open := true
 	defer {
-		tmp_file.close()
+		if tmp_file_open {
+			tmp_file.close()
+		}
 	}
 	_ = tmp_file.write(out)!
 	tmp_file.flush()
@@ -521,6 +524,9 @@ fn (store ChunkStore) persist_index_snapshot(sync_snapshot bool) ! {
 			chunk_store_fsync_fd(tmp_file.fd)!
 		}
 	}
+	// Windows does not allow replacing a file while the source handle is open.
+	tmp_file.close()
+	tmp_file_open = false
 	os.mv(tmp_path, index_path) or {
 		os.rm(tmp_path) or {}
 		return err

@@ -626,8 +626,11 @@ pub fn Repository.open(path string) !Repository {
 pub fn (repo Repository) persist(path string) ! {
 	tmp_path := '${path}.tmp.${os.getpid()}.${time.now().unix_micro()}.${rand.u64()}'
 	mut tmp_file := os.open_file(tmp_path, 'wb', 0o666)!
+	mut tmp_file_open := true
 	defer {
-		tmp_file.close()
+		if tmp_file_open {
+			tmp_file.close()
+		}
 	}
 	data := repo.data()
 	tmp_file.write(data)!
@@ -635,6 +638,9 @@ pub fn (repo Repository) persist(path string) ! {
 	$if darwin || linux || windows {
 		chunk_store_fsync_fd(tmp_file.fd)!
 	}
+	// Windows does not allow replacing a file while the source handle is open.
+	tmp_file.close()
+	tmp_file_open = false
 	os.mv(tmp_path, path) or {
 		os.rm(tmp_path) or {}
 		return err
