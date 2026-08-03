@@ -51,7 +51,7 @@ fn test_persistent_engine_open_local_backends() {
 	}
 	paths := engine.backend_paths()
 	assert paths.root_dir == dir
-	assert paths.repository_meta.ends_with('.pollydb/repo.meta')
+	assert paths.repository_meta.ends_with(os.join_path('.pollydb', 'repo.meta'))
 	mut backends := engine.open_local_backends() or { panic(err) }
 	defer {
 		backends.close()
@@ -72,7 +72,7 @@ fn test_persistent_engine_backend_provider() {
 	}
 	provider := engine.backend_provider()
 	assert provider.default_branch() == 'main'
-	assert provider.paths().repository_meta.ends_with('.pollydb/repo.meta')
+	assert provider.paths().repository_meta.ends_with(os.join_path('.pollydb', 'repo.meta'))
 	mut backends := provider.open_backends() or { panic(err) }
 	defer {
 		backends.close()
