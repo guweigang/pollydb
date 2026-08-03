@@ -2,19 +2,16 @@ module storage
 
 #include <io.h>
 #include <windows.h>
+#define pollytree_flush_fd(fd) FlushFileBuffers((HANDLE)_get_osfhandle(fd))
 
-fn C._get_osfhandle(fd int) voidptr
-fn C.FlushFileBuffers(handle voidptr) int
+fn C.pollytree_flush_fd(fd int) int
+fn C.GetLastError() u32
 
 const chunk_store_writev_batch_size = 256
 
 pub fn chunk_store_fsync_fd(fd int) ! {
-	handle := C._get_osfhandle(fd)
-	if handle == voidptr(-1) {
-		return error('failed to resolve Windows file handle')
-	}
-	if C.FlushFileBuffers(handle) == 0 {
-		return error('failed to flush Windows file buffers')
+	if C.pollytree_flush_fd(fd) == 0 {
+		return error('failed to flush Windows file buffers: ${C.GetLastError()}')
 	}
 }
 
