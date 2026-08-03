@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PollyDB — Git for Data</title>
+  <meta name="description" content="PollyDB 是版本数据库：数据像代码一样拥有提交历史、分支、合并与回滚能力。" />
+  <link rel="stylesheet" href="./landing.css" />
+</head>
+<body>
+  <!-- Nav -->
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="nav-brand" href="#">
+        <img class="nav-logo" src="../assets/pollydb_logo.png" alt="PollyDB" />
+        PollyDB
+      </a>
+      <div class="nav-links">
+        <a href="#features">特性</a>
+        <a href="#how">工作原理</a>
+        <a href="#compare">对比</a>
+        <a href="./commercialization/" class="nav-cta">在线 Demo →</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="hero">
+    <div class="container">
+      <img class="hero-logo" src="../assets/pollydb_logo.png" alt="PollyDB" />
+      <div class="hero-badge">版本数据库 · Version-Controlled Database</div>
+      <h1>数据，应该像代码一样<br><span class="gradient-text">有版本、分支和合并</span></h1>
+      <p class="hero-sub">PollyDB 让每一次数据变更都成为一笔可审计的 commit。<br>支持时间旅行、分支并行审核、一键回滚 —— 这是 MySQL 做不到的事。</p>
+      <div class="hero-actions">
+        <a href="./commercialization/" class="btn-hero primary">体验交互 Demo</a>
+        <a href="#how" class="btn-hero ghost">了解工作原理 ↓</a>
+      </div>
+      <div class="hero-terminal">
+        <div class="ht-header">
+          <span class="ht-dot r"></span><span class="ht-dot y"></span><span class="ht-dot g"></span>
+          <span class="ht-title">pollydb shell</span>
+        </div>
+        <div class="ht-body">
+          <div class="ht-line"><span class="ht-prompt">❯</span> pollydb commit -m "fix: 合同金额 500万→800万"</div>
+          <div class="ht-line ht-out">[main a3f9c2] fix: 合同金额 500万→800万</div>
+          <div class="ht-line"><span class="ht-prompt">❯</span> pollydb log --oneline -3</div>
+          <div class="ht-line ht-out">a3f9c2 fix: 合同金额 500万→800万</div>
+          <div class="ht-line ht-out">b7e1d4 merge: review/legal → main ⑂</div>
+          <div class="ht-line ht-out">c02af8 extract: AI extraction complete</div>
+          <div class="ht-line"><span class="ht-prompt">❯</span> pollydb checkout b7e1d4 <span class="ht-comment"># 时间旅行</span></div>
+          <div class="ht-line ht-out ht-highlight">⏱ HEAD is now at b7e1d4 — 数据已回放到合并前的状态</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Features -->
+  <section class="section" id="features">
+    <div class="container">
+      <h2 class="section-title">核心能力</h2>
+      <p class="section-sub">不是数据库插件，不是 ORM 层 —— 是存储引擎原生支持的版本语义。</p>
+      <div class="feature-grid">
+        <div class="feature-card" data-anim>
+          <div class="feature-icon">⏱</div>
+          <h3>时间旅行</h3>
+          <p>点击任意历史 commit，整张表瞬间回放到那个时间点的完整快照。不是查询日志，是真正的状态回放。</p>
+        </div>
+        <div class="feature-card" data-anim>
+          <div class="feature-icon">⑂</div>
+          <h3>分支与合并</h3>
+          <p>多人并行审核同一份数据，各自在独立分支上修改，最终 merge 回主线。冲突可见、可解、可追溯。</p>
+        </div>
+        <div class="feature-card" data-anim>
+          <div class="feature-icon">⟲</div>
+          <h3>一键回滚</h3>
+          <p>数据被误改？一条命令恢复到任意历史版本。回滚本身也是一笔 commit，审计链永不断裂。</p>
+        </div>
+        <div class="feature-card" data-anim>
+          <div class="feature-icon">🔍</div>
+          <h3>完整审计链</h3>
+          <p>每笔 commit 记录 who / when / what / why。不是 trigger 写的 audit_log 表，是存储结构本身不可篡改。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section class="section alt" id="how">
+    <div class="container">
+      <h2 class="section-title">工作原理</h2>
+      <p class="section-sub">像用 Git 一样操作数据 —— 因为底层就是不可变树 + 内容寻址。</p>
+      <div class="how-grid">
+        <div class="how-step" data-anim>
+          <div class="how-num">1</div>
+          <h4>Typed DDL 建模</h4>
+          <p>用 YAML 声明表结构、索引与能力。类型安全，schema 即文档。</p>
+          <pre class="how-code">schema_version: 1
+tables:
+  - name: contracts
+    primary_key: [doc_id]
+    columns:
+      - name: amount
+        type: i64
+      - name: status
+        type: string</pre>
+        </div>
+        <div class="how-step" data-anim>
+          <div class="how-num">2</div>
+          <h4>每次修改 = 一笔 Commit</h4>
+          <p>INSERT/UPDATE/DELETE 都生成不可变快照。自动记录作者、时间、消息。</p>
+          <pre class="how-code">$ pollydb commit -m "approve: 合同审批通过"
+[main f2a8b1] approve: 合同审批通过
+  author: reviewer-zhang
+  changed: status "pending" → "approved"</pre>
+        </div>
+        <div class="how-step" data-anim>
+          <div class="how-num">3</div>
+          <h4>分支并行 · 合并收敛</h4>
+          <p>法务和财务各开分支审核，互不干扰，最终 merge 回 main。</p>
+          <pre class="how-code">$ pollydb branch review/legal
+$ pollydb checkout review/legal
+$ pollydb commit -m "fix: 违约条款修订"
+$ pollydb checkout main
+$ pollydb merge review/legal ⑂</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Comparison -->
+  <section class="section" id="compare">
+    <div class="container">
+      <h2 class="section-title">为什么不用 MySQL？</h2>
+      <p class="section-sub">传统数据库的版本能力是"打补丁"，PollyDB 是"原生支持"。</p>
+      <div class="compare-table" data-anim>
+        <table>
+          <thead>
+            <tr><th>能力</th><th>MySQL / PostgreSQL</th><th class="highlight-col">PollyDB</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>数据回滚到任意时间点</td><td>❌ 需要 binlog 手动恢复</td><td class="highlight-col">✓ 一条命令</td></tr>
+            <tr><td>多人并行修改同一份数据</td><td>❌ 锁冲突 / 最后写入胜出</td><td class="highlight-col">✓ 分支隔离 + merge</td></tr>
+            <tr><td>完整变更审计</td><td>⚠️ trigger / audit_log 表</td><td class="highlight-col">✓ 存储层不可篡改</td></tr>
+            <tr><td>查看"上周三的数据长什么样"</td><td>❌ 需要备份恢复</td><td class="highlight-col">✓ 时间旅行秒级回放</td></tr>
+            <tr><td>变更可 diff 对比</td><td>❌ 无</td><td class="highlight-col">✓ pollydb diff commit1..commit2</td></tr>
+            <tr><td>Schema 即代码</td><td>⚠️ migration 文件</td><td class="highlight-col">✓ Typed DDL YAML</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section">
+    <div class="container">
+      <h2>亲眼看看版本数据库长什么样</h2>
+      <p>30 秒交互演示：时间旅行 → 分支 → 并行编辑 → 合并 → 回滚</p>
+      <a href="./commercialization/" class="btn-hero primary">打开 Demo →</a>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <span class="footer-brand"><img class="footer-logo" src="../assets/pollydb_logo.png" alt="" /> PollyDB</span>
+      <span class="footer-note">Git for Data — 版本数据库</span>
+    </div>
+  </footer>
+
+  <script src="./landing.js"></script>
+</body>
+</html>

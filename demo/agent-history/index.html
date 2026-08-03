@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>把长会话变成工作记忆</title>
+    <meta
+      name="description"
+      content="从真实 Codex 会话中提取问题、推进过程、证据和可复用结论。"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">PollyDB Demo</p>
+          <h1>把长会话变成工作记忆</h1>
+          <p class="hero-copy">从真实 Codex 会话中提取问题、推进过程、证据和可复用结论。</p>
+        </div>
+        <div class="session-chip" id="sessionChip">loading</div>
+      </header>
+
+      <section class="workspace" aria-label="Agent history graph workspace">
+        <aside class="panel commits-panel">
+          <div class="panel-head">
+            <h2>为什么用 PollyDB</h2>
+            <span id="commitCount">0</span>
+          </div>
+          <div class="value-cards">
+            <div class="value-card">
+              <strong>不是一段摘要</strong>
+              <span>记忆被拆成 episode、步骤、报告和证据引用这些结构化 row。</span>
+            </div>
+            <div class="value-card">
+              <strong>不是一次性生成</strong>
+              <span>每次模型更新都会形成 commit，可以比较、回滚、继续合并。</span>
+            </div>
+            <div class="value-card">
+              <strong>不是黑盒结论</strong>
+              <span>每个结论都能回到原始消息和生成它的版本。</span>
+            </div>
+          </div>
+          <div class="summary-facts" id="summaryFacts"></div>
+          <p class="panel-note">审计记录：原文会话、生成的复盘和每次更新都保留版本。</p>
+          <div class="commit-list" id="commitList"></div>
+        </aside>
+
+        <section class="panel graph-panel">
+          <div class="panel-head">
+            <h2>工作脉络</h2>
+            <span id="episodeStatus">真实 Codex 会话</span>
+          </div>
+          <div class="episode-summary">
+            <h3 id="episodeTitle">一次工作会话</h3>
+            <p id="episodeIntent"></p>
+          </div>
+          <div class="graph-stage" id="graphStage"></div>
+        </section>
+
+        <aside class="panel evidence-panel">
+          <div class="panel-head">
+            <h2>证据与原文</h2>
+            <span id="rootHash"></span>
+          </div>
+          <div class="detail-stack">
+            <div>
+              <p class="label">当前步骤</p>
+              <h3 id="detailTitle">选择一个步骤</h3>
+              <p id="detailContent"></p>
+            </div>
+            <div>
+              <p class="label">引用自会话</p>
+              <div id="evidenceList" class="evidence-list"></div>
+            </div>
+            <div>
+              <p class="label" id="memoryLabel">这一步的产物</p>
+              <div id="memoryBlock" class="memory-block"></div>
+            </div>
+          </div>
+        </aside>
+      </section>
+    </main>
+    <script src="./demo-data.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

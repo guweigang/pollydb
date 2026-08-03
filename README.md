@@ -24,6 +24,7 @@ PollyTree is currently centered on three themes:
 
 If you are orienting to the current PollyDB surface, start here:
 
+- typed YAML DDL: [docs/typed_ddl_yaml.md](/Users/guweigang/Source/pollytree/docs/typed_ddl_yaml.md)
 - schema and storage API: [docs/storage_api.md](/Users/guweigang/Source/pollytree/docs/storage_api.md)
 - general FTS usage: [docs/general_fts_usage.md](/Users/guweigang/Source/pollytree/docs/general_fts_usage.md)
 - planner/query capability introspection: [docs/query_planner_introspection.md](/Users/guweigang/Source/pollytree/docs/query_planner_introspection.md)
@@ -41,6 +42,30 @@ In short:
 
 - selectors answer structural queries
 - general FTS answers lexical retrieval queries
+
+## YAML DDL
+
+PollyDB now has a usable YAML DDL layer for schema declaration and schema
+tooling. In the current phase, it supports:
+
+- typed tables, columns, and indexes
+- aggregate projections
+- memory capabilities
+- schema validate / describe / preview / plan / register flows
+- machine-readable `--json` output on the main schema commands
+
+Typical commands:
+
+```bash
+pollydb validate-schema ./agentview/codex_schema.yml
+pollydb describe-schema ./agentview/codex_schema.yml
+pollydb preview-schema-update ./agentview/codex_schema.yml
+pollydb plan-schema-update ./agentview/codex_schema.yml
+pollydb register-schema ./agentview/codex_schema.yml
+```
+
+This is the current schema control plane for PollyDB. It is ready for use for
+declared typed schema, but it is not yet a full migration/versioning system.
 
 ## AgentView
 

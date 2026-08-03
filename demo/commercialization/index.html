@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PollyDB · Git for Data</title>
+    <meta name="description" content="PollyDB 版本数据库交互演示：时间旅行、回滚、分支与合并。" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+    <!-- 引导浮层 -->
+    <div class="onboard-overlay" id="onboardOverlay">
+      <div class="onboard-card" id="onboardCard">
+        <div class="onboard-step" id="onboardStep">1 / 4</div>
+        <h3 id="onboardTitle"></h3>
+        <p id="onboardDesc"></p>
+        <div class="onboard-actions">
+          <button class="btn btn-ghost" id="onboardSkip" type="button">跳过</button>
+          <button class="btn btn-primary" id="onboardNext" type="button">下一步 →</button>
+        </div>
+      </div>
+    </div>
+
+    <main class="app">
+      <!-- 顶栏 -->
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-icon">⬡</span>
+          <div>
+            <h1>PollyDB</h1>
+            <p>Git for Data — 数据像代码一样有版本、分支和合并</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="branch-badge" id="currentBranch">main</span>
+          <button class="btn btn-ghost" id="resetBtn" type="button">重置 Demo</button>
+        </div>
+      </header>
+
+      <div class="main-grid">
+        <!-- 左：DAG Commit Graph -->
+        <section class="graph-panel">
+          <div class="panel-header">
+            <h2>Commit Graph</h2>
+            <span class="hint" id="commitCount">0 commits</span>
+          </div>
+          <div class="graph-scroll" id="graphScroll">
+            <svg id="dagSvg" class="dag-svg"></svg>
+          </div>
+        </section>
+
+        <!-- 中：表数据 / 表结构 -->
+        <section class="detail-panel">
+          <div class="panel-header">
+            <div class="tab-bar">
+              <button class="tab active" id="tabData" type="button">表数据</button>
+              <button class="tab" id="tabSchema" type="button">表结构</button>
+            </div>
+            <div class="snapshot-actions">
+              <code class="snapshot-hash" id="snapshotTitle">@ —</code>
+              <button class="btn btn-sm" id="revertBtn" type="button" title="回滚到此版本">⟲ Revert</button>
+              <button class="btn btn-sm" id="branchBtn" type="button" title="从此创建分支">⑂ Branch</button>
+            </div>
+          </div>
+
+          <!-- Commit 审计信息 -->
+          <div class="commit-info-bar" id="commitInfoBar">
+            <span class="commit-author" id="commitAuthor">—</span>
+            <span class="commit-msg-text" id="commitMsg">选择一个 commit 查看详情</span>
+          </div>
+
+          <!-- Tab 1: 表数据 -->
+          <div class="tab-content active" id="panelData">
+            <div class="table-scroll">
+              <table class="data-table" id="dataTable"></table>
+            </div>
+            <!-- Diff -->
+            <div class="diff-section">
+              <div class="panel-subheader">
+                <h3>Diff</h3>
+                <span id="diffLabel" class="hint"></span>
+              </div>
+              <div class="diff-list" id="diffList"></div>
+            </div>
+          </div>
+
+          <!-- Tab 2: 表结构 -->
+          <div class="tab-content" id="panelSchema">
+            <div class="yaml-scroll">
+              <pre class="yaml-block" id="yamlBlock"></pre>
+            </div>
+          </div>
+
+          <!-- Terminal -->
+          <div class="terminal">
+            <div class="terminal-header">
+              <span class="terminal-dot red"></span>
+              <span class="terminal-dot yellow"></span>
+              <span class="terminal-dot green"></span>
+              <span class="terminal-title">pollydb shell</span>
+            </div>
+            <div class="terminal-body" id="terminalBody"></div>
+          </div>
+        </section>
+
+        <!-- 右：操作面板 -->
+        <section class="action-panel">
+          <div class="panel-header">
+            <h2>操作</h2>
+          </div>
+          <div class="action-body">
+            <div class="action-group">
+              <p class="action-label">编辑字段（生成新 commit）</p>
+              <select id="fieldSelect" class="select"></select>
+              <input id="fieldInput" class="input" type="text" placeholder="新值..." />
+              <button class="btn btn-primary btn-block" id="editCommitBtn" type="button">Commit 修改</button>
+            </div>
+            <div class="action-group">
+              <p class="action-label">分支操作</p>
+              <button class="btn btn-block" id="mergeBtn" type="button">Merge 当前分支 → main</button>
+            </div>
+            <div class="action-group">
+              <p class="action-label">场景演示</p>
+              <button class="btn btn-block btn-accent" id="scenarioBtn" type="button">▶ 自动演示完整流程</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
