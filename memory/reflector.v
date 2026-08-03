@@ -81,6 +81,87 @@ pub:
 	created_at      string
 }
 
+// ReflectionEvolutionNode 表示记忆演化链上的一个节点
+pub struct ReflectionEvolutionNode {
+pub:
+	reflection_id            string
+	reflection_kind          string
+	title                    string
+	summary_md               string
+	insight_md               string
+	topic_key                string
+	parent_ref               string
+	derived_from_root_hash   string
+	supersedes_reflection_id string
+	created_at               string
+	source_count             int
+	depth                    int // 从链尾回溯的深度(0 = 最新)
+}
+
+// ReflectionEvolutionChain 表示一条记忆的完整演化链（从最新回溯到最早祖先）
+pub struct ReflectionEvolutionChain {
+pub:
+	root_reflection_id string // 链的起点（查询时的 reflection_id）
+	nodes              []ReflectionEvolutionNode // depth=0 是最新节点，depth=N-1 是最早祖先
+}
+
+// ReflectionSupersedeNode 表示记忆更替图上的一个节点
+pub struct ReflectionSupersedeNode {
+pub:
+	reflection_id            string
+	title                    string
+	reflection_kind          string
+	topic_key                string
+	supersedes_reflection_id string // 当前卡片更替了谁
+	superseded_by_ids        []string // 谁更替了当前卡片
+	created_at               string
+	active                   bool // 是否还是活跃的（未被更替）
+}
+
+// ReflectionSupersedeGraph 表示围绕一条记忆的更替关系图
+pub struct ReflectionSupersedeGraph {
+pub:
+	root_reflection_id string
+	nodes              map[string]ReflectionSupersedeNode // key 是 reflection_id
+}
+
+// MemoryEvolutionRequest 查询记忆演化链的请求
+pub struct MemoryEvolutionRequest {
+pub:
+	reflection_id string
+}
+
+// MemorySupersedeRequest 查询记忆更替图的请求
+pub struct MemorySupersedeRequest {
+pub:
+	reflection_id string
+}
+
+// SceneCardAdditionEvent 表示一张卡片在某个 commit 中被添加到场景的事件
+pub struct SceneCardAdditionEvent {
+pub:
+	reflection_id  string // 被添加的卡片 ID
+	commit_cid     string // 添加发生的 commit CID
+	commit_message string // commit 的 message
+	commit_author  string // commit 的作者
+	commit_time    i64 // commit 的时间戳
+	position       int // 添加后在 atomic_memory_ids 中的位置
+}
+
+// SceneBlockCardTimeline 表示一个场景块中记忆卡片的完整添加时间线
+// 通过回溯 commit 历史重建，不依赖物理 memory_chain 链接
+pub struct SceneBlockCardTimeline {
+pub:
+	scene_id          string
+	repo              string
+	cwd               string
+	topic             string
+	current_card_ids  []string // 当前场景中的卡片 ID 列表（最新状态）
+	events            []SceneCardAdditionEvent // 按时间顺序排列的添加事件
+	total_commits     int // 扫描的总 commit 数
+	matching_commits  int // 命中 scene_block 的 commit 数
+}
+
 pub struct ReflectionSourceRef {
 pub:
 	table_name  string
@@ -112,11 +193,12 @@ pub:
 
 pub struct ReplayQueryRequest {
 pub:
-	branch_name      string
-	text             string
-	seed_limit       int = 4
-	neighbor_limit   int = 8
-	reflection_limit int = 4
+	branch_name       string
+	text              string
+	seed_limit        int = 4
+	neighbor_limit    int = 8
+	reflection_limit  int = 4
+	as_of_commit_cid  string // 如果设置，只返回该 commit 时间点及之前存在的记忆卡片和链接
 }
 
 pub struct ReplayEvidenceHit {
@@ -353,6 +435,8 @@ pub fn (mut scheduler ReflectorScheduler) reset_after_reflect(reflected_count in
 
 const reflection_begin_marker = 'BEGIN_REFLECTION'
 const reflection_end_marker = 'END_REFLECTION'
+const recap_begin_marker = 'BEGIN_RECAP'
+const recap_end_marker = 'END_RECAP'
 
 pub interface ReflectionTextGenerator {
 mut:
@@ -467,6 +551,161 @@ pub fn reflection_distillation_prompt(job ReflectionJob, options ReflectionDisti
 	].join('\n')
 }
 
+// reflection_recap_prompt 生成 Claude 风格的 recap 提示词
+// 产出精炼的一句话技术洞察，包含具体文件名/函数名和原因解释
+pub fn reflection_recap_prompt(job ReflectionJob, options ReflectionDistillOptions) string {
+	outline := build_reflection_outline(job, options)
+	limit := if options.max_evidence > 0 { options.max_evidence } else { 8 }
+	mut evidence_lines := []string{cap: job.evidence.len}
+	for idx, evidence in job.evidence {
+		if idx >= limit {
+			break
+		}
+		evidence_lines << '- ${evidence.table_name}.${evidence.column_name} anchor=${evidence.anchor} path=${evidence.path_hint}\n${evidence.text}'
+	}
+	title_hint := if options.title.len > 0 {
+		options.title
+	} else if outline.title.len > 0 {
+		outline.title
+	} else {
+		'技术洞察'
+	}
+	topic_hint := if options.topic_key.len > 0 { options.topic_key } else { '' }
+	return [
+		'你是 PollyDB Agent 记忆系统的本地反思器。',
+		'请基于 seed 和 evidence 生成一条 Claude 风格的 recap。',
+		'',
+		'Recap 风格要求：',
+		'1. 一句话说清楚做了什么、怎么做的、为什么这样做。',
+		'2. 必须包含具体的技术细节：文件名、函数名、关键变量名、具体的配置值。',
+		'3. 解释因果关系，而不仅仅是陈述事实。',
+		'4. 用中文输出；代码名、文件名、函数名保持原样。',
+		'5. 控制在 1-2 句话以内，不要超过 200 字。',
+		'6. 每条 recap 聚焦一个单一技术洞察，不要把多个不相关的发现合并。',
+		'',
+		'好的 recap 示例：',
+		'※ recap: 修复了 V 编译器中符号链接模块无法导入的 bug，在 candidate_belongs_to_foreign_project (builder.v) 中新增对原始 symlink 路径的检查，之前只检查了 resolve 后的真实路径导致查找失败。',
+		'※ recap: 将 pollydb 的 ChunkStore 写入路径从 writev 改为 mmap+msync，因为在高并发写入时 writev 的 scatter-gather 导致磁盘 I/O 碎片化，mmap 的连续地址空间将 p99 延迟从 12ms 降到 3ms。',
+		'※ recap: 决定在 L1 memory_reflections 表中新增 parent_ref 字段建立演化链，替代之前仅依赖 memory_chain 物理链接的方案，因为 parent_ref 利用 pollydb 的 commit 不可变特性天然避免了链接悬空问题。',
+		'',
+		'坏的 recap 示例（禁止）：',
+		'※ recap: 修复了一个 bug。  （太模糊，没有技术细节）',
+		'※ recap: 我们讨论了几个方案，最后决定用方案A。  （没有技术细节和原因）',
+		'※ recap: 代码重构了一下让性能更好。  （没有具体指标和方法）',
+		'',
+		'输出格式：',
+		'输出必须严格包在 ${recap_begin_marker} 和 ${recap_end_marker} 之间。',
+		'格式为：',
+		'TITLE: <单行标题>',
+		'TOPIC: <主题标签>',
+		'RECAP: <※ recap: 一句话技术洞察>',
+		'',
+		'示例输出：',
+		recap_begin_marker,
+		'TITLE: ${title_hint}',
+		'TOPIC: ${topic_hint}',
+		'RECAP: ※ recap: 修复了...',
+		recap_end_marker,
+		'',
+		'主题标题候选: ' + outline.title,
+		'摘要要点:',
+		outline.summary_points.join('\n'),
+		'关键决策候选:',
+		outline.decision_points.join('\n'),
+		'',
+		'Seed:',
+		job.seed_text,
+		'',
+		'Evidence:',
+		evidence_lines.join('\n\n'),
+	].join('\n')
+}
+
+// parse_recap_generation 解析 recap 风格的 LLM 输出
+pub fn parse_recap_generation(raw string) !ReflectionPersistInput {
+	body := recap_generation_body(raw).trim_space()
+	if body.len == 0 {
+		return error('recap generation output is empty')
+	}
+	lines := body.split_into_lines()
+	mut title := ''
+	mut topic_key := ''
+	mut recap_text := ''
+	for line in lines {
+		trimmed := line.trim_space()
+		if trimmed.starts_with('TITLE:') {
+			title = trimmed['TITLE:'.len..].trim_space()
+			continue
+		}
+		if trimmed.starts_with('TOPIC:') {
+			topic_key = trimmed['TOPIC:'.len..].trim_space()
+			continue
+		}
+		if trimmed.starts_with('RECAP:') {
+			recap_text = trimmed['RECAP:'.len..].trim_space()
+			continue
+		}
+		// 如果某行直接是 ※ recap: 开头，也接受
+		if trimmed.starts_with('※ recap:') {
+			recap_text = trimmed['※ recap:'.len..].trim_space()
+			continue
+		}
+		// 收集未标记的内容作为 recap 正文
+		if recap_text.len == 0 && trimmed.len > 0 && !trimmed.starts_with('#') {
+			recap_text = trimmed
+		}
+	}
+	if recap_text.len == 0 {
+		return error('recap generation missing RECAP field')
+	}
+	// 确保 recap 以 ※ recap: 开头
+	if !recap_text.starts_with('※ recap:') && !recap_text.starts_with('※recap:') {
+		recap_text = '※ recap: ' + recap_text
+	}
+	return ReflectionPersistInput{
+		title:           title
+		topic_key:       topic_key
+		summary_md:      recap_text + '\n'
+		insight_md:      ''
+		reflection_kind: 'recap'
+	}
+}
+
+fn recap_generation_body(raw string) string {
+	begin_idx := raw.last_index(recap_begin_marker) or { return raw }
+	after_begin := begin_idx + recap_begin_marker.len
+	tail := raw[after_begin..]
+	end_idx := tail.index(recap_end_marker) or { return strip_llama_cli_tail(tail) }
+	return tail[..end_idx]
+}
+
+// generate_recap_persist_input 使用 recap 风格提示词生成记忆卡片
+pub fn generate_recap_persist_input(job ReflectionJob, mut generator ReflectionTextGenerator, options ReflectionDistillOptions) !ReflectionPersistInput {
+	prompt := reflection_recap_prompt(job, options)
+	raw := generator.generate(prompt)!
+	mut input := parse_recap_generation(raw)!
+	if input.title.len == 0 {
+		outline := build_reflection_outline(job, options)
+		input = ReflectionPersistInput{
+			...input
+			title: if options.title.len > 0 {
+				options.title
+			} else if outline.title.len > 0 {
+				outline.title
+			} else {
+				'技术洞察'
+			}
+		}
+	}
+	if input.topic_key.len == 0 && options.topic_key.len > 0 {
+		input = ReflectionPersistInput{
+			...input
+			topic_key: options.topic_key
+		}
+	}
+	return input
+}
+
 pub fn generate_reflection_persist_input(job ReflectionJob, mut generator ReflectionTextGenerator, options ReflectionDistillOptions) !ReflectionPersistInput {
 	outline := build_reflection_outline(job, options)
 	prompt := reflection_distillation_prompt(job, options)
@@ -507,6 +746,49 @@ pub fn generate_reflection_persist_input(job ReflectionJob, mut generator Reflec
 
 pub fn heuristic_reflection_persist_input(job ReflectionJob, options ReflectionDistillOptions) ReflectionPersistInput {
 	return reflection_outline_persist_input(job, options, build_reflection_outline(job, options))
+}
+
+// heuristic_recap_persist_input 为 recap 风格生成启发式卡片（不经过 LLM）
+pub fn heuristic_recap_persist_input(job ReflectionJob, options ReflectionDistillOptions) ReflectionPersistInput {
+	outline := build_reflection_outline(job, options)
+	title := if options.title.len > 0 {
+		options.title
+	} else if outline.title.len > 0 {
+		outline.title
+	} else {
+		'${job.table_name}.${job.column_name} 技术洞察'
+	}
+	topic_key := if options.topic_key.len > 0 {
+		options.topic_key
+	} else {
+		reflection_default_topic_key(job)
+	}
+	// 从 outline 提取最精炼的一句话作为 recap
+	mut recap_parts := []string{}
+	if outline.decision_points.len > 0 {
+		recap_parts << outline.decision_points[0].trim('- *。，:： ')
+	}
+	if outline.summary_points.len > 0 {
+		for point in outline.summary_points {
+			cleaned := point.trim('- *。，:： ')
+			if cleaned.len > 0 && cleaned !in recap_parts {
+				recap_parts << cleaned
+				break
+			}
+		}
+	}
+	recap_text := if recap_parts.len > 0 {
+		recap_parts.join('；')
+	} else {
+		'从 ${job.evidence.len} 条近邻证据中提取的技术上下文'
+	}
+	return ReflectionPersistInput{
+		title:           title
+		topic_key:       topic_key
+		summary_md:      '※ recap: ${recap_text}\n'
+		insight_md:      ''
+		reflection_kind: 'recap'
+	}
 }
 
 fn compact_reflection_line(text string) string {
