@@ -3,7 +3,6 @@ module query
 import core
 import encoding.base64
 import json
-import storage
 import time
 
 pub fn preview_plan(database Database, request Request) !Plan {
@@ -11,8 +10,8 @@ pub fn preview_plan(database Database, request Request) !Plan {
 		return preview_general_fts(database, general_fts_request_from_clause(request.table_name,
 			request.general_fts, request.select_columns, request.limit))!.as_query_plan()
 	}
-	return plan_request(query_spec(database.db.table_spec(request.table_name)!, map[string]ProjectionDef{}),
-		request)
+	return plan_request(query_spec(database.db.table_spec(request.table_name)!,
+		map[string]ProjectionDef{}), request)
 }
 
 pub fn preview_plan_from_spec(spec QuerySpec, request Request) !Plan {
@@ -59,14 +58,13 @@ pub fn preview_plan_details_in_session(session Session, request Request) !PlanPr
 	}
 	plan := preview_plan_in_session(session, request)!
 	schema := table_schema_from_spec(query_spec(session.session.table_spec(request.table_name)!,
-		map[string]ProjectionDef{}),
-		request.table_name)!
+		map[string]ProjectionDef{}), request.table_name)!
 	return build_plan_preview(schema, request, plan)
 }
 
 pub fn projection_pushdown_eligible(stores_row bool, index_is_field_selector bool, index_is_fts bool, select_columns []string, post_filter_count int) bool {
-	return core.query_projection_pushdown_eligible(select_columns.len, stores_row, index_is_field_selector,
-		index_is_fts, post_filter_count)
+	return core.query_projection_pushdown_eligible(select_columns.len, stores_row,
+		index_is_field_selector, index_is_fts, post_filter_count)
 }
 
 pub fn fetch_limit(post_filter_count int, limit int) int {
@@ -107,8 +105,7 @@ pub fn query_page_profiled(session Session, mut database Database, request Reque
 	mut total_sw := time.new_stopwatch()
 	if request.general_fts.index_name.len > 0 {
 		mut plan_sw := time.new_stopwatch()
-		result := query_general_fts_in_session(session, mut database,
-			general_fts_request_from_clause(request.table_name,
+		result := query_general_fts_in_session(session, mut database, general_fts_request_from_clause(request.table_name,
 			request.general_fts, request.select_columns, request.limit))!
 		plan_ms := plan_sw.elapsed().milliseconds()
 		return ProfiledCursorPage{
@@ -137,10 +134,11 @@ pub fn query_page_profiled(session Session, mut database Database, request Reque
 		normalized)!
 	fetch_ms := fetch_sw.elapsed().milliseconds()
 	schema := spec.schema
-	return finalize_profiled_query_page_query(total_sw.elapsed().milliseconds(), database.db.root_dir,
-		schema, plan, normalized, plan_ms, normalize_ms, fetch_ms, fetched.rows,
-		fetched.begin_tx_ms, fetched.begin_checkout_ms, fetched.begin_tree_load_ms, fetched.begin_wrap_ms,
-		fetched.view_ms, fetched.scan_ms, fetched.scan_nodes, fetched.scan_leaves, fetched.scan_items)
+	return finalize_profiled_query_page_query(total_sw.elapsed().milliseconds(),
+		database.db.root_dir, schema, plan, normalized, plan_ms, normalize_ms, fetch_ms,
+		fetched.rows, fetched.begin_tx_ms, fetched.begin_checkout_ms, fetched.begin_tree_load_ms,
+		fetched.begin_wrap_ms, fetched.view_ms, fetched.scan_ms, fetched.scan_nodes,
+		fetched.scan_leaves, fetched.scan_items)
 }
 
 pub fn query_rows(session Session, mut database Database, request Request) !Result {
@@ -151,8 +149,8 @@ pub fn preview_plan_in_transaction(session Transaction, request Request) !Plan {
 	if request.general_fts.index_name.len > 0 {
 		return error('general fts query requires database session')
 	}
-	return plan_request(query_spec(session.tx.table_spec(request.table_name)!, map[string]ProjectionDef{}),
-		request)
+	return plan_request(query_spec(session.tx.table_spec(request.table_name)!,
+		map[string]ProjectionDef{}), request)
 }
 
 pub fn preview_plan_details_in_transaction(session Transaction, request Request) !PlanPreview {
@@ -161,8 +159,7 @@ pub fn preview_plan_details_in_transaction(session Transaction, request Request)
 	}
 	plan := preview_plan_in_transaction(session, request)!
 	schema := table_schema_from_spec(query_spec(session.tx.table_spec(request.table_name)!,
-		map[string]ProjectionDef{}),
-		request.table_name)!
+		map[string]ProjectionDef{}), request.table_name)!
 	return build_plan_preview(schema, request, plan)
 }
 
@@ -187,10 +184,11 @@ pub fn query_page_profiled_in_transaction(session Transaction, request Request) 
 		normalized)!
 	fetch_ms := fetch_sw.elapsed().milliseconds()
 	schema := spec.schema
-	return finalize_profiled_query_page_query(total_sw.elapsed().milliseconds(), session.tx.root_dir,
-		schema, plan, normalized, plan_ms, normalize_ms, fetch_ms, fetched.rows,
-		fetched.begin_tx_ms, fetched.begin_checkout_ms, fetched.begin_tree_load_ms, fetched.begin_wrap_ms,
-		fetched.view_ms, fetched.scan_ms, fetched.scan_nodes, fetched.scan_leaves, fetched.scan_items)
+	return finalize_profiled_query_page_query(total_sw.elapsed().milliseconds(),
+		session.tx.root_dir, schema, plan, normalized, plan_ms, normalize_ms, fetch_ms,
+		fetched.rows, fetched.begin_tx_ms, fetched.begin_checkout_ms, fetched.begin_tree_load_ms,
+		fetched.begin_wrap_ms, fetched.view_ms, fetched.scan_ms, fetched.scan_nodes,
+		fetched.scan_leaves, fetched.scan_items)
 }
 
 pub fn query_rows_in_transaction(session Transaction, request Request) !Result {
@@ -213,7 +211,6 @@ pub fn encode_continuation_token(table_name string, index_filter Filter, next_pr
 	if next_primary_key.len == 0 {
 		return ''
 	}
-	stored_next_index_value := storage_value_query(next_index_value)
 	payload := json.encode(QueryContinuationDto{
 		table_name:        table_name
 		column_name:       index_filter.column_name
@@ -221,10 +218,10 @@ pub fn encode_continuation_token(table_name string, index_filter Filter, next_pr
 		selector:          index_filter.selector
 		query_kind:        query_filter_op_name(index_filter.op)
 		start_primary_key: next_primary_key.bytestr()
-		start_index_value: if stored_next_index_value is storage.NullValue {
+		start_index_value: if next_index_value.is_null() {
 			''
 		} else {
-			query_cursor_render_value(stored_next_index_value)
+			query_cursor_render_value(next_index_value)
 		}
 	})
 	return base64.encode_str(payload)
@@ -234,7 +231,6 @@ pub fn encode_continuation_token_for_plan(plan Plan, next_primary_key []u8, next
 	if next_primary_key.len == 0 {
 		return ''
 	}
-	stored_next_index_value := storage_value_query(next_index_value)
 	payload := json.encode(QueryContinuationDto{
 		table_name:        plan.table_name
 		column_name:       plan.index_filter.column_name
@@ -244,10 +240,10 @@ pub fn encode_continuation_token_for_plan(plan Plan, next_primary_key []u8, next
 		order_by_column:   plan.order_by.column_name
 		order_desc:        plan.order_by.direction == .desc
 		start_primary_key: next_primary_key.bytestr()
-		start_index_value: if stored_next_index_value is storage.NullValue {
+		start_index_value: if next_index_value.is_null() {
 			''
 		} else {
-			query_cursor_render_value(stored_next_index_value)
+			query_cursor_render_value(next_index_value)
 		}
 	})
 	return base64.encode_str(payload)
@@ -263,12 +259,12 @@ pub fn request_with_continuation_token(request Request, plan Plan) !Request {
 	start_index_value := if anchor_filter.column_name.len > 0 && token.start_index_value.len > 0 {
 		decode_query_cursor_value(token.start_index_value, anchor_filter)!
 	} else {
-		storage.NullValue{}
+		QueryValue.null_value()
 	}
 	return Request{
 		...request
 		start_primary_key:     token.start_primary_key.bytes()
-		start_index_value:     query_value_from_storage(start_index_value)
+		start_index_value:     start_index_value
 		has_start_index_value: token.start_index_value.len > 0
 	}
 }
@@ -320,32 +316,32 @@ fn query_plan_anchor_filter(plan Plan) Filter {
 	return Filter{}
 }
 
-fn decode_query_cursor_value(raw string, filter Filter) !storage.ColumnValue {
+fn decode_query_cursor_value(raw string, filter Filter) !QueryValue {
 	if raw.len == 0 {
-		return storage.NullValue{}
+		return QueryValue.null_value()
 	}
-	value_type := storage_column_type(query_value_type_query(filter.value)!)
+	value_type := query_value_type_query(filter.value)!
 	return match value_type {
 		.bool_ {
 			if raw == 'true' {
-				storage.ColumnValue(true)
+				QueryValue.bool_value(true)
 			} else if raw == 'false' {
-				storage.ColumnValue(false)
+				QueryValue.bool_value(false)
 			} else {
 				return error('invalid bool cursor value: ${raw}')
 			}
 		}
 		.i64_ {
-			storage.ColumnValue(raw.i64())
+			QueryValue.i64_value(raw.i64())
 		}
 		.bytes_ {
 			if !raw.starts_with('hex:') {
 				return error('invalid bytes cursor value: ${raw}')
 			}
-			storage.ColumnValue(raw.all_after('hex:').bytes())
+			QueryValue.bytes_value(raw.all_after('hex:').bytes())
 		}
 		.string_, .enum_, .json_, .datetime_ {
-			storage.ColumnValue(raw)
+			QueryValue.string_value(raw)
 		}
 		.markdown_ {
 			return error('markdown cursor values are not supported')
@@ -353,38 +349,39 @@ fn decode_query_cursor_value(raw string, filter Filter) !storage.ColumnValue {
 	}
 }
 
-fn query_cursor_render_value(value storage.ColumnValue) string {
-	return match value {
-		storage.MarkdownRef {
-			'markdown:${value.doc_root_id}'
+fn query_cursor_render_value(value QueryValue) string {
+	stored := value.value
+	return match stored {
+		MarkdownRef {
+			'markdown:${stored.doc_root_id}'
 		}
-		storage.NullValue {
+		NullValue {
 			''
 		}
 		bool {
-			if value {
+			if stored {
 				'true'
 			} else {
 				'false'
 			}
 		}
 		i64 {
-			value.str()
+			stored.str()
 		}
 		string {
-			value
+			stored
 		}
 		[]u8 {
-			'hex:${value.hex()}'
+			'hex:${stored.hex()}'
 		}
 	}
 }
 
 pub fn build_plan_preview(schema TableSchema, request Request, plan Plan) !PlanPreview {
 	mut warnings := preview_warnings(plan.strategy == 'table_scan')
-	notes := preview_notes(plan.post_filter_count, plan_uses_projection_pushdown(plan),
-		requires_base_row_fetch(plan.index_name.len > 0, request.select_columns, schema_index_stores_row(schema,
-		plan.index_name)), plan_supports_reverse_scan(plan), plan_supports_top_n(plan),
+	notes := preview_notes(plan.post_filter_count, plan_uses_projection_pushdown(plan), requires_base_row_fetch(plan.index_name.len > 0,
+		request.select_columns, schema_index_stores_row(schema, plan.index_name)),
+		plan_supports_reverse_scan(plan), plan_supports_top_n(plan),
 		plan.order_by.column_name.len > 0)
 	for filter in request.filters {
 		if !filter.is_field_selector() {
@@ -409,9 +406,9 @@ pub fn build_plan_preview(schema TableSchema, request Request, plan Plan) !PlanP
 fn build_plan_preview_from_spec(spec QuerySpec, request Request, plan Plan) PlanPreview {
 	schema := spec.schema
 	mut warnings := preview_warnings(plan.strategy == 'table_scan')
-	notes := preview_notes(plan.post_filter_count, plan_uses_projection_pushdown(plan),
-		requires_base_row_fetch(plan.index_name.len > 0, request.select_columns, spec_index_stores_row(schema,
-		plan.index_name)), plan_supports_reverse_scan(plan), plan_supports_top_n(plan),
+	notes := preview_notes(plan.post_filter_count, plan_uses_projection_pushdown(plan), requires_base_row_fetch(plan.index_name.len > 0,
+		request.select_columns, spec_index_covers_selection(schema, plan.index_name,
+		request.select_columns)), plan_supports_reverse_scan(plan), plan_supports_top_n(plan),
 		plan.order_by.column_name.len > 0)
 	for filter in request.filters {
 		if !filter.is_field_selector() {
@@ -458,6 +455,15 @@ fn spec_index_stores_row(schema TableSchemaDef, index_name string) bool {
 	for index in schema.indexes {
 		if index.name == index_name {
 			return index.stores_row
+		}
+	}
+	return true
+}
+
+fn spec_index_covers_selection(schema TableSchemaDef, index_name string, select_columns []string) bool {
+	for index in schema.indexes {
+		if index.name == index_name {
+			return index.can_cover_columns(select_columns)
 		}
 	}
 	return true
@@ -543,10 +549,9 @@ fn finalize_profiled_query_page_query(total_ms i64, root_dir string, schema Tabl
 	mut rows := fetched_rows_in.clone()
 	fetched_rows := rows.len
 	mut filter_sw := time.new_stopwatch()
-	filtered := filter_rows_query(root_dir, schema, rows, request.filters, request.start_primary_key,
-		request.start_index_value, request.has_start_index_value, plan.index_filter,
-		plan.order_by,
-		request.limit)!
+	filtered := filter_rows_query(root_dir, schema, rows, request.filters,
+		request.start_primary_key, request.start_index_value, request.has_start_index_value,
+		plan.index_filter, plan.order_by, request.limit)!
 	filter_ms := filter_sw.elapsed().milliseconds()
 	rows = filtered.rows.clone()
 	filtered_rows := rows.len
@@ -591,7 +596,8 @@ fn cursor_state_for_plan_query(plan Plan, filtered QueryFilterResult) CursorStat
 		has_more:                filtered.has_more
 		next_primary_key:        filtered.next_primary_key
 		next_index_value:        filtered.next_index_value
-		next_continuation_token: encode_continuation_token_for_plan(plan, filtered.next_primary_key, filtered.next_index_value)
+		next_continuation_token: encode_continuation_token_for_plan(plan,
+			filtered.next_primary_key, filtered.next_index_value)
 	}
 }
 
@@ -634,7 +640,8 @@ fn filter_rows_query(root_dir string, schema TableSchemaDef, rows []QueryRow, fi
 				null_query_value()
 			}
 			if should_skip_from_anchor_query(row.primary_key, row_index_value, start_primary_key,
-				start_index_value, has_start_index_value, order_by.direction == .desc) {
+				start_index_value, has_start_index_value, order_by.direction == .desc)
+			{
 				continue
 			}
 		} else if start_primary_key.len > 0 && order_by.column_name.len == 0
@@ -655,9 +662,8 @@ fn filter_rows_query(root_dir string, schema TableSchemaDef, rows []QueryRow, fi
 					Filter{}
 				}
 				last_anchor := if matched.len > 0 && last_anchor_filter.column_name.len > 0 {
-					row_anchor_value_query(root_dir, schema, matched[matched.len - 1], last_anchor_filter) or {
-						null_query_value()
-					}
+					row_anchor_value_query(root_dir, schema, matched[matched.len - 1],
+						last_anchor_filter) or { null_query_value() }
 				} else {
 					null_query_value()
 				}
@@ -674,7 +680,11 @@ fn filter_rows_query(root_dir string, schema TableSchemaDef, rows []QueryRow, fi
 	return QueryFilterResult{
 		rows:             matched
 		has_more:         false
-		next_primary_key: if matched.len > 0 { matched[matched.len - 1].primary_key.clone() } else { []u8{} }
+		next_primary_key: if matched.len > 0 {
+			matched[matched.len - 1].primary_key.clone()
+		} else {
+			[]u8{}
+		}
 		next_index_value: if matched.len > 0
 			&& (index_filter.column_name.len > 0 || order_by.column_name.len > 0) {
 			row_anchor_value_query(root_dir, schema, matched[matched.len - 1], if index_filter.column_name.len > 0 {
@@ -698,7 +708,8 @@ fn should_skip_from_anchor_query(primary_key []u8, row_index_value QueryValue, s
 			return start_primary_key.len > 0
 				&& compare_key_bytes_query(primary_key, start_primary_key) <= 0
 		}
-		return start_primary_key.len > 0 && compare_key_bytes_query(primary_key, start_primary_key) >= 0
+		return start_primary_key.len > 0
+			&& compare_key_bytes_query(primary_key, start_primary_key) >= 0
 	}
 	value_cmp := compare_query_values(row_index_value, start_index_value)
 	if reverse {
@@ -708,7 +719,8 @@ fn should_skip_from_anchor_query(primary_key []u8, row_index_value QueryValue, s
 		if value_cmp < 0 {
 			return false
 		}
-		return start_primary_key.len > 0 && compare_key_bytes_query(primary_key, start_primary_key) >= 0
+		return start_primary_key.len > 0
+			&& compare_key_bytes_query(primary_key, start_primary_key) >= 0
 	}
 	if value_cmp < 0 {
 		return true
@@ -727,28 +739,7 @@ fn row_anchor_value_query(root_dir string, schema TableSchemaDef, row QueryRow, 
 	if !filter.is_field_selector() {
 		return row.data.get(column.name)!
 	}
-	index := storage_field_selector_index_query('__query_anchor__', column.name,
-		filter.plugin_name, filter.selector, query_value_type_query(filter.value)!, false)!
-	values := storage.expand_field_selector_index_values(root_dir,
-		storage_column_schema_query(column), storage_value_query(row.data.get(column.name)!),
-		index)!
-	mut matched := []QueryValue{}
-	for value in values {
-		query_value := query_value_from_storage(value)
-		if value_matches_filter_query(query_value, filter) {
-			matched << query_value
-		}
-	}
-	if matched.len == 0 {
-		return null_query_value()
-	}
-	mut best := matched[0]
-	for value in matched[1..] {
-		if compare_query_values(value, best) > 0 {
-			best = value
-		}
-	}
-	return best
+	return query_row_anchor_field_selector_value(root_dir, column, row, filter)
 }
 
 fn row_matches_all_filters_query(root_dir string, schema TableSchemaDef, row QueryRow, filters []Filter) !bool {
@@ -763,18 +754,7 @@ fn row_matches_all_filters_query(root_dir string, schema TableSchemaDef, row Que
 fn row_matches_filter_query(root_dir string, schema TableSchemaDef, row QueryRow, filter Filter) !bool {
 	column := schema.column(filter.column_name)!
 	if filter.is_field_selector() {
-		stored := if row.data.has(column.name) { storage_value_query(row.data.get(column.name)!) } else { storage.NullValue{} }
-		value_type := query_value_type_query(filter.value)!
-		index := storage_field_selector_index_query('__query_filter__',
-			column.name, filter.plugin_name, filter.selector, value_type, false)!
-		values := storage.expand_field_selector_index_values(root_dir,
-			storage_column_schema_query(column), stored, index)!
-		for candidate in values {
-			if value_matches_filter_query(query_value_from_storage(candidate), filter) {
-				return true
-			}
-		}
-		return false
+		return query_row_matches_field_selector(root_dir, column, row, filter)
 	}
 	if !row.data.has(column.name) {
 		return false
@@ -784,10 +764,18 @@ fn row_matches_filter_query(root_dir string, schema TableSchemaDef, row QueryRow
 
 fn value_matches_filter_query(value QueryValue, filter Filter) bool {
 	return match filter.op {
-		.eq { query_values_equal(value, filter.value) }
-		.prefix { query_value_has_prefix(value, filter.value) }
-		.after { compare_query_values(value, filter.value) > 0 }
-		.before { compare_query_values(value, filter.value) < 0 }
+		.eq {
+			query_values_equal(value, filter.value)
+		}
+		.prefix {
+			query_value_has_prefix(value, filter.value)
+		}
+		.after {
+			compare_query_values(value, filter.value) > 0
+		}
+		.before {
+			compare_query_values(value, filter.value) < 0
+		}
 		.between {
 			compare_query_values(value, filter.value) >= 0
 				&& compare_query_values(value, filter.second_value) <= 0
@@ -814,97 +802,13 @@ fn compare_key_bytes_query(a []u8, b []u8) int {
 	return 0
 }
 
-fn fetch_query_rows_profiled_query(session storage.DatabaseSession, mut db storage.PersistentDatabase, schema TableSchemaDef, plan Plan, request Request) !QueryFetchedProfile {
-	fetch := query_index_fetch_spec_query(schema, plan, request)
-	mut scan_sw := time.new_stopwatch()
-	if query_plan_uses_ordered_index_scan_query(fetch) {
-		if fetch.push_projection {
-			mut reader := session.index_reader(mut db, plan.table_name, plan.index_name)!
-			projected_rows := reader.find_rows_covering_ordered_projected(storage_value_query(request.start_index_value),
-				request.has_start_index_value, request.start_primary_key, fetch.fetch_limit,
-				fetch.projected_columns, fetch.base_strategy == 'index_order_desc')!
-			return QueryFetchedProfile{
-				rows:    query_rows_from_storage(projected_rows)
-				scan_ms: scan_sw.elapsed().milliseconds()
-			}
-		}
-		rows := session.lookup_index_ordered(mut db, plan.table_name, plan.index_name,
-			storage_value_query(request.start_index_value), request.has_start_index_value, request.start_primary_key,
-			fetch.fetch_limit, fetch.base_strategy == 'index_order_desc')!
-		return QueryFetchedProfile{
-			rows:    query_rows_from_storage(rows)
-			scan_ms: scan_sw.elapsed().milliseconds()
-		}
-	}
-	if query_plan_uses_reverse_filtered_order_query(plan) {
-		rows := query_rows_from_database_reverse_filtered_index_query(session, mut db, plan, fetch)!
-		return QueryFetchedProfile{
-			rows:    rows
-			scan_ms: scan_sw.elapsed().milliseconds()
-		}
-	}
-	tx_result := session.begin_transaction_profiled(mut db)!
-	tx := tx_result.tx
-	mut view_sw := time.new_stopwatch()
-	_ = tx.indexed_view(plan.table_name)!
-	view_ms := view_sw.elapsed().milliseconds()
-	scan_sw.restart()
-	rows := query_rows_from_database_filtered_index_query(session, mut db, plan, fetch)!
-	return QueryFetchedProfile{
-		rows:               rows
-		begin_tx_ms:        tx_result.timings.total_ms
-		begin_checkout_ms:  tx_result.timings.checkout_ms
-		begin_tree_load_ms: tx_result.timings.tree_load_ms
-		begin_wrap_ms:      tx_result.timings.wrap_ms
-		view_ms:            view_ms
-		scan_ms:            scan_sw.elapsed().milliseconds()
-	}
-}
-
-fn fetch_query_rows_profiled_in_transaction_query(session storage.TransactionSession, schema TableSchemaDef, plan Plan, request Request) !QueryFetchedProfile {
-	fetch := query_index_fetch_spec_query(schema, plan, request)
-	mut scan_sw := time.new_stopwatch()
-	if query_plan_uses_ordered_index_scan_query(fetch) {
-		rows := if fetch.push_projection {
-			session.lookup_index_ordered_projected(plan.table_name, plan.index_name,
-				storage_value_query(request.start_index_value), request.has_start_index_value,
-				request.start_primary_key,
-				fetch.fetch_limit, fetch.projected_columns, fetch.base_strategy == 'index_order_desc')!
-		} else {
-			session.lookup_index_ordered(plan.table_name, plan.index_name, storage_value_query(request.start_index_value),
-				request.has_start_index_value, request.start_primary_key, fetch.fetch_limit,
-				fetch.base_strategy == 'index_order_desc')!
-		}
-		return QueryFetchedProfile{
-			rows:    query_rows_from_storage(rows)
-			scan_ms: scan_sw.elapsed().milliseconds()
-		}
-	}
-	if query_plan_uses_reverse_filtered_order_query(plan) {
-		rows := query_rows_from_transaction_reverse_filtered_index_query(session, plan, fetch)!
-		if rows.len > 0 {
-			return QueryFetchedProfile{
-				rows:    rows
-				scan_ms: scan_sw.elapsed().milliseconds()
-			}
-		}
-	}
-	rows := query_rows_from_transaction_filtered_index_query(session, plan, fetch)!
-	return QueryFetchedProfile{
-		rows:    rows
-		scan_ms: scan_sw.elapsed().milliseconds()
-	}
-}
-
 fn query_can_push_projection_query(schema TableSchemaDef, plan Plan, select_columns []string) bool {
 	if select_columns.len == 0 || plan.post_filter_count > 0 || plan.index_name.len == 0 {
 		return false
 	}
-	index := plan_index_by_name_query(schema, plan.index_name) or {
-		return false
-	}
-	return projection_pushdown_eligible(index.stores_row, index.is_field_selector(), index.is_fts(),
-		select_columns, plan.post_filter_count)
+	index := plan_index_by_name_query(schema, plan.index_name) or { return false }
+	return projection_pushdown_eligible(index.can_cover_columns(select_columns),
+		index.is_field_selector(), index.is_fts(), select_columns, plan.post_filter_count)
 }
 
 fn plan_index_by_name_query(schema TableSchemaDef, index_name string) ?IndexSchemaDef {
@@ -932,15 +836,6 @@ fn query_projected_fetch_columns_query(plan Plan, select_columns []string) []str
 	return columns
 }
 
-fn query_index_fetch_spec_query(schema TableSchemaDef, plan Plan, request Request) QueryIndexFetchSpec {
-	return QueryIndexFetchSpec{
-		fetch_limit:       fetch_limit(plan.post_filter_count, plan.limit)
-		push_projection:   query_can_push_projection_query(schema, plan, request.select_columns)
-		projected_columns: query_projected_fetch_columns_query(plan, request.select_columns)
-		base_strategy:     core.query_plan_base_strategy(plan.strategy)
-	}
-}
-
 fn query_plan_uses_ordered_index_scan_query(fetch QueryIndexFetchSpec) bool {
 	return ordered_index_scan(fetch.base_strategy)
 }
@@ -948,154 +843,6 @@ fn query_plan_uses_ordered_index_scan_query(fetch QueryIndexFetchSpec) bool {
 fn query_plan_uses_reverse_filtered_order_query(plan Plan) bool {
 	return reverse_filtered_order(plan.order_by.column_name, plan.index_filter.column_name,
 		plan.order_by.direction == .desc, plan.index_filter.op)
-}
-
-fn query_rows_from_database_reverse_filtered_index_query(session storage.DatabaseSession, mut db storage.PersistentDatabase, plan Plan, fetch QueryIndexFetchSpec) ![]QueryRow {
-	return match plan.index_filter.op {
-		.prefix {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_prefix_reverse_projected(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_prefix_reverse(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.before {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_before_reverse_projected(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_before_reverse(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.after {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_after_reverse_projected(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_after_reverse(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.between {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_between_reverse_projected(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), storage_value_query(plan.index_filter.second_value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_between_reverse(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), storage_value_query(plan.index_filter.second_value), fetch.fetch_limit)!)
-			}
-		}
-		else { []QueryRow{} }
-	}
-}
-
-fn query_rows_from_transaction_reverse_filtered_index_query(session storage.TransactionSession, plan Plan, fetch QueryIndexFetchSpec) ![]QueryRow {
-	return match plan.index_filter.op {
-		.prefix {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_prefix_reverse_projected(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_prefix_reverse(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.before {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_before_reverse_projected(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_before_reverse(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.after {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_after_reverse_projected(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_after_reverse(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.between {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_between_reverse_projected(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), storage_value_query(plan.index_filter.second_value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_between_reverse(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), storage_value_query(plan.index_filter.second_value), fetch.fetch_limit)!)
-			}
-		}
-		else { []QueryRow{} }
-	}
-}
-
-fn query_rows_from_database_filtered_index_query(session storage.DatabaseSession, mut db storage.PersistentDatabase, plan Plan, fetch QueryIndexFetchSpec) ![]QueryRow {
-	return match plan.index_filter.op {
-		.prefix {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_prefix_projected(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_prefix(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.after {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_after_projected(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_after(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.before {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_before_projected(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_before(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.between {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_between_projected(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), storage_value_query(plan.index_filter.second_value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_between(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), storage_value_query(plan.index_filter.second_value), fetch.fetch_limit)!)
-			}
-		}
-		.eq {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_projected(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index(mut db, plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-	}
-}
-
-fn query_rows_from_transaction_filtered_index_query(session storage.TransactionSession, plan Plan, fetch QueryIndexFetchSpec) ![]QueryRow {
-	return match plan.index_filter.op {
-		.prefix {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_prefix_projected(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_prefix(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.after {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_after_projected(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_after(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.before {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_before_projected(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_before(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-		.between {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_between_projected(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), storage_value_query(plan.index_filter.second_value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index_between(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), storage_value_query(plan.index_filter.second_value), fetch.fetch_limit)!)
-			}
-		}
-		.eq {
-			if fetch.push_projection {
-				query_rows_from_storage(session.lookup_index_projected(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit, fetch.projected_columns)!)
-			} else {
-				query_rows_from_storage(session.lookup_index(plan.table_name, plan.index_name, storage_value_query(plan.index_filter.value), fetch.fetch_limit)!)
-			}
-		}
-	}
 }
 
 struct QueryBestFilterIndexMatch {
@@ -1146,14 +893,14 @@ fn validate_request_for_schema(schema TableSchemaDef, request Request) ! {
 
 fn validate_order_with_filters(schema TableSchemaDef, request Request) ! {
 	if request.filters.len != 1 {
-		return error(core.query_order_with_filters_error(request.filters.len, false, true,
-			true, 'eq', request.order_by.direction == .desc))
+		return error(core.query_order_with_filters_error(request.filters.len, false, true, true,
+			'eq', request.order_by.direction == .desc))
 	}
 	filter := request.filters[0]
 	indexed_filter := best_index_for_filter_for_projection(schema, filter, []string{}) != none
 	err_msg := core.query_order_with_filters_error(request.filters.len, filter.is_field_selector(),
-		filter.column_name == request.order_by.column_name, indexed_filter, query_filter_op_name(filter.op),
-		request.order_by.direction == .desc)
+		filter.column_name == request.order_by.column_name, indexed_filter,
+		query_filter_op_name(filter.op), request.order_by.direction == .desc)
 	if err_msg.len > 0 {
 		return error(err_msg)
 	}
@@ -1165,16 +912,18 @@ fn validate_filter_for_schema(table TableSchemaDef, filter Filter) ! {
 		if filter.plugin_name.len == 0 || filter.selector.len == 0 {
 			return error('field selector filter requires plugin_name and selector: ${filter.column_name}')
 		}
-		value_type := storage_column_type(query_value_type_query(filter.value)!)
+		value_type := query_value_type_query(filter.value)!
 		validate_named_field_selector_query(filter.plugin_name, filter.selector, value_type)!
-		validate_query_filter_bounds(filter.op, storage_value_query(filter.value), storage_value_query(filter.second_value), filter.has_second_value)!
+		validate_query_filter_bounds(filter.op, filter.value, filter.second_value,
+			filter.has_second_value)!
 		return
 	}
 	if filter.plugin_name.len > 0 || filter.selector.len > 0 {
 		return error('field selector filter requires both plugin_name and selector: ${filter.column_name}')
 	}
 	if filter.op != .eq {
-		validate_query_filter_bounds(filter.op, storage_value_query(filter.value), storage_value_query(filter.second_value), filter.has_second_value)!
+		validate_query_filter_bounds(filter.op, filter.value, filter.second_value,
+			filter.has_second_value)!
 		match column.typ {
 			.string_, .bytes_, .enum_, .datetime_ {}
 			.i64_ {
@@ -1189,7 +938,7 @@ fn validate_filter_for_schema(table TableSchemaDef, filter Filter) ! {
 	}
 }
 
-fn validate_named_field_selector_query(plugin_name string, selector string, value_type storage.ColumnType) ! {
+fn validate_named_field_selector_query(plugin_name string, selector string, value_type ColumnType) ! {
 	match plugin_name {
 		'markdown' {
 			validate_markdown_index_selector_query(selector, value_type)!
@@ -1200,7 +949,7 @@ fn validate_named_field_selector_query(plugin_name string, selector string, valu
 	}
 }
 
-fn validate_markdown_index_selector_query(selector string, value_type storage.ColumnType) ! {
+fn validate_markdown_index_selector_query(selector string, value_type ColumnType) ! {
 	parts := selector.split(':')
 	match parts[0] {
 		'links', 'images', 'code_spans', 'code_blocks', 'blocks', 'headings' {
@@ -1284,7 +1033,8 @@ fn best_index_for_order_for_projection(schema TableSchemaDef, order Order, selec
 			index.is_fts(), index.column == order.column_name) {
 			continue
 		}
-		score := core.query_order_index_score(index.stores_row, select_columns.len)
+		score := core.query_order_index_score(index.can_cover_columns(select_columns),
+			select_columns.len)
 		if score > best_score {
 			best = index
 			best_score = score
@@ -1303,8 +1053,8 @@ fn best_index_for_filter_for_projection(schema TableSchemaDef, filter Filter, se
 		if !index_matches_filter(schema, index, filter) {
 			continue
 		}
-		score := core.query_index_score(query_filter_op_name(filter.op), index.stores_row,
-			filter.is_field_selector(), select_columns.len)
+		score := core.query_index_score(query_filter_op_name(filter.op),
+			index.can_cover_columns(select_columns), filter.is_field_selector(), select_columns.len)
 		if score > best_score {
 			best = index
 			best_score = score
@@ -1319,8 +1069,8 @@ fn best_filter_index_match(schema TableSchemaDef, filters []Filter, select_colum
 		index := best_index_for_filter_for_projection(schema, filter, select_columns) or {
 			continue
 		}
-		score := core.query_index_score(query_filter_op_name(filter.op), index.stores_row,
-			filter.is_field_selector(), select_columns.len)
+		score := core.query_index_score(query_filter_op_name(filter.op),
+			index.can_cover_columns(select_columns), filter.is_field_selector(), select_columns.len)
 		if score > best.score {
 			best = QueryBestFilterIndexMatch{
 				index:  index
@@ -1335,7 +1085,8 @@ fn best_filter_index_match(schema TableSchemaDef, filters []Filter, select_colum
 fn index_matches_filter(table TableSchemaDef, index IndexSchemaDef, filter Filter) bool {
 	column := index.value_column(table) or { return false }
 	return core.query_filter_index_eligible(filter.is_field_selector(), index.is_field_selector(),
-		index.is_json_path(), index.is_fts(), index.column == filter.column_name, index.field_selector_plugin() == filter.plugin_name,
+		index.is_json_path(), index.is_fts(), index.column == filter.column_name,
+		index.field_selector_plugin() == filter.plugin_name,
 		index.field_selector() == filter.selector, core.query_type_supports_filter_op(column.typ.str(),
 		query_filter_op_name(filter.op)))
 }
@@ -1343,8 +1094,8 @@ fn index_matches_filter(table TableSchemaDef, index IndexSchemaDef, filter Filte
 fn plan_for_order_only_request(schema TableSchemaDef, request Request) !Plan {
 	order_index := best_index_for_order_for_projection(schema, request.order_by,
 		request.select_columns)!
-	projected := projection_pushdown_eligible(order_index.stores_row, order_index.is_field_selector(),
-		order_index.is_fts(), request.select_columns, 0)
+	projected := projection_pushdown_eligible(order_index.can_cover_columns(request.select_columns),
+		order_index.is_field_selector(), order_index.is_fts(), request.select_columns, 0)
 	return Plan{
 		table_name:        request.table_name
 		strategy:          core.query_plan_order_strategy_name(request.order_by.direction == .desc,
@@ -1360,14 +1111,15 @@ fn plan_for_order_only_request(schema TableSchemaDef, request Request) !Plan {
 
 fn plan_for_indexed_filter_request(request Request, best_match QueryBestFilterIndexMatch) Plan {
 	post_filters := post_filters_for_request(request.filters, best_match.filter)
-	projected := projection_pushdown_eligible(best_match.index.stores_row, best_match.index.is_field_selector(),
-		best_match.index.is_fts(), request.select_columns, post_filters.len)
+	projected := projection_pushdown_eligible(best_match.index.can_cover_columns(request.select_columns),
+		best_match.index.is_field_selector(), best_match.index.is_fts(), request.select_columns,
+		post_filters.len)
 	return Plan{
 		table_name:        request.table_name
 		strategy:          core.query_plan_filter_order_strategy_name(query_filter_op_name(best_match.filter.op),
 			request.order_by.column_name.len > 0
-			&& request.order_by.column_name == best_match.filter.column_name, request.order_by.direction == .desc,
-			projected)
+			&& request.order_by.column_name == best_match.filter.column_name,
+			request.order_by.direction == .desc, projected)
 		index_name:        best_match.index.name
 		index_filter:      best_match.filter
 		order_by:          request.order_by
@@ -1405,44 +1157,7 @@ fn post_filters_for_request(filters []Filter, chosen Filter) []Filter {
 fn filters_equal(left Filter, right Filter) bool {
 	return left.column_name == right.column_name && left.plugin_name == right.plugin_name
 		&& left.selector == right.selector && left.op == right.op
-		&& column_values_equal_query(storage_value_query(left.value), storage_value_query(right.value))
-		&& left.has_second_value == right.has_second_value && (!left.has_second_value
-		|| column_values_equal_query(storage_value_query(left.second_value), storage_value_query(right.second_value)))
-}
-
-fn column_values_equal_query(left storage.ColumnValue, right storage.ColumnValue) bool {
-	match left {
-		storage.MarkdownRef {
-			if right is storage.MarkdownRef {
-				return left.version == right.version && left.doc_root_id == right.doc_root_id
-					&& left.source_hash == right.source_hash && left.source_len == right.source_len
-					&& left.ast_version == right.ast_version
-					&& left.parse_flags == right.parse_flags
-			}
-		}
-		storage.NullValue {
-			return right is storage.NullValue
-		}
-		bool {
-			if right is bool {
-				return left == right
-			}
-		}
-		i64 {
-			if right is i64 {
-				return left == right
-			}
-		}
-		string {
-			if right is string {
-				return left == right
-			}
-		}
-		[]u8 {
-			if right is []u8 {
-				return left == right
-			}
-		}
-	}
-	return false
+		&& query_values_equal(left.value, right.value)
+		&& left.has_second_value == right.has_second_value
+		&& (!left.has_second_value || query_values_equal(left.second_value, right.second_value))
 }

@@ -84,6 +84,7 @@ fn test_open_sidecar_repository_initializes_namespaced_repo() {
 	assert info.repo_name == 'team-a'
 	assert info.default_branch == 'main'
 	assert info.branch_count == 0
+	assert info.branch_count_committed == 0
 	repo.close() or { panic(err) }
 }
 
@@ -165,6 +166,7 @@ fn test_sidecar_repository_info_tracks_latest_branch_activity() {
 	}) or { panic(err) }
 	info := sidecar_repository_info(root_dir, mut repo, 'team-b')
 	assert info.branch_count == 2
+	assert info.branch_count_committed == 2
 	assert info.latest_branch == 'feature'
 	assert info.latest_commit_cid.len > 0
 	assert info.latest_timestamp == 20

@@ -1,7 +1,6 @@
 module query
 
 import core
-import storage
 
 pub fn lower_request(database Database, input LoweringRequest) !Request {
 	schema := table_schema(database, input.table_name)!
@@ -97,7 +96,7 @@ fn lower_column_predicate(schema TableSchema, predicate PredicateSpec) !Filter {
 		if column.name != predicate.target.column_name {
 			continue
 		}
-		query_lowering_validate_types(storage_column_type(column.typ), predicate)!
+		query_lowering_validate_types(column.typ, predicate)!
 		query_lowering_validate_shape(column.filter_shapes, predicate.op, 'column `${predicate.target.column_name}`')!
 		return query_filter_from_predicate(predicate)
 	}
@@ -114,7 +113,7 @@ fn lower_field_selector_predicate(schema TableSchema, predicate PredicateSpec) !
 			|| selector.selector != predicate.target.selector {
 			continue
 		}
-		query_lowering_validate_types(storage_column_type(selector.value_type), predicate)!
+		query_lowering_validate_types(selector.value_type, predicate)!
 		query_lowering_validate_shape(selector.filter_shapes, predicate.op,
 			'field selector `${predicate.target.column_name}.${predicate.target.plugin_name}:${predicate.target.selector}`')!
 		return query_filter_from_predicate(predicate)
@@ -122,18 +121,18 @@ fn lower_field_selector_predicate(schema TableSchema, predicate PredicateSpec) !
 	return error('field selector not found in schema: ${predicate.target.column_name}.${predicate.target.plugin_name}:${predicate.target.selector}')
 }
 
-fn query_lowering_validate_types(expected_type storage.ColumnType, predicate PredicateSpec) ! {
-	value_type := query_value_type(storage_value_query(predicate.value))!
+fn query_lowering_validate_types(expected_type ColumnType, predicate PredicateSpec) ! {
+	value_type := query_value_type_query(predicate.value)!
 	if value_type != expected_type {
 		return error('query predicate value type mismatch: expected ${expected_type}, got ${value_type}')
 	}
 	if predicate.has_second_value {
-		second_type := query_value_type(storage_value_query(predicate.second_value))!
+		second_type := query_value_type_query(predicate.second_value)!
 		if second_type != expected_type {
 			return error('query predicate second value type mismatch: expected ${expected_type}, got ${second_type}')
 		}
 	}
-	validate_query_filter_bounds(predicate.op, storage_value_query(predicate.value), storage_value_query(predicate.second_value),
+	validate_query_filter_bounds(predicate.op, predicate.value, predicate.second_value,
 		predicate.has_second_value)!
 }
 
@@ -200,8 +199,8 @@ fn sql_filter_kind_to_query_comparison_op(kind SqlFilterKind) ComparisonOp {
 	}
 }
 
-fn validate_query_filter_bounds(op FilterOp, value storage.ColumnValue, second_value storage.ColumnValue, has_second_value bool) ! {
-	prefix_value_compatible := match value {
+fn validate_query_filter_bounds(op FilterOp, value QueryValue, second_value QueryValue, has_second_value bool) ! {
+	prefix_value_compatible := match value.value {
 		string, []u8 { true }
 		else { false }
 	}
@@ -210,56 +209,6 @@ fn validate_query_filter_bounds(op FilterOp, value storage.ColumnValue, second_v
 		has_second_value, same_kind)
 	if err_msg.len > 0 {
 		return error(err_msg)
-	}
-}
-
-fn query_assert_same_value_kind(left storage.ColumnValue, right storage.ColumnValue) ! {
-	if query_values_use_same_kind(left, right) {
-		return
-	}
-	return error('query filter values must use the same type')
-}
-
-fn query_values_use_same_kind(left storage.ColumnValue, right storage.ColumnValue) bool {
-	match left {
-		bool {
-			if right is bool {
-				return true
-			}
-		}
-		i64 {
-			if right is i64 {
-				return true
-			}
-		}
-		string {
-			if right is string {
-				return true
-			}
-		}
-		[]u8 {
-			if right is []u8 {
-				return true
-			}
-		}
-		storage.MarkdownRef {
-			if right is storage.MarkdownRef {
-				return true
-			}
-		}
-		storage.NullValue {}
-	}
-	return false
-}
-
-fn query_value_type(value storage.ColumnValue) !storage.ColumnType {
-	return match value {
-		storage.MarkdownRef { .markdown_ }
-		storage.NullValue { return error('query filters do not support null values') }
-		bool { .bool_ }
-		i64 { .i64_ }
-		string { .string_ }
-		[]u8 { .bytes_ }
 	}
 }
 

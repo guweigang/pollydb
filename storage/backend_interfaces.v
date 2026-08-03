@@ -114,7 +114,9 @@ pub:
 }
 
 pub fn (mut backend LocalRepositoryMetaBackend) load_repository() !Repository {
-	return Repository.open(backend.path)
+	mut repo := Repository.open(backend.path)!
+	replay_branch_head_journal(repository_root_dir_from_metadata_path(backend.path), mut repo)!
+	return repo
 }
 
 pub fn (mut backend LocalRepositoryMetaBackend) save_repository(repo Repository) ! {
@@ -128,32 +130,37 @@ pub:
 }
 
 pub fn (backend LocalBranchHeadBackend) get_branch_head(branch string) !string {
-	repo := Repository.open(backend.path)!
+	mut repo := Repository.open(backend.path)!
+	replay_branch_head_journal(repository_root_dir_from_metadata_path(backend.path), mut repo)!
 	return repo.branch(branch)!.commit_cid
 }
 
 pub fn (backend LocalBranchHeadBackend) list_branch_heads() []string {
-	repo := Repository.open(backend.path) or { return []string{} }
-	return repo.branch_names()
+	mut repo := Repository.open(backend.path) or { return []string{} }
+	replay_branch_head_journal(repository_root_dir_from_metadata_path(backend.path), mut repo) or {
+		return []string{}
+	}
+	return repo.branch_names_committed()
 }
 
 pub fn (mut backend LocalBranchHeadBackend) compare_and_swap_branch_head(branch string, old_commit_cid string, new_commit_cid string) !bool {
 	mut repo := Repository.open(backend.path)!
+	replay_branch_head_journal(repository_root_dir_from_metadata_path(backend.path), mut repo)!
 	current := repo.branch(branch) or {
 		if old_commit_cid.len > 0 {
 			return false
 		}
 		repo.branches[branch] = new_commit_cid
-		repo.persist(backend.path)!
-		fsync_repository_meta(backend.path)!
+		write_branch_head_journal(repository_root_dir_from_metadata_path(backend.path), branch,
+			old_commit_cid, new_commit_cid)!
 		return true
 	}
 	if current.commit_cid != old_commit_cid {
 		return false
 	}
 	repo.branches[branch] = new_commit_cid
-	repo.persist(backend.path)!
-	fsync_repository_meta(backend.path)!
+	write_branch_head_journal(repository_root_dir_from_metadata_path(backend.path), branch,
+		old_commit_cid, new_commit_cid)!
 	return true
 }
 

@@ -20,10 +20,25 @@ fn query_test_docs_spec() !storage.TypedTableSpec {
 		storage.ColumnDef.new('content_text', .string_, false)!,
 	], ['id'])!
 	return storage.TypedTableSpec.new(table, [
-		storage.SchemaIndexDef.fts_with_options('content_text_fts_idx', 'content_text',
-			storage.FtsIndexOptions{
+		storage.SchemaIndexDef.fts_with_options('content_text_fts_idx', 'content_text', storage.FtsIndexOptions{
 			prefix_lengths: [2, 3]
 		})!,
+	])
+}
+
+fn query_test_entries_spec() !storage.TypedTableSpec {
+	table := storage.TableDef.new('entries', [
+		storage.ColumnDef.new('id', .string_, false)!,
+		storage.ColumnDef.new('session_id', .string_, false)!,
+		storage.ColumnDef.new('timestamp', .datetime_, false)!,
+		storage.ColumnDef.new('content_text', .string_, false)!,
+	], ['id'])!
+	return storage.TypedTableSpec.new(table, [
+		storage.SchemaIndexDef.new('entries_session_idx', 'session_id')!,
+		storage.SchemaIndexDef.covering_projected('entries_session_cover_idx', 'session_id', [
+			'id',
+			'timestamp',
+		])!,
 	])
 }
 
@@ -43,8 +58,7 @@ fn query_test_seed_user(mut db storage.PersistentDatabase, cfg storage.ChunkConf
 	row.set('id', 'u1')
 	row.set('name', 'Ada')
 	row.set('email', 'ada@example.com')
-	tree := storage.build_single_row_seed_tree(query_test_users_spec()!, 'u1'.bytes(),
-		row, cfg)!
+	tree := storage.build_single_row_seed_tree(query_test_users_spec()!, 'u1'.bytes(), row, cfg)!
 	_ = db.commit_to_branch('main', tree, storage.CommitMeta{
 		author:    'test'
 		message:   'seed users'
@@ -56,8 +70,7 @@ fn query_test_seed_doc(mut db storage.PersistentDatabase, cfg storage.ChunkConfi
 	mut row := storage.TypedRowData.new()
 	row.set('id', 'd1')
 	row.set('content_text', 'pollydb roadmap search')
-	tree := storage.build_single_row_seed_tree(query_test_docs_spec()!, 'd1'.bytes(),
-		row, cfg)!
+	tree := storage.build_single_row_seed_tree(query_test_docs_spec()!, 'd1'.bytes(), row, cfg)!
 	_ = db.commit_to_branch('main', tree, storage.CommitMeta{
 		author:    'test'
 		message:   'seed docs'
@@ -135,8 +148,8 @@ fn test_query_facade_page_and_preview() {
 	}) or { panic(err) }
 	assert spec_preview.index_name == 'email_idx'
 
-	spec_preview_details := preview_plan_details_from_spec(query_spec(spec, map[string]ProjectionDef{}),
-		Request{
+	spec_preview_details := preview_plan_details_from_spec(query_spec(spec,
+		map[string]ProjectionDef{}), Request{
 		table_name:     'users'
 		filters:        [
 			Filter.eq('email', QueryValue.string_value('ada@example.com')),
@@ -147,8 +160,9 @@ fn test_query_facade_page_and_preview() {
 	assert spec_preview_details.plan.index_name == 'email_idx'
 	assert spec_preview_details.notes.any(it.contains('covering index'))
 
-	spec_schema := table_schema_from_spec(query_spec(spec, map[string]ProjectionDef{}),
-		'users') or { panic(err) }
+	spec_schema := table_schema_from_spec(query_spec(spec, map[string]ProjectionDef{}), 'users') or {
+		panic(err)
+	}
 	assert spec_schema.table_name == 'users'
 	assert spec_schema.columns.len == 3
 
@@ -164,6 +178,20 @@ fn test_query_facade_page_and_preview() {
 	assert tx_preview.plan.index_name == 'email_idx'
 	assert tx_preview.default_result_shape == 'page'
 	assert tx_preview.supports_continuation_token
+}
+
+fn test_query_planner_prefers_projected_covering_index_for_selected_columns() {
+	spec := query_test_entries_spec() or { panic(err) }
+	plan := preview_plan_from_spec(query_spec(spec, map[string]ProjectionDef{}), Request{
+		table_name:     'entries'
+		filters:        [
+			Filter.eq('session_id', QueryValue.string_value('session-001')),
+		]
+		select_columns: ['id', 'timestamp']
+		limit:          10
+	}) or { panic(err) }
+	assert plan.index_name == 'entries_session_cover_idx'
+	assert plan_uses_projection_pushdown(plan)
 }
 
 fn test_query_facade_lowering_requests() {
@@ -217,8 +245,7 @@ fn test_query_facade_lowering_requests() {
 	assert sql_lowered.filters[0].column_name == 'email'
 
 	spec := query_test_users_spec() or { panic(err) }
-	lowered_from_spec := lower_request_from_spec(query_spec(spec, map[string]ProjectionDef{}),
-		LoweringRequest{
+	lowered_from_spec := lower_request_from_spec(query_spec(spec, map[string]ProjectionDef{}), LoweringRequest{
 		table_name:     'users'
 		predicates:     [
 			PredicateSpec.column_eq('email', QueryValue.string_value('ada@example.com')),
@@ -229,8 +256,9 @@ fn test_query_facade_lowering_requests() {
 	assert lowered_from_spec.filters.len == 1
 	assert lowered_from_spec.filters[0].column_name == 'email'
 
-	schema := table_schema_from_spec(query_spec(spec, map[string]ProjectionDef{}),
-		'users') or { panic(err) }
+	schema := table_schema_from_spec(query_spec(spec, map[string]ProjectionDef{}), 'users') or {
+		panic(err)
+	}
 	lowered_with_schema := lower_request_with_schema(schema, LoweringRequest{
 		table_name:     'users'
 		predicates:     [
@@ -242,8 +270,8 @@ fn test_query_facade_lowering_requests() {
 	assert lowered_with_schema.filters.len == 1
 	assert lowered_with_schema.filters[0].column_name == 'email'
 
-	normalized_from_spec := lower_normalized_request_from_spec(query_spec(spec, map[string]ProjectionDef{}),
-		NormalizedLoweringRequest{
+	normalized_from_spec := lower_normalized_request_from_spec(query_spec(spec,
+		map[string]ProjectionDef{}), NormalizedLoweringRequest{
 		table_name:     'users'
 		predicates:     [
 			NormalizedPredicate.column_eq('email', QueryValue.string_value('ada@example.com')),
@@ -253,8 +281,7 @@ fn test_query_facade_lowering_requests() {
 	}) or { panic(err) }
 	assert normalized_from_spec.filters.len == 1
 
-	sql_from_spec := lower_sql_filter_request_from_spec(query_spec(spec, map[string]ProjectionDef{}),
-		SqlLoweringRequest{
+	sql_from_spec := lower_sql_filter_request_from_spec(query_spec(spec, map[string]ProjectionDef{}), SqlLoweringRequest{
 		table_name:     'users'
 		filters:        [
 			SqlFilterFragment.column_eq('email', QueryValue.string_value('ada@example.com')),
@@ -267,16 +294,12 @@ fn test_query_facade_lowering_requests() {
 
 fn test_query_normalization_conversion_helpers() {
 	gt := predicate_spec_from_normalized(NormalizedPredicate.column_gt('created_at',
-		QueryValue.string_value('2025-01-01T00:00:00Z'))) or {
-		panic(err)
-	}
+		QueryValue.string_value('2025-01-01T00:00:00Z'))) or { panic(err) }
 	assert gt.target.column_name == 'created_at'
 	assert gt.op == .after
 
-	between := predicate_spec_from_normalized(NormalizedPredicate.field_between('body',
-		'markdown', 'links', QueryValue.i64_value(i64(1)), QueryValue.i64_value(i64(3)))) or {
-		panic(err)
-	}
+	between := predicate_spec_from_normalized(NormalizedPredicate.field_between('body', 'markdown',
+		'links', QueryValue.i64_value(i64(1)), QueryValue.i64_value(i64(3)))) or { panic(err) }
 	assert between.target.column_name == 'body'
 	assert between.target.plugin_name == 'markdown'
 	assert between.target.selector == 'links'
@@ -302,7 +325,8 @@ fn test_query_continuation_token_helpers_for_index_plan() {
 		index_filter: Filter.eq('email', QueryValue.string_value('ada@example.com'))
 		limit:        1
 	}
-	token := encode_continuation_token_for_plan(plan, 'u1'.bytes(), QueryValue.string_value('ada@example.com'))
+	token := encode_continuation_token_for_plan(plan, 'u1'.bytes(),
+		QueryValue.string_value('ada@example.com'))
 	assert token.len > 0
 
 	request := request_with_continuation_token(Request{
@@ -329,7 +353,8 @@ fn test_query_continuation_token_helpers_for_ordered_plan() {
 		}
 		limit:      2
 	}
-	token := encode_continuation_token_for_plan(plan, 'u2'.bytes(), QueryValue.string_value('zoe@example.com'))
+	token := encode_continuation_token_for_plan(plan, 'u2'.bytes(),
+		QueryValue.string_value('zoe@example.com'))
 	assert token.len > 0
 
 	request := request_with_continuation_token(Request{
@@ -378,7 +403,8 @@ fn test_query_build_plan_preview_from_schema() {
 	request := Request{
 		table_name:     'users'
 		filters:        [
-			Filter.field_prefix('body', 'markdown', 'heading_text:2', QueryValue.string_value('Road')),
+			Filter.field_prefix('body', 'markdown', 'heading_text:2',
+				QueryValue.string_value('Road')),
 		]
 		select_columns: ['id']
 		limit:          5
@@ -495,8 +521,8 @@ fn test_query_schema_helper_builders() {
 	order_by := sample_order_for_filter(true, 'email', '', '', .prefix)
 	assert order_by.column_name == 'email'
 	assert order_by.direction == .desc
-	request := sample_plan_request('users', Filter.prefix('email', QueryValue.string_value('ada')),
-		true)
+	request :=
+		sample_plan_request('users', Filter.prefix('email', QueryValue.string_value('ada')), true)
 	assert request.table_name == 'users'
 	assert request.filters.len == 1
 	assert request.order_by.column_name == 'email'
@@ -504,11 +530,10 @@ fn test_query_schema_helper_builders() {
 	no_order := sample_order_for_filter(false, 'email', '', '', .prefix)
 	assert no_order.column_name.len == 0
 
-	field_order := sample_order_for_filter(true, 'body', 'markdown', 'heading_text:2',
-		.prefix)
+	field_order := sample_order_for_filter(true, 'body', 'markdown', 'heading_text:2', .prefix)
 	assert field_order.column_name.len == 0
-	filter_capability := filter_shape_capability(Filter.prefix('email', QueryValue.string_value('ada')),
-		.string_, .prefix, ['name_projection'], 12, 'email_idx', SamplePlanExplain{
+	filter_capability := filter_shape_capability(Filter.prefix('email',
+		QueryValue.string_value('ada')), .string_, .prefix, ['name_projection'], 12, 'email_idx', SamplePlanExplain{
 		strategy:             'index_prefix_order_desc'
 		index_name:           'email_idx'
 		default_result_shape: 'page'
@@ -533,8 +558,10 @@ fn test_query_schema_helper_builders() {
 	assert order_cap.supports_continuation
 	assert order_cap.supports_reverse_scan
 	assert field_selector_key('body', 'markdown', 'heading_text:2') == 'body\nmarkdown\nheading_text:2'
-	field_cap := field_selector_capability('body', 'markdown', 'heading_text:2', .string_,
-		false, [.eq, .prefix], []PlannerHint{}, [.term], []FtsShapeCapability{})
+	field_cap := field_selector_capability('body', 'markdown', 'heading_text:2', .string_, false, [
+		.eq,
+		.prefix,
+	], []PlannerHint{}, [.term], []FtsShapeCapability{})
 	assert field_cap.column_name == 'body'
 	assert field_cap.filter_ops == [FilterOp.eq, .prefix]
 	column_cap := column_capability('email', .string_, false, [.eq, .prefix], [
@@ -651,8 +678,9 @@ fn test_query_facade_general_fts() {
 	}) or { panic(err) }
 	assert preview.index_name == 'content_text_fts_idx'
 
-	spec_fts_preview := preview_fts_from_spec(query_spec(query_test_notes_fts_spec() or { panic(err) }, map[string]ProjectionDef{}),
-		FtsRequest{
+	spec_fts_preview := preview_fts_from_spec(query_spec(query_test_notes_fts_spec() or {
+		panic(err)
+	}, map[string]ProjectionDef{}), FtsRequest{
 		table_name:  'notes'
 		column_name: 'body'
 		scope:       .any
@@ -662,8 +690,9 @@ fn test_query_facade_general_fts() {
 	}) or { panic(err) }
 	assert spec_fts_preview.index_name == 'body_fts_any_idx'
 
-	spec_fts_details := preview_fts_details_from_spec(query_spec(query_test_notes_fts_spec() or { panic(err) }, map[string]ProjectionDef{}),
-		FtsRequest{
+	spec_fts_details := preview_fts_details_from_spec(query_spec(query_test_notes_fts_spec() or {
+		panic(err)
+	}, map[string]ProjectionDef{}), FtsRequest{
 		table_name:  'notes'
 		column_name: 'body'
 		scope:       .any
@@ -717,8 +746,9 @@ fn test_query_facade_general_fts() {
 	assert fts_scan_preview.warnings.len == 1
 	assert fts_scan_preview.warnings[0].contains('fall back to table scan')
 
-	spec_general_preview := preview_general_fts_from_spec(query_spec(query_test_docs_spec() or { panic(err) }, map[string]ProjectionDef{}),
-		GeneralFtsRequest{
+	spec_general_preview := preview_general_fts_from_spec(query_spec(query_test_docs_spec() or {
+		panic(err)
+	}, map[string]ProjectionDef{}), GeneralFtsRequest{
 		table_name:     'docs'
 		index_name:     'content_text_fts_idx'
 		kind:           .term
@@ -801,8 +831,7 @@ fn test_query_facade_general_fts() {
 	assert live_general_details.plan.index_name == 'content_text_fts_idx'
 	assert live_general_details.notes.any(it.contains('SQLite FTS5 sidecar'))
 
-	session_general_details := preview_general_fts_details_in_session(query_session,
-		GeneralFtsRequest{
+	session_general_details := preview_general_fts_details_in_session(query_session, GeneralFtsRequest{
 		table_name:     'docs'
 		index_name:     'content_text_fts_idx'
 		kind:           .term

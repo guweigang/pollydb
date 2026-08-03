@@ -336,13 +336,13 @@ pub fn read_audit_entries(root_dir string, limit int) ![]AuditEntry {
 	}
 	lines := os.read_lines(path)!
 	mut entries := []AuditEntry{}
-	for line in lines {
+	for idx := lines.len - 1; idx >= 0; idx-- {
+		line := lines[idx]
 		if line.trim_space().len == 0 {
 			continue
 		}
 		entries << json.decode(AuditEntry, line)!
 	}
-	entries.sort(a.timestamp > b.timestamp)
 	if limit > 0 && entries.len > limit {
 		return entries[..limit].clone()
 	}

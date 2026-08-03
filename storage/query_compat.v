@@ -435,7 +435,8 @@ fn (session DatabaseSession) query_page_profiled(mut db PersistentDatabase, requ
 		mut plan_sw := time.new_stopwatch()
 		result := session.query_general_fts(mut db, query_general_fts_query_from_request(request))!
 		plan_ms := plan_sw.elapsed().milliseconds()
-		return profiled_query_page_from_general_fts(result, plan_ms, total_sw.elapsed().milliseconds())
+		return profiled_query_page_from_general_fts(result, plan_ms,
+			total_sw.elapsed().milliseconds())
 	}
 	spec := session.table_spec(request.table_name)!
 	mut plan_sw := time.new_stopwatch()
@@ -445,10 +446,11 @@ fn (session DatabaseSession) query_page_profiled(mut db PersistentDatabase, requ
 	normalized := query_request_with_continuation_token(request, plan)!
 	normalize_ms := normalize_sw.elapsed().milliseconds()
 	mut fetch_sw := time.new_stopwatch()
-	rows, begin_tx_ms, begin_checkout_ms, begin_tree_load_ms, begin_wrap_ms, view_ms, scan_ms, scan_nodes, scan_leaves, scan_items := execute_planned_query_fetch_profiled(session, mut db, spec,
-		plan.strategy, plan.index_name, plan.index_filter.column_name, plan.index_filter.plugin_name,
-		plan.index_filter.selector, query_filter_op_name(plan.index_filter.op),
-		plan.index_filter.value, plan.index_filter.second_value, plan.index_filter.has_second_value,
+	rows, begin_tx_ms, begin_checkout_ms, begin_tree_load_ms, begin_wrap_ms, view_ms, scan_ms, scan_nodes, scan_leaves, scan_items := execute_planned_query_fetch_profiled(session, mut
+		db, spec, plan.strategy, plan.index_name, plan.index_filter.column_name,
+		plan.index_filter.plugin_name, plan.index_filter.selector,
+		query_filter_op_name(plan.index_filter.op), plan.index_filter.value,
+		plan.index_filter.second_value, plan.index_filter.has_second_value,
 		plan.order_by.column_name, plan.order_by.direction == .desc, plan.post_filter_count,
 		plan.limit, normalized.select_columns, normalized.start_primary_key,
 		normalized.start_index_value, normalized.has_start_index_value)!
@@ -488,8 +490,7 @@ fn (session TransactionSession) preview_query_plan_details(request QueryRequest)
 		return error('typed table not registered: ${request.table_name}')
 	}
 	plan := plan_query_request(spec, request)!
-	return build_query_plan_preview(spec, map[string]AggregateProjectionDef{}, request, plan,
-		true)
+	return build_query_plan_preview(spec, map[string]AggregateProjectionDef{}, request, plan, true)
 }
 
 // Compatibility entrypoint. Prefer `query.query_rows_in_transaction(...)` only when legacy result shape is required.
@@ -519,10 +520,11 @@ fn (session TransactionSession) query_page_profiled(request QueryRequest) !Profi
 	normalized := query_request_with_continuation_token(request, plan)!
 	normalize_ms := normalize_sw.elapsed().milliseconds()
 	mut fetch_sw := time.new_stopwatch()
-	rows, begin_tx_ms, begin_checkout_ms, begin_tree_load_ms, begin_wrap_ms, view_ms, scan_ms, scan_nodes, scan_leaves, scan_items := execute_planned_query_fetch_profiled_in_transaction(session, spec,
-		plan.strategy, plan.index_name, plan.index_filter.column_name, plan.index_filter.plugin_name,
-		plan.index_filter.selector, query_filter_op_name(plan.index_filter.op),
-		plan.index_filter.value, plan.index_filter.second_value, plan.index_filter.has_second_value,
+	rows, begin_tx_ms, begin_checkout_ms, begin_tree_load_ms, begin_wrap_ms, view_ms, scan_ms, scan_nodes, scan_leaves, scan_items := execute_planned_query_fetch_profiled_in_transaction(session,
+		spec, plan.strategy, plan.index_name, plan.index_filter.column_name,
+		plan.index_filter.plugin_name, plan.index_filter.selector,
+		query_filter_op_name(plan.index_filter.op), plan.index_filter.value,
+		plan.index_filter.second_value, plan.index_filter.has_second_value,
 		plan.order_by.column_name, plan.order_by.direction == .desc, plan.post_filter_count,
 		plan.limit, normalized.select_columns, normalized.start_primary_key,
 		normalized.start_index_value, normalized.has_start_index_value)!
@@ -563,9 +565,9 @@ fn finalize_profiled_query_page(total_ms i64, root_dir string, table TableDef, p
 	fetched_rows := rows.len
 
 	mut filter_sw := time.new_stopwatch()
-	filtered := filter_query_rows(root_dir, table, rows, request.filters, request.start_primary_key,
-		request.start_index_value, request.has_start_index_value, plan.index_filter, plan.order_by,
-		request.limit)!
+	filtered := filter_query_rows(root_dir, table, rows, request.filters,
+		request.start_primary_key, request.start_index_value, request.has_start_index_value,
+		plan.index_filter, plan.order_by, request.limit)!
 	filter_ms := filter_sw.elapsed().milliseconds()
 
 	rows = filtered.rows.clone()
@@ -580,8 +582,8 @@ fn finalize_profiled_query_page(total_ms i64, root_dir string, table TableDef, p
 		has_more:                filtered.has_more
 		next_primary_key:        filtered.next_primary_key
 		next_index_value:        filtered.next_index_value
-		next_continuation_token: encode_query_continuation_token_for_plan(plan, filtered.next_primary_key,
-			filtered.next_index_value)
+		next_continuation_token: encode_query_continuation_token_for_plan(plan,
+			filtered.next_primary_key, filtered.next_index_value)
 	}
 	continuation_ms := continuation_sw.elapsed().milliseconds()
 
@@ -639,8 +641,9 @@ fn query_plan_preview_warnings(spec TypedTableSpec, projectors map[string]Aggreg
 }
 
 fn query_plan_preview_notes(spec TypedTableSpec, request QueryRequest, plan QueryPlan) []string {
-	return core.query_plan_preview_notes(plan.post_filter_count, query_plan_uses_projection_pushdown(plan),
-		query_plan_requires_base_row_fetch(spec, request, plan), query_plan_supports_reverse_executor(plan),
+	return core.query_plan_preview_notes(plan.post_filter_count,
+		query_plan_uses_projection_pushdown(plan), query_plan_requires_base_row_fetch(spec,
+		request, plan), query_plan_supports_reverse_executor(plan),
 		query_plan_supports_top_n_executor(plan), plan.order_by.column_name.len > 0)
 }
 
@@ -661,7 +664,8 @@ fn query_plan_requires_base_row_fetch(spec TypedTableSpec, request QueryRequest,
 		return false
 	}
 	index := query_index_by_name(spec, plan.index_name) or { return false }
-	return core.query_requires_base_row_fetch(true, request.select_columns.len, index.stores_row)
+	return core.query_requires_base_row_fetch(true, request.select_columns.len, query_index_covers_selection(index,
+		request.select_columns))
 }
 
 fn query_field_selector_planning_warning(spec TypedTableSpec, projectors map[string]AggregateProjectionDef, table_name string, filter QueryFilter) ?string {
@@ -877,10 +881,10 @@ fn query_cursor_render_value(value ColumnValue) string {
 
 fn execute_planned_query_fetch_profiled(session DatabaseSession, mut db PersistentDatabase, spec TypedTableSpec, strategy string, index_name string, index_filter_column_name string, index_filter_plugin_name string, index_filter_selector string, index_filter_op string, index_filter_value ColumnValue, index_filter_second_value ColumnValue, index_filter_has_second_value bool, order_by_column string, order_desc bool, post_filter_count int, limit int, select_columns []string, start_primary_key []u8, start_index_value ColumnValue, has_start_index_value bool) !([]TypedSchemaRow, i64, i64, i64, i64, i64, i64, int, int, int) {
 	plan := QueryPlan{
-		table_name:   spec.table.name
-		strategy:     strategy
-		index_name:   index_name
-		index_filter: QueryFilter{
+		table_name:        spec.table.name
+		strategy:          strategy
+		index_name:        index_name
+		index_filter:      QueryFilter{
 			column_name:      index_filter_column_name
 			plugin_name:      index_filter_plugin_name
 			selector:         index_filter_selector
@@ -889,7 +893,7 @@ fn execute_planned_query_fetch_profiled(session DatabaseSession, mut db Persiste
 			second_value:     clone_column_value(index_filter_second_value)
 			has_second_value: index_filter_has_second_value
 		}
-		order_by: QueryOrder{
+		order_by:          QueryOrder{
 			column_name: order_by_column
 			direction:   if order_desc { .desc } else { .asc }
 		}
@@ -911,18 +915,15 @@ fn execute_planned_query_fetch_profiled(session DatabaseSession, mut db Persiste
 			rows: query_rows_from_database_scan(session, mut db, spec, plan)!
 		}
 	}
-	return profiled_rows.rows.clone(), profiled_rows.begin_tx_ms, profiled_rows.begin_checkout_ms,
-		profiled_rows.begin_tree_load_ms, profiled_rows.begin_wrap_ms, profiled_rows.view_ms,
-		profiled_rows.scan_ms, profiled_rows.scan_nodes, profiled_rows.scan_leaves,
-		profiled_rows.scan_items
+	return profiled_rows.rows.clone(), profiled_rows.begin_tx_ms, profiled_rows.begin_checkout_ms, profiled_rows.begin_tree_load_ms, profiled_rows.begin_wrap_ms, profiled_rows.view_ms, profiled_rows.scan_ms, profiled_rows.scan_nodes, profiled_rows.scan_leaves, profiled_rows.scan_items
 }
 
 fn execute_planned_query_fetch_profiled_in_transaction(session TransactionSession, spec TypedTableSpec, strategy string, index_name string, index_filter_column_name string, index_filter_plugin_name string, index_filter_selector string, index_filter_op string, index_filter_value ColumnValue, index_filter_second_value ColumnValue, index_filter_has_second_value bool, order_by_column string, order_desc bool, post_filter_count int, limit int, select_columns []string, start_primary_key []u8, start_index_value ColumnValue, has_start_index_value bool) !([]TypedSchemaRow, i64, i64, i64, i64, i64, i64, int, int, int) {
 	plan := QueryPlan{
-		table_name:   spec.table.name
-		strategy:     strategy
-		index_name:   index_name
-		index_filter: QueryFilter{
+		table_name:        spec.table.name
+		strategy:          strategy
+		index_name:        index_name
+		index_filter:      QueryFilter{
 			column_name:      index_filter_column_name
 			plugin_name:      index_filter_plugin_name
 			selector:         index_filter_selector
@@ -931,7 +932,7 @@ fn execute_planned_query_fetch_profiled_in_transaction(session TransactionSessio
 			second_value:     clone_column_value(index_filter_second_value)
 			has_second_value: index_filter_has_second_value
 		}
-		order_by: QueryOrder{
+		order_by:          QueryOrder{
 			column_name: order_by_column
 			direction:   if order_desc { .desc } else { .asc }
 		}
@@ -953,10 +954,7 @@ fn execute_planned_query_fetch_profiled_in_transaction(session TransactionSessio
 			rows: query_rows_from_transaction_scan(session, spec, plan)!
 		}
 	}
-	return profiled_rows.rows.clone(), profiled_rows.begin_tx_ms, profiled_rows.begin_checkout_ms,
-		profiled_rows.begin_tree_load_ms, profiled_rows.begin_wrap_ms, profiled_rows.view_ms,
-		profiled_rows.scan_ms, profiled_rows.scan_nodes, profiled_rows.scan_leaves,
-		profiled_rows.scan_items
+	return profiled_rows.rows.clone(), profiled_rows.begin_tx_ms, profiled_rows.begin_checkout_ms, profiled_rows.begin_tree_load_ms, profiled_rows.begin_wrap_ms, profiled_rows.view_ms, profiled_rows.scan_ms, profiled_rows.scan_nodes, profiled_rows.scan_leaves, profiled_rows.scan_items
 }
 
 struct QueryIndexFetchSpec {
@@ -985,8 +983,9 @@ fn query_rows_from_database_index_profiled(session DatabaseSession, mut db Persi
 			}
 		} else {
 			rows = session.lookup_index_ordered(mut db, plan.table_name, plan.index_name,
-				request.start_index_value, request.has_start_index_value, request.start_primary_key,
-				fetch.fetch_limit, fetch.base_strategy == 'index_order_desc')!
+				request.start_index_value, request.has_start_index_value,
+				request.start_primary_key, fetch.fetch_limit,
+				fetch.base_strategy == 'index_order_desc')!
 		}
 		return ProfiledQueryRows{
 			rows:    rows
@@ -1000,22 +999,11 @@ fn query_rows_from_database_index_profiled(session DatabaseSession, mut db Persi
 			scan_ms: scan_sw.elapsed().milliseconds()
 		}
 	}
-	tx_result := session.begin_transaction_profiled(mut db)!
-	tx := tx_result.tx
-	begin_tx_ms := tx_result.timings.total_ms
-	mut view_sw := time.new_stopwatch()
-	_ = tx.indexed_view(plan.table_name)!
-	view_ms := view_sw.elapsed().milliseconds()
 	scan_sw.restart()
 	rows = query_rows_from_database_filtered_index(session, mut db, plan, fetch)!
 	return ProfiledQueryRows{
-		rows:               rows
-		begin_tx_ms:        begin_tx_ms
-		begin_checkout_ms:  tx_result.timings.checkout_ms
-		begin_tree_load_ms: tx_result.timings.tree_load_ms
-		begin_wrap_ms:      tx_result.timings.wrap_ms
-		view_ms:            view_ms
-		scan_ms:            scan_sw.elapsed().milliseconds()
+		rows:    rows
+		scan_ms: scan_sw.elapsed().milliseconds()
 	}
 }
 
@@ -1038,7 +1026,11 @@ fn query_rows_from_transaction_index_profiled(session TransactionSession, spec T
 			has_value:         request.has_start_index_value
 			start_primary_key: request.start_primary_key.clone()
 			limit:             fetch.fetch_limit
-			columns:           if fetch.push_projection { fetch.projected_columns } else { []string{} }
+			columns:           if fetch.push_projection {
+				fetch.projected_columns
+			} else {
+				[]string{}
+			}
 			reverse:           fetch.base_strategy == 'index_order_desc'
 		})!
 		return ProfiledQueryRows{
@@ -1075,8 +1067,15 @@ fn query_can_push_projection(spec TypedTableSpec, plan QueryPlan, select_columns
 		return false
 	}
 	index := query_index_by_name(spec, plan.index_name) or { return false }
-	return core.query_projection_pushdown_eligible(select_columns.len, index.stores_row,
-		index.is_field_selector(), index.is_fts(), plan.post_filter_count)
+	return core.query_projection_pushdown_eligible(select_columns.len, query_index_covers_selection(index,
+		select_columns), index.is_field_selector(), index.is_fts(), plan.post_filter_count)
+}
+
+fn query_index_covers_selection(index SchemaIndexDef, select_columns []string) bool {
+	if select_columns.len == 0 {
+		return index.stores_full_row()
+	}
+	return index.can_cover_columns(select_columns)
 }
 
 fn query_projected_fetch_columns(plan QueryPlan, select_columns []string) []string {
@@ -1110,41 +1109,56 @@ fn query_plan_uses_ordered_index_scan(fetch QueryIndexFetchSpec) bool {
 }
 
 fn query_plan_uses_reverse_filtered_order(plan QueryPlan) bool {
-	return core.query_reverse_filtered_order(plan.order_by.column_name, plan.index_filter.column_name,
-		plan.order_by.direction == .desc, query_filter_op_name(plan.index_filter.op))
+	return core.query_reverse_filtered_order(plan.order_by.column_name,
+		plan.index_filter.column_name, plan.order_by.direction == .desc,
+		query_filter_op_name(plan.index_filter.op))
 }
 
 fn query_rows_from_database_reverse_filtered_index(session DatabaseSession, mut db PersistentDatabase, plan QueryPlan, fetch QueryIndexFetchSpec) ![]TypedSchemaRow {
 	return match plan.index_filter.op {
 		.prefix {
 			if fetch.push_projection {
-				session.lookup_index_prefix_reverse_projected(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_prefix_reverse_projected(mut db, plan.table_name,
+					plan.index_name, plan.index_filter.value, fetch.fetch_limit,
+					fetch.projected_columns)!
 			} else {
-				session.lookup_index_prefix_reverse(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_prefix_reverse(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.before {
 			if fetch.push_projection {
-				session.lookup_index_before_reverse_projected(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_before_reverse_projected(mut db, plan.table_name,
+					plan.index_name, plan.index_filter.value, fetch.fetch_limit,
+					fetch.projected_columns)!
 			} else {
-				session.lookup_index_before_reverse(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_before_reverse(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.after {
 			if fetch.push_projection {
-				session.lookup_index_after_reverse_projected(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_after_reverse_projected(mut db, plan.table_name,
+					plan.index_name, plan.index_filter.value, fetch.fetch_limit,
+					fetch.projected_columns)!
 			} else {
-				session.lookup_index_after_reverse(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_after_reverse(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.between {
 			if fetch.push_projection {
-				session.lookup_index_between_reverse_projected(mut db, plan.table_name, plan.index_name, plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_between_reverse_projected(mut db, plan.table_name,
+					plan.index_name, plan.index_filter.value, plan.index_filter.second_value,
+					fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index_between_reverse(mut db, plan.table_name, plan.index_name, plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit)!
+				session.lookup_index_between_reverse(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit)!
 			}
 		}
-		else { []TypedSchemaRow{} }
+		else {
+			[]TypedSchemaRow{}
+		}
 	}
 }
 
@@ -1152,33 +1166,44 @@ fn query_rows_from_transaction_reverse_filtered_index(session TransactionSession
 	return match plan.index_filter.op {
 		.prefix {
 			if fetch.push_projection {
-				session.lookup_index_prefix_reverse_projected(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_prefix_reverse_projected(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index_prefix_reverse(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_prefix_reverse(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.before {
 			if fetch.push_projection {
-				session.lookup_index_before_reverse_projected(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_before_reverse_projected(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index_before_reverse(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_before_reverse(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.after {
 			if fetch.push_projection {
-				session.lookup_index_after_reverse_projected(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_after_reverse_projected(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index_after_reverse(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_after_reverse(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.between {
 			if fetch.push_projection {
-				session.lookup_index_between_reverse_projected(plan.table_name, plan.index_name, plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_between_reverse_projected(plan.table_name, plan.index_name,
+					plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit,
+					fetch.projected_columns)!
 			} else {
-				session.lookup_index_between_reverse(plan.table_name, plan.index_name, plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit)!
+				session.lookup_index_between_reverse(plan.table_name, plan.index_name,
+					plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit)!
 			}
 		}
-		else { []TypedSchemaRow{} }
+		else {
+			[]TypedSchemaRow{}
+		}
 	}
 }
 
@@ -1186,37 +1211,48 @@ fn query_rows_from_database_filtered_index(session DatabaseSession, mut db Persi
 	return match plan.index_filter.op {
 		.prefix {
 			if fetch.push_projection {
-				session.lookup_index_prefix_projected(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_prefix_projected(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index_prefix(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_prefix(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.after {
 			if fetch.push_projection {
-				session.lookup_index_after_projected(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_after_projected(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index_after(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_after(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.before {
 			if fetch.push_projection {
-				session.lookup_index_before_projected(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_before_projected(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index_before(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_before(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.between {
 			if fetch.push_projection {
-				session.lookup_index_between_projected(mut db, plan.table_name, plan.index_name, plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_between_projected(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit,
+					fetch.projected_columns)!
 			} else {
-				session.lookup_index_between(mut db, plan.table_name, plan.index_name, plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit)!
+				session.lookup_index_between(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit)!
 			}
 		}
 		.eq {
 			if fetch.push_projection {
-				session.lookup_index_projected(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_projected(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index(mut db, plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index(mut db, plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 	}
@@ -1226,37 +1262,48 @@ fn query_rows_from_transaction_filtered_index(session TransactionSession, plan Q
 	return match plan.index_filter.op {
 		.prefix {
 			if fetch.push_projection {
-				session.lookup_index_prefix_projected(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_prefix_projected(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index_prefix(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_prefix(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.after {
 			if fetch.push_projection {
-				session.lookup_index_after_projected(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_after_projected(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index_after(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_after(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.before {
 			if fetch.push_projection {
-				session.lookup_index_before_projected(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_before_projected(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index_before(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index_before(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit)!
 			}
 		}
 		.between {
 			if fetch.push_projection {
-				session.lookup_index_between_projected(plan.table_name, plan.index_name, plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_between_projected(plan.table_name, plan.index_name,
+					plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit,
+					fetch.projected_columns)!
 			} else {
-				session.lookup_index_between(plan.table_name, plan.index_name, plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit)!
+				session.lookup_index_between(plan.table_name, plan.index_name,
+					plan.index_filter.value, plan.index_filter.second_value, fetch.fetch_limit)!
 			}
 		}
 		.eq {
 			if fetch.push_projection {
-				session.lookup_index_projected(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
+				session.lookup_index_projected(plan.table_name, plan.index_name,
+					plan.index_filter.value, fetch.fetch_limit, fetch.projected_columns)!
 			} else {
-				session.lookup_index(plan.table_name, plan.index_name, plan.index_filter.value, fetch.fetch_limit)!
+				session.lookup_index(plan.table_name, plan.index_name, plan.index_filter.value,
+					fetch.fetch_limit)!
 			}
 		}
 	}
@@ -1388,8 +1435,9 @@ fn (session DatabaseSession) query_general_fts(mut db PersistentDatabase, query 
 	normalized := normalize_general_fts_query(query)
 	index := validate_general_fts_query_request(spec, normalized)!
 	plan := plan_general_fts_query(spec, index, normalized)
-	rows, sidecar_hits := execute_planned_general_fts_query_fetch(session, mut db, normalized.table_name,
-		normalized.index_name, normalized.kind, normalized.terms, normalized.limit)!
+	rows, sidecar_hits := execute_planned_general_fts_query_fetch(session, mut db,
+		normalized.table_name, normalized.index_name, normalized.kind, normalized.terms,
+		normalized.limit)!
 	mut snippets := []string{cap: sidecar_hits.len}
 	for idx, _ in sidecar_hits {
 		source_row := if idx < rows.len { rows[idx] } else { TypedSchemaRow{} }
@@ -1447,8 +1495,7 @@ fn (session DatabaseSession) query_fts(mut db PersistentDatabase, query FtsQuery
 	validate_fts_query_request(spec, normalized)!
 	plan := plan_fts_query(spec, normalized)
 	rows := execute_planned_fts_query_fetch(session, mut db, spec, normalized.column_name,
-		normalized.scope, normalized.kind, normalized.terms,
-		normalized.limit, plan.index_name)!
+		normalized.scope, normalized.kind, normalized.terms, normalized.limit, plan.index_name)!
 	ranked_rows, ranked_hits := rank_fts_query_rows(db.root_dir, spec.table,
 		normalized.column_name, normalized.scope, normalized.kind, normalized.terms,
 		normalized.limit, rows)!
@@ -1486,8 +1533,7 @@ fn (session TransactionSession) query_fts(query FtsQuery) !FtsQueryResult {
 	validate_fts_query_request(spec, normalized)!
 	plan := plan_fts_query(spec, normalized)
 	rows := execute_planned_fts_query_fetch_in_transaction(session, spec, normalized.column_name,
-		normalized.scope, normalized.kind, normalized.terms,
-		normalized.limit, plan.index_name)!
+		normalized.scope, normalized.kind, normalized.terms, normalized.limit, plan.index_name)!
 	ranked_rows, ranked_hits := rank_fts_query_rows(session.root_dir, spec.table,
 		normalized.column_name, normalized.scope, normalized.kind, normalized.terms,
 		normalized.limit, rows)!
@@ -1731,18 +1777,25 @@ fn execute_planned_general_fts_query_fetch(session DatabaseSession, mut db Persi
 		limit:      limit
 	}
 	match_query := compile_general_fts_match_query(query)
-	sidecar_hits := fts_sidecar_query_hits(db.root_dir, fts_sidecar_table_name(query.table_name, query.index_name), session.branch_name, match_query, query.limit)!
-	primary_keys := sidecar_hits.map(general_fts_decode_row_pk_hex(it.row_pk_hex) or { []u8{} }).filter(it.len > 0)
-	full_rows := fetch_general_fts_rows(session, mut db, query.table_name, primary_keys, []string{})!
+	sidecar_hits := fts_sidecar_query_hits(db.root_dir, fts_sidecar_table_name(query.table_name,
+		query.index_name), session.branch_name, match_query, query.limit)!
+	primary_keys :=
+		sidecar_hits.map(general_fts_decode_row_pk_hex(it.row_pk_hex) or { []u8{} }).filter(it.len > 0)
+	full_rows :=
+		fetch_general_fts_rows(session, mut db, query.table_name, primary_keys, []string{})!
 	return full_rows, sidecar_hits
 }
 
 fn query_fts_rows_from_database_index(session DatabaseSession, mut db PersistentDatabase, query FtsQuery, plan FtsQueryPlan) ![]TypedSchemaRow {
 	return match query.kind {
-		.term { session.lookup_index(mut db, query.table_name, plan.index_name, query.terms[0], query.limit)! }
-		.prefix { session.lookup_index_prefix(mut db, query.table_name, plan.index_name, query.terms[0], query.limit)! }
-		.all { fts_intersect_database_index_rows(session, mut db, query.table_name, plan.index_name, query.terms, query.limit)! }
-		.any { fts_union_database_index_rows(session, mut db, query.table_name, plan.index_name, query.terms, query.limit)! }
+		.term { session.lookup_index(mut db, query.table_name, plan.index_name, query.terms[0],
+				query.limit)! }
+		.prefix { session.lookup_index_prefix(mut db, query.table_name, plan.index_name,
+				query.terms[0], query.limit)! }
+		.all { fts_intersect_database_index_rows(session, mut db, query.table_name,
+				plan.index_name, query.terms, query.limit)! }
+		.any { fts_union_database_index_rows(session, mut db, query.table_name, plan.index_name,
+				query.terms, query.limit)! }
 	}
 }
 
@@ -1750,8 +1803,10 @@ fn query_fts_rows_from_transaction_index(session TransactionSession, query FtsQu
 	return match query.kind {
 		.term { session.lookup_index(query.table_name, plan.index_name, query.terms[0], query.limit)! }
 		.prefix { []TypedSchemaRow{} }
-		.all { fts_intersect_transaction_index_rows(session, query.table_name, plan.index_name, query.terms, query.limit)! }
-		.any { fts_union_transaction_index_rows(session, query.table_name, plan.index_name, query.terms, query.limit)! }
+		.all { fts_intersect_transaction_index_rows(session, query.table_name, plan.index_name,
+				query.terms, query.limit)! }
+		.any { fts_union_transaction_index_rows(session, query.table_name, plan.index_name,
+				query.terms, query.limit)! }
 	}
 }
 
@@ -1841,7 +1896,8 @@ fn fts_union_transaction_index_rows(session TransactionSession, table_name strin
 
 fn fts_filter_rows_by_scan(root_dir string, table TableDef, query FtsQuery, rows []TypedSchemaRow) ![]TypedSchemaRow {
 	column := table.column(query.column_name)!
-	index := SchemaIndexDef.field_selector('__fts_scan__', column.name, 'markdown', fts_selector(query.scope), .string_, false)!
+	index := SchemaIndexDef.field_selector('__fts_scan__', column.name, 'markdown',
+		fts_selector(query.scope), .string_, false)!
 	mut matched := []TypedSchemaRow{}
 	for row in rows {
 		stored := if row.data.has(column.name) { row.data.get(column.name)! } else { NullValue{} }
@@ -1866,7 +1922,9 @@ fn fts_values_match_query(values []ColumnValue, query FtsQuery) bool {
 		}
 	}
 	match query.kind {
-		.term { return query.terms[0] in terms }
+		.term {
+			return query.terms[0] in terms
+		}
 		.prefix {
 			for term, _ in terms {
 				if term.starts_with(query.terms[0]) {
@@ -2018,10 +2076,21 @@ fn fts_explain_row(root_dir string, column ColumnDef, query FtsQuery, row TypedS
 	}
 	stored := row.data.get(column.name)!
 	raw := match stored {
-		MarkdownRef { load_markdown_source(root_dir, stored.doc_root_id)! }
-		string { stored }
-		else { return error('fts explanation requires markdown payload') }
+		MarkdownRef {
+			if stored.is_zero() {
+				''
+			} else {
+				load_markdown_source(root_dir, stored.doc_root_id)!
+			}
+		}
+		string {
+			stored
+		}
+		else {
+			return error('fts explanation requires markdown payload')
+		}
 	}
+
 	emissions := emit_markdown_fts_tokens(raw)!
 	mut matched_terms_seen := map[string]bool{}
 	mut matched_scopes_seen := map[string]bool{}
@@ -2094,7 +2163,6 @@ fn fts_hit_summary(terms []string, scopes []FtsScope) string {
 	}
 	return 'terms=[' + terms.join(', ') + '] scopes=[' + scope_names.join(', ') + ']'
 }
-
 
 enum QueryComparisonOp {
 	eq
@@ -2487,10 +2555,10 @@ fn adapt_sql_predicate_fragment(input SqlPredicateAdapterInput) !SqlFilterFragme
 		return error('sql predicate adapter only accepts second_value for BETWEEN predicates')
 	}
 	return SqlFilterFragment{
-		target: input.target
-		kind: input.kind
-		value: clone_column_value(input.value)
-		second_value: clone_column_value(input.second_value)
+		target:           input.target
+		kind:             input.kind
+		value:            clone_column_value(input.value)
+		second_value:     clone_column_value(input.second_value)
 		has_second_value: input.has_second_value
 	}
 }
@@ -2642,14 +2710,14 @@ fn query_column_type_supports_order(typ ColumnType) bool {
 
 fn validate_query_order_with_filters(spec TypedTableSpec, request QueryRequest) ! {
 	if request.filters.len != 1 {
-		return error(core.query_order_with_filters_error(request.filters.len, false, true,
-			true, 'eq', request.order_by.direction == .desc))
+		return error(core.query_order_with_filters_error(request.filters.len, false, true, true,
+			'eq', request.order_by.direction == .desc))
 	}
 	filter := request.filters[0]
 	indexed_filter := best_index_for_filter(spec, filter) != none
 	err_msg := core.query_order_with_filters_error(request.filters.len, filter.is_field_selector(),
-		filter.column_name == request.order_by.column_name, indexed_filter, query_filter_op_name(filter.op),
-		request.order_by.direction == .desc)
+		filter.column_name == request.order_by.column_name, indexed_filter,
+		query_filter_op_name(filter.op), request.order_by.direction == .desc)
 	if err_msg.len > 0 {
 		return error(err_msg)
 	}
@@ -2667,7 +2735,8 @@ fn best_index_for_order_for_projection(spec TypedTableSpec, order QueryOrder, se
 			index.is_fts(), index.column == order.column_name) {
 			continue
 		}
-		score := core.query_order_index_score(index.stores_row, select_columns.len)
+		score := core.query_order_index_score(query_index_covers_selection(index, select_columns),
+			select_columns.len)
 		if score > best_score {
 			best = index
 			best_score = score
@@ -2687,14 +2756,16 @@ fn validate_query_filter(table TableDef, filter QueryFilter) ! {
 		}
 		value_type := query_value_type(filter.value)!
 		validate_named_field_selector(filter.plugin_name, filter.selector, value_type)!
-		validate_query_filter_bounds(filter.op, filter.value, filter.second_value, filter.has_second_value)!
+		validate_query_filter_bounds(filter.op, filter.value, filter.second_value,
+			filter.has_second_value)!
 		return
 	}
 	if filter.plugin_name.len > 0 || filter.selector.len > 0 {
 		return error('field selector filter requires both plugin_name and selector: ${filter.column_name}')
 	}
 	if filter.op != .eq {
-		validate_query_filter_bounds(filter.op, filter.value, filter.second_value, filter.has_second_value)!
+		validate_query_filter_bounds(filter.op, filter.value, filter.second_value,
+			filter.has_second_value)!
 		match column.typ {
 			.string_, .bytes_, .enum_, .datetime_ {}
 			.i64_ {
@@ -2714,6 +2785,7 @@ fn validate_query_filter_bounds(op QueryFilterOp, value ColumnValue, second_valu
 		string, []u8 { true }
 		else { false }
 	}
+
 	same_kind := query_values_use_same_kind(value, second_value)
 	err_msg := core.query_filter_bounds_error(query_filter_op_name(op), prefix_value_compatible,
 		has_second_value, same_kind)
@@ -2758,6 +2830,7 @@ fn query_values_use_same_kind(left ColumnValue, right ColumnValue) bool {
 		}
 		NullValue {}
 	}
+
 	return false
 }
 
@@ -2813,8 +2886,8 @@ fn query_column_type_supports_filter_op(typ ColumnType, op QueryFilterOp) bool {
 
 fn query_index_score(spec TypedTableSpec, index SchemaIndexDef, filter QueryFilter, select_columns []string) int {
 	_ = spec
-	return core.query_index_score(query_filter_op_name(filter.op), index.stores_row, filter.is_field_selector(),
-		select_columns.len)
+	return core.query_index_score(query_filter_op_name(filter.op), query_index_covers_selection(index,
+		select_columns), filter.is_field_selector(), select_columns.len)
 }
 
 fn query_index_by_name(spec TypedTableSpec, index_name string) ?SchemaIndexDef {
@@ -2827,8 +2900,8 @@ fn query_index_by_name(spec TypedTableSpec, index_name string) ?SchemaIndexDef {
 }
 
 fn query_index_supports_projection_pushdown(index SchemaIndexDef, select_columns []string, post_filters []QueryFilter) bool {
-	return core.query_projection_pushdown_eligible(select_columns.len, index.stores_row,
-		index.is_field_selector(), index.is_fts(), post_filters.len)
+	return core.query_projection_pushdown_eligible(select_columns.len, query_index_covers_selection(index,
+		select_columns), index.is_field_selector(), index.is_fts(), post_filters.len)
 }
 
 fn query_plan_strategy_name(op QueryFilterOp, projected bool) string {
@@ -2837,8 +2910,9 @@ fn query_plan_strategy_name(op QueryFilterOp, projected bool) string {
 
 fn query_plan_filter_order_strategy_name(filter QueryFilter, order_by QueryOrder, projected bool) string {
 	return core.query_plan_filter_order_strategy_name(query_filter_op_name(filter.op),
-		order_by.column_name.len > 0 && order_by.column_name == filter.column_name, order_by.direction == .desc,
-		projected)
+
+		order_by.column_name.len > 0 && order_by.column_name == filter.column_name,
+		order_by.direction == .desc, projected)
 }
 
 fn query_plan_order_strategy_name(direction QueryOrderDirection, projected bool) string {
@@ -2858,13 +2932,13 @@ fn plan_query_request(spec TypedTableSpec, request QueryRequest) !QueryPlan {
 }
 
 fn query_plan_for_order_only_request(spec TypedTableSpec, request QueryRequest) !QueryPlan {
-	order_index := best_index_for_order_for_projection(spec, request.order_by, request.select_columns)!
+	order_index := best_index_for_order_for_projection(spec, request.order_by,
+		request.select_columns)!
 	projected := query_index_supports_projection_pushdown(order_index, request.select_columns,
 		[]QueryFilter{})
 	return QueryPlan{
 		table_name:        request.table_name
-		strategy:          query_plan_order_strategy_name(request.order_by.direction,
-			projected)
+		strategy:          query_plan_order_strategy_name(request.order_by.direction, projected)
 		index_name:        order_index.name
 		index_filter:      QueryFilter{}
 		order_by:          request.order_by
@@ -2880,8 +2954,8 @@ fn query_plan_for_indexed_filter_request(request QueryRequest, best_match QueryB
 		post_filters)
 	return QueryPlan{
 		table_name:        request.table_name
-		strategy:          query_plan_filter_order_strategy_name(best_match.filter, request.order_by,
-			projected)
+		strategy:          query_plan_filter_order_strategy_name(best_match.filter,
+			request.order_by, projected)
 		index_name:        best_match.index.name
 		index_filter:      best_match.filter
 		order_by:          request.order_by
@@ -3052,7 +3126,8 @@ fn filter_query_rows(root_dir string, table TableDef, rows []TypedSchemaRow, fil
 				NullValue{}
 			}
 			if query_should_skip_from_anchor(row.primary_key, row_index_value, start_primary_key,
-				start_index_value, has_start_index_value, order_by.direction == .desc) {
+				start_index_value, has_start_index_value, order_by.direction == .desc)
+			{
 				continue
 			}
 		} else if start_primary_key.len > 0 && order_by.column_name.len == 0
@@ -3202,10 +3277,18 @@ fn query_row_matches_filter(root_dir string, table TableDef, row TypedSchemaRow,
 
 fn query_value_matches_filter(value ColumnValue, filter QueryFilter) bool {
 	return match filter.op {
-		.eq { column_values_equal(value, filter.value) }
-		.prefix { query_value_has_prefix(value, filter.value) }
-		.after { query_compare_column_values(value, filter.value) > 0 }
-		.before { query_compare_column_values(value, filter.value) < 0 }
+		.eq {
+			column_values_equal(value, filter.value)
+		}
+		.prefix {
+			query_value_has_prefix(value, filter.value)
+		}
+		.after {
+			query_compare_column_values(value, filter.value) > 0
+		}
+		.before {
+			query_compare_column_values(value, filter.value) < 0
+		}
 		.between {
 			query_compare_column_values(value, filter.value) >= 0
 				&& query_compare_column_values(value, filter.second_value) <= 0
@@ -3272,7 +3355,8 @@ fn lower_column_predicate(schema TableQuerySchema, predicate QueryPredicateSpec)
 	}
 	expected_type := capability.typ
 	query_lowering_validate_types(expected_type, predicate)!
-	query_lowering_validate_shape(capability.filter_shapes, predicate.op, 'column `${predicate.target.column_name}`')!
+	query_lowering_validate_shape(capability.filter_shapes, predicate.op,
+		'column `${predicate.target.column_name}`')!
 	return query_filter_from_predicate(predicate)
 }
 
@@ -3295,7 +3379,8 @@ fn lower_field_selector_predicate(schema TableQuerySchema, predicate QueryPredic
 		return error('field selector not found in schema: ${predicate.target.column_name}.${predicate.target.plugin_name}:${predicate.target.selector}')
 	}
 	query_lowering_validate_types(capability.value_type, predicate)!
-	query_lowering_validate_shape(capability.filter_shapes, predicate.op, 'field selector `${predicate.target.column_name}.${predicate.target.plugin_name}:${predicate.target.selector}`')!
+	query_lowering_validate_shape(capability.filter_shapes, predicate.op,
+		'field selector `${predicate.target.column_name}.${predicate.target.plugin_name}:${predicate.target.selector}`')!
 	return query_filter_from_predicate(predicate)
 }
 
@@ -3326,11 +3411,17 @@ fn query_lowering_validate_shape(shapes []QueryFilterShapeCapability, op QueryFi
 fn query_filter_from_predicate(predicate QueryPredicateSpec) !QueryFilter {
 	if predicate.target.plugin_name.len > 0 || predicate.target.selector.len > 0 {
 		return match predicate.op {
-			.eq { QueryFilter.field_eq(predicate.target.column_name, predicate.target.plugin_name, predicate.target.selector, predicate.value) }
-			.prefix { QueryFilter.field_prefix(predicate.target.column_name, predicate.target.plugin_name, predicate.target.selector, predicate.value) }
-			.after { QueryFilter.field_after(predicate.target.column_name, predicate.target.plugin_name, predicate.target.selector, predicate.value) }
-			.before { QueryFilter.field_before(predicate.target.column_name, predicate.target.plugin_name, predicate.target.selector, predicate.value) }
-			.between { QueryFilter.field_between(predicate.target.column_name, predicate.target.plugin_name, predicate.target.selector, predicate.value, predicate.second_value) }
+			.eq { QueryFilter.field_eq(predicate.target.column_name, predicate.target.plugin_name,
+					predicate.target.selector, predicate.value) }
+			.prefix { QueryFilter.field_prefix(predicate.target.column_name,
+					predicate.target.plugin_name, predicate.target.selector, predicate.value) }
+			.after { QueryFilter.field_after(predicate.target.column_name,
+					predicate.target.plugin_name, predicate.target.selector, predicate.value) }
+			.before { QueryFilter.field_before(predicate.target.column_name,
+					predicate.target.plugin_name, predicate.target.selector, predicate.value) }
+			.between { QueryFilter.field_between(predicate.target.column_name,
+					predicate.target.plugin_name, predicate.target.selector, predicate.value,
+					predicate.second_value) }
 		}
 	}
 	return match predicate.op {
@@ -3338,7 +3429,8 @@ fn query_filter_from_predicate(predicate QueryPredicateSpec) !QueryFilter {
 		.prefix { QueryFilter.prefix(predicate.target.column_name, predicate.value) }
 		.after { QueryFilter.after(predicate.target.column_name, predicate.value) }
 		.before { QueryFilter.before(predicate.target.column_name, predicate.value) }
-		.between { QueryFilter.between(predicate.target.column_name, predicate.value, predicate.second_value) }
+		.between { QueryFilter.between(predicate.target.column_name, predicate.value,
+				predicate.second_value) }
 	}
 }
 
@@ -3609,13 +3701,14 @@ fn (database PersistentDatabase) table_query_schema(table_name string) !TableQue
 				filter_ops:       query_supported_ops_for_type(meta.value_type)
 				index_names:      []string{}
 				projection_names: []string{}
-				planner_hints:    query_planner_hints_for_target(spec, index.column, meta.plugin_name,
-					meta.selector, meta.value_type)
+				planner_hints:    query_planner_hints_for_target(spec, index.column,
+					meta.plugin_name, meta.selector, meta.value_type)
 				filter_shapes:    []QueryFilterShapeCapability{}
 				order_shapes:     []QueryOrderCapability{}
-				fts_query_kinds:  query_supported_fts_kinds_for_selector(meta.plugin_name, meta.selector)
-				fts_shapes:       query_fts_shapes_for_selector(spec, index.column, meta.plugin_name,
+				fts_query_kinds:  query_supported_fts_kinds_for_selector(meta.plugin_name,
 					meta.selector)
+				fts_shapes:       query_fts_shapes_for_selector(spec, index.column,
+					meta.plugin_name, meta.selector)
 			}
 		}
 		mut index_names := capability.index_names.clone()
@@ -3625,7 +3718,8 @@ fn (database PersistentDatabase) table_query_schema(table_name string) !TableQue
 			stores_row:    capability.stores_row || meta.stores_row
 			index_names:   index_names
 			filter_shapes: query_filter_shapes_for_target(spec, database.projectors, table_name,
-				index.column, meta.plugin_name, meta.selector, meta.value_type, capability.projection_names)
+				index.column, meta.plugin_name, meta.selector, meta.value_type,
+				capability.projection_names)
 			order_shapes:  []QueryOrderCapability{}
 		}
 	}
@@ -3789,18 +3883,17 @@ fn query_best_index_match_for_filter(spec TypedTableSpec, filter QueryFilter) Qu
 fn query_planner_hints_for_target(spec TypedTableSpec, column_name string, plugin_name string, selector string, value_type ColumnType) []QueryPlannerHint {
 	mut hints := []QueryPlannerHint{}
 	for op in query_supported_ops_for_type(value_type) {
-		filter := query_sample_filter(column_name, plugin_name, selector, value_type,
-			op)
+		filter := query_sample_filter(column_name, plugin_name, selector, value_type, op)
 		best := query_best_index_match_for_filter(spec, filter)
 		best_index := best.index
 		best_score := best.score
 		if best_score < 0 {
 			continue
 		}
-		supports_ordered_reverse := core.query_supports_reverse_scan(best_score >= 0,
-			plugin_name, selector, query_filter_op_name(op))
-		supports_ordered_top_n := core.query_supports_top_n(best_score >= 0, plugin_name,
+		supports_ordered_reverse := core.query_supports_reverse_scan(best_score >= 0, plugin_name,
 			selector, query_filter_op_name(op))
+		supports_ordered_top_n := core.query_supports_top_n(best_score >= 0, plugin_name, selector,
+			query_filter_op_name(op))
 		planner_strategy := query_sample_plan_explain(spec, map[string]AggregateProjectionDef{},
 			spec.table.name, filter).strategy
 		hints << QueryPlannerHint{
@@ -3856,8 +3949,7 @@ fn query_sample_plan_explain(spec TypedTableSpec, projectors map[string]Aggregat
 fn query_filter_shapes_for_target(spec TypedTableSpec, projectors map[string]AggregateProjectionDef, table_name string, column_name string, plugin_name string, selector string, value_type ColumnType, projection_names []string) []QueryFilterShapeCapability {
 	mut shapes := []QueryFilterShapeCapability{}
 	for op in query_supported_ops_for_type(value_type) {
-		filter := query_sample_filter(column_name, plugin_name, selector, value_type,
-			op)
+		filter := query_sample_filter(column_name, plugin_name, selector, value_type, op)
 		best := query_best_index_match_for_filter(spec, filter)
 		flags := core.query_shape_flags(best.score >= 0, projection_names.len, filter.plugin_name,
 			filter.selector, query_filter_op_name(op))
@@ -3867,7 +3959,11 @@ fn query_filter_shapes_for_target(spec TypedTableSpec, projectors map[string]Agg
 			value_type:            value_type
 			indexed:               best.score >= 0
 			index_name:            if best.score >= 0 { best.index.name } else { '' }
-			planner_strategy:      if best.score >= 0 { sample_explain.strategy } else { 'table_scan' }
+			planner_strategy:      if best.score >= 0 {
+				sample_explain.strategy
+			} else {
+				'table_scan'
+			}
 			planner_score:         if best.score >= 0 { best.score } else { -1 }
 			projection_only:       flags.projection_only
 			continuation_anchor:   flags.continuation_anchor
@@ -3889,8 +3985,7 @@ fn query_order_shapes_for_target(spec TypedTableSpec, projectors map[string]Aggr
 			request := QueryRequest{
 				table_name: table_name
 				filters:    [
-					query_sample_filter(column_name, plugin_name, selector, value_type,
-						op),
+					query_sample_filter(column_name, plugin_name, selector, value_type, op),
 				]
 				order_by:   QueryOrder{
 					column_name: column_name
@@ -3947,6 +4042,7 @@ fn query_sample_fts_terms(kind FtsQueryKind) []string {
 		.all { 'all' }
 		.any { 'any' }
 	}
+
 	return core.query_sample_fts_terms(kind_name)
 }
 

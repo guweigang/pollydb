@@ -417,6 +417,7 @@ struct SidecarRepositoryInfoDto {
 	repo_name             string
 	default_branch        string
 	branch_count          int
+	branch_count_committed int
 	latest_branch         string
 	latest_commit_cid     string
 	latest_timestamp      i64
@@ -432,6 +433,7 @@ pub:
 	repo_name             string
 	default_branch        string
 	branch_count          int
+	branch_count_committed int
 	latest_branch         string
 	latest_commit_cid     string
 	latest_timestamp      i64
@@ -1785,7 +1787,8 @@ fn sidecar_repository_info(root_dir string, mut repo PersistentRepository, repo_
 	mut latest_branch := ''
 	mut latest_commit_cid := ''
 	mut latest_timestamp := i64(0)
-	for branch_name in repo.branch_names() {
+	branches_committed := repo.branch_names_committed()
+	for branch_name in branches_committed {
 		branch := repo.branch(branch_name) or { continue }
 		commit := repo.commit_store.get(branch.commit_cid) or { continue }
 		if latest_branch.len == 0 || commit.meta.timestamp > latest_timestamp {
@@ -1816,6 +1819,7 @@ fn sidecar_repository_info(root_dir string, mut repo PersistentRepository, repo_
 		repo_name:             if repo_name.len == 0 { '.' } else { repo_name }
 		default_branch:        repo.repo.default_branch
 		branch_count:          repo.repo.branch_names().len
+		branch_count_committed: branches_committed.len
 		latest_branch:         latest_branch
 		latest_commit_cid:     latest_commit_cid
 		latest_timestamp:      latest_timestamp
@@ -1936,7 +1940,7 @@ fn list_sidecar_branch_statuses(root_dir string, repo_name string, default_branc
 		db.close() or {}
 	}
 	mut rows := []SidecarBranchStatusDto{}
-	for branch_name in db.branch_names() {
+	for branch_name in db.branch_names_committed() {
 		rows << sidecar_branch_status(root_dir, repo_name, mut db, branch_name) or { continue }
 	}
 	rows.sort(a.timestamp > b.timestamp)
@@ -1964,7 +1968,7 @@ fn list_sidecar_global_activity(root_dir string, default_branch string, limit in
 		mut repo := open_sidecar_repository(root_dir, effective_name, default_branch) or {
 			continue
 		}
-		for branch_name in repo.branch_names() {
+		for branch_name in repo.branch_names_committed() {
 			branch := repo.branch(branch_name) or { continue }
 			entries << sidecar_repo_activity_entry(mut repo, effective_name, branch) or { continue }
 		}
@@ -3950,7 +3954,7 @@ fn (handler PollyLinkSidecarHandler) serve_repo_activity(req http.Request) http.
 		repo.close() or {}
 	}
 	mut entries := []SidecarRepoActivityEntryDto{}
-	for branch_name in repo.branch_names() {
+	for branch_name in repo.branch_names_committed() {
 		branch := repo.branch(branch_name) or { continue }
 		entries << sidecar_repo_activity_entry(mut repo, repo_name, branch) or { continue }
 	}
@@ -4314,6 +4318,7 @@ fn (client PollyLinkClient) list_repository_summaries(limit int) ![]SidecarRepos
 			repo_name:             dto.repo_name
 			default_branch:        dto.default_branch
 			branch_count:          dto.branch_count
+			branch_count_committed: dto.branch_count_committed
 			latest_branch:         dto.latest_branch
 			latest_commit_cid:     dto.latest_commit_cid
 			latest_timestamp:      dto.latest_timestamp
@@ -4340,6 +4345,7 @@ fn (client PollyLinkClient) repository_info() !SidecarRepositoryInfo {
 		repo_name:             dto.repo_name
 		default_branch:        dto.default_branch
 		branch_count:          dto.branch_count
+		branch_count_committed: dto.branch_count_committed
 		latest_branch:         dto.latest_branch
 		latest_commit_cid:     dto.latest_commit_cid
 		latest_timestamp:      dto.latest_timestamp
@@ -5504,6 +5510,7 @@ fn (client PollyLinkClient) open_repository(default_branch string) !SidecarRepos
 		repo_name:             dto.repo_name
 		default_branch:        dto.default_branch
 		branch_count:          dto.branch_count
+		branch_count_committed: dto.branch_count_committed
 		latest_branch:         dto.latest_branch
 		latest_commit_cid:     dto.latest_commit_cid
 		latest_timestamp:      dto.latest_timestamp

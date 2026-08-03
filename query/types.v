@@ -96,7 +96,7 @@ pub:
 	op               FilterOp
 	value            QueryValue
 	second_value     QueryValue = QueryValue{
-		value: storage.NullValue{}
+		value: NullValue{}
 	}
 	has_second_value bool
 }
@@ -218,21 +218,25 @@ pub:
 }
 
 pub struct QueryValue {
-	value storage.ColumnValue
+	value QueryScalarValue
 }
+
+type QueryScalarValue = MarkdownRef | NullValue | []u8 | bool | i64 | string
 
 fn query_value_from_storage(value storage.ColumnValue) QueryValue {
 	return QueryValue{
-		value: clone_column_value(value)
+		value: query_scalar_value_from_storage(value)
 	}
 }
 
 fn storage_value_query(value QueryValue) storage.ColumnValue {
-	return clone_column_value(value.value)
+	return storage_value_from_query_scalar(value.value)
 }
 
 fn null_query_value() QueryValue {
-	return query_value_from_storage(storage.NullValue{})
+	return QueryValue{
+		value: NullValue{}
+	}
 }
 
 pub fn QueryValue.null_value() QueryValue {
@@ -264,7 +268,7 @@ fn (value QueryValue) storage_value() storage.ColumnValue {
 }
 
 pub fn (value QueryValue) is_null() bool {
-	return value.value is storage.NullValue
+	return value.value is NullValue
 }
 
 pub fn (value QueryValue) as_bool() !bool {
@@ -310,32 +314,52 @@ pub fn (value QueryValue) as_markdown_ref() !MarkdownRef {
 pub fn (value QueryValue) display_string() string {
 	stored := value.storage_value()
 	return match stored {
-		storage.MarkdownRef { 'md:${stored.doc_root_id}' }
-		storage.NullValue { 'null' }
-		bool { if stored { 'true' } else { 'false' } }
-		i64 { stored.str() }
-		string { stored }
-		[]u8 { 'hex:' + stored.hex() }
+		storage.MarkdownRef {
+			'md:${stored.doc_root_id}'
+		}
+		storage.NullValue {
+			'null'
+		}
+		bool {
+			if stored {
+				'true'
+			} else {
+				'false'
+			}
+		}
+		i64 {
+			stored.str()
+		}
+		string {
+			stored
+		}
+		[]u8 {
+			'hex:' + stored.hex()
+		}
 	}
 }
 
 fn query_value_type_query(value QueryValue) !ColumnType {
-	return query_column_type(query_value_type(storage_value_query(value))!)
+	return query_scalar_value_type(value.value)
 }
 
 fn query_values_equal(left QueryValue, right QueryValue) bool {
-	return column_values_equal_query_values(storage_value_query(left), storage_value_query(right))
+	return query_scalar_values_equal(left.value, right.value)
 }
 
 fn query_value_has_prefix(value QueryValue, prefix QueryValue) bool {
-	return value_has_prefix_query_values(storage_value_query(value), storage_value_query(prefix))
+	return query_scalar_value_has_prefix(value.value, prefix.value)
 }
 
 fn compare_query_values(left QueryValue, right QueryValue) int {
-	return compare_query_value_storage(storage_value_query(left), storage_value_query(right))
+	return compare_query_scalar_values(left.value, right.value)
 }
 
-fn column_values_equal_query_values(left storage.ColumnValue, right storage.ColumnValue) bool {
+fn query_values_use_same_kind(left QueryValue, right QueryValue) bool {
+	return query_scalar_values_use_same_kind(left.value, right.value)
+}
+
+fn query_scalar_values_equal(left QueryScalarValue, right QueryScalarValue) bool {
 	return match left {
 		bool {
 			match right {
@@ -361,19 +385,19 @@ fn column_values_equal_query_values(left storage.ColumnValue, right storage.Colu
 				else { false }
 			}
 		}
-		storage.MarkdownRef {
+		MarkdownRef {
 			match right {
-				storage.MarkdownRef { left.doc_root_id == right.doc_root_id }
+				MarkdownRef { left.doc_root_id == right.doc_root_id }
 				else { false }
 			}
 		}
-		storage.NullValue {
-			right is storage.NullValue
+		NullValue {
+			right is NullValue
 		}
 	}
 }
 
-fn value_has_prefix_query_values(value storage.ColumnValue, prefix storage.ColumnValue) bool {
+fn query_scalar_value_has_prefix(value QueryScalarValue, prefix QueryScalarValue) bool {
 	return match value {
 		string {
 			match prefix {
@@ -387,34 +411,60 @@ fn value_has_prefix_query_values(value storage.ColumnValue, prefix storage.Colum
 				else { false }
 			}
 		}
-		else { false }
+		else {
+			false
+		}
 	}
 }
 
-fn compare_query_value_storage(left storage.ColumnValue, right storage.ColumnValue) int {
+fn compare_query_scalar_values(left QueryScalarValue, right QueryScalarValue) int {
 	return match left {
 		bool {
 			match right {
 				bool {
-					if left == right { 0 } else if !left && right { -1 } else { 1 }
+					if left == right {
+						0
+					} else if !left && right {
+						-1
+					} else {
+						1
+					}
 				}
-				else { 0 }
+				else {
+					0
+				}
 			}
 		}
 		i64 {
 			match right {
 				i64 {
-					if left < right { -1 } else if left > right { 1 } else { 0 }
+					if left < right {
+						-1
+					} else if left > right {
+						1
+					} else {
+						0
+					}
 				}
-				else { 0 }
+				else {
+					0
+				}
 			}
 		}
 		string {
 			match right {
 				string {
-					if left < right { -1 } else if left > right { 1 } else { 0 }
+					if left < right {
+						-1
+					} else if left > right {
+						1
+					} else {
+						0
+					}
 				}
-				else { 0 }
+				else {
+					0
+				}
 			}
 		}
 		[]u8 {
@@ -423,15 +473,25 @@ fn compare_query_value_storage(left storage.ColumnValue, right storage.ColumnVal
 				else { 0 }
 			}
 		}
-		storage.MarkdownRef {
+		MarkdownRef {
 			match right {
-				storage.MarkdownRef {
-					if left.doc_root_id < right.doc_root_id { -1 } else if left.doc_root_id > right.doc_root_id { 1 } else { 0 }
+				MarkdownRef {
+					if left.doc_root_id < right.doc_root_id {
+						-1
+					} else if left.doc_root_id > right.doc_root_id {
+						1
+					} else {
+						0
+					}
 				}
-				else { 0 }
+				else {
+					0
+				}
 			}
 		}
-		storage.NullValue { 0 }
+		NullValue {
+			0
+		}
 	}
 }
 
@@ -454,6 +514,28 @@ fn compare_key_bytes_query_values(a []u8, b []u8) int {
 	return 0
 }
 
+fn query_scalar_values_use_same_kind(left QueryScalarValue, right QueryScalarValue) bool {
+	return match left {
+		bool { right is bool }
+		i64 { right is i64 }
+		string { right is string }
+		[]u8 { right is []u8 }
+		MarkdownRef { right is MarkdownRef }
+		NullValue { right is NullValue }
+	}
+}
+
+fn query_scalar_value_type(value QueryScalarValue) !ColumnType {
+	return match value {
+		MarkdownRef { .markdown_ }
+		NullValue { return error('query filters do not support null values') }
+		bool { .bool_ }
+		i64 { .i64_ }
+		string { .string_ }
+		[]u8 { .bytes_ }
+	}
+}
+
 pub struct Request {
 pub:
 	table_name            string
@@ -463,7 +545,7 @@ pub:
 	select_columns        []string
 	start_primary_key     []u8
 	start_index_value     QueryValue = QueryValue{
-		value: storage.NullValue{}
+		value: NullValue{}
 	}
 	has_start_index_value bool
 	continuation_token    string
@@ -496,20 +578,20 @@ pub:
 	has_more                bool
 	next_primary_key        []u8
 	next_index_value        QueryValue = QueryValue{
-		value: storage.NullValue{}
+		value: NullValue{}
 	}
 	next_continuation_token string
 }
 
 pub struct QueryRowData {
 mut:
-	values map[string]storage.ColumnValue
+	values map[string]QueryScalarValue
 }
 
 fn query_row_data_from_storage(data storage.TypedRowData) QueryRowData {
-	mut values := map[string]storage.ColumnValue{}
+	mut values := map[string]QueryScalarValue{}
 	for name, value in data.fields() {
-		values[name] = clone_column_value(value)
+		values[name] = query_scalar_value_from_storage(value)
 	}
 	return QueryRowData{
 		values: values
@@ -519,7 +601,7 @@ fn query_row_data_from_storage(data storage.TypedRowData) QueryRowData {
 fn storage_row_data_query(data QueryRowData) storage.TypedRowData {
 	mut out := storage.TypedRowData.new()
 	for name, value in data.values {
-		out.set(name, clone_column_value(value))
+		out.set(name, storage_value_from_query_scalar(value))
 	}
 	return out
 }
@@ -530,17 +612,19 @@ pub fn (data QueryRowData) has(name string) bool {
 
 pub fn (data QueryRowData) get(name string) !QueryValue {
 	value := data.values[name] or { return error('query row field not found: ${name}') }
-	return query_value_from_storage(value)
+	return QueryValue{
+		value: clone_query_scalar_value(value)
+	}
 }
 
 pub fn (mut data QueryRowData) set(name string, value QueryValue) {
-	data.values[name] = storage_value_query(value)
+	data.values[name] = clone_query_scalar_value(value.value)
 }
 
 pub fn (data QueryRowData) clone() QueryRowData {
-	mut copied := map[string]storage.ColumnValue{}
+	mut copied := map[string]QueryScalarValue{}
 	for name, value in data.values {
-		copied[name] = clone_column_value(value)
+		copied[name] = clone_query_scalar_value(value)
 	}
 	return QueryRowData{
 		values: copied
@@ -621,7 +705,7 @@ pub:
 	has_more                bool
 	next_primary_key        []u8
 	next_index_value        QueryValue = QueryValue{
-		value: storage.NullValue{}
+		value: NullValue{}
 	}
 	next_continuation_token string
 }
@@ -805,7 +889,7 @@ pub:
 	op               FilterOp
 	value            QueryValue
 	second_value     QueryValue = QueryValue{
-		value: storage.NullValue{}
+		value: NullValue{}
 	}
 	has_second_value bool
 }
@@ -946,7 +1030,7 @@ pub:
 	op               ComparisonOp
 	value            QueryValue
 	second_value     QueryValue = QueryValue{
-		value: storage.NullValue{}
+		value: NullValue{}
 	}
 	has_second_value bool
 }
@@ -1087,7 +1171,7 @@ pub:
 	kind             SqlFilterKind
 	value            QueryValue
 	second_value     QueryValue = QueryValue{
-		value: storage.NullValue{}
+		value: NullValue{}
 	}
 	has_second_value bool
 }
@@ -1345,7 +1429,7 @@ pub:
 	source_json_path         string
 	source_markdown_selector string
 	aggregate                ColumnAggregate
-	priority                 int = 100
+	priority                 int                = 100
 	cost_hint                ProjectionCostHint = .medium
 }
 
@@ -1393,42 +1477,12 @@ pub fn (def ProjectionDef) field_projection_meta() ?FieldSelectorMetaDef {
 	}
 }
 
-fn projection_def_from_storage(def storage.AggregateProjectionDef) ProjectionDef {
-	return ProjectionDef{
-		name:                     def.name
-		table_name:               def.table_name
-		column_name:              def.column_name
-		source_json_path:         def.source_json_path
-		source_markdown_selector: def.source_markdown_selector
-		aggregate:                query_column_aggregate(def.aggregate)
-		priority:                 def.priority
-		cost_hint:                query_projection_cost_hint(def.cost_hint)
-	}
-}
-
-fn projector_defs_from_storage(projectors map[string]storage.AggregateProjectionDef) map[string]ProjectionDef {
-	mut out := map[string]ProjectionDef{}
-	for name, def in projectors {
-		out[name] = projection_def_from_storage(def)
-	}
-	return out
-}
-
 pub struct FieldSelectorMetaDef {
 pub:
 	plugin_name string
 	selector    string
 	value_type  ColumnType
 	stores_row  bool
-}
-
-fn field_selector_meta_def(meta storage.FieldSelectorRef) FieldSelectorMetaDef {
-	return FieldSelectorMetaDef{
-		plugin_name: meta.plugin_name
-		selector:    meta.selector
-		value_type:  query_column_type(meta.value_type)
-		stores_row:  meta.stores_row
-	}
 }
 
 pub struct ColumnSchemaDef {
@@ -1447,6 +1501,7 @@ pub:
 	fts_text_mode     string
 	json_field_type   ColumnType
 	stores_row        bool
+	stored_columns    []string
 }
 
 pub fn (index IndexSchemaDef) is_json_path() bool {
@@ -1459,6 +1514,29 @@ pub fn (index IndexSchemaDef) is_fts() bool {
 
 pub fn (index IndexSchemaDef) is_field_selector() bool {
 	return index.markdown_selector.len > 0
+}
+
+pub fn (index IndexSchemaDef) stores_full_row() bool {
+	return index.stores_row && index.stored_columns.len == 0
+}
+
+pub fn (index IndexSchemaDef) can_cover_columns(columns []string) bool {
+	if !index.stores_row {
+		return false
+	}
+	if index.stored_columns.len == 0 || columns.len == 0 {
+		return true
+	}
+	mut stored := map[string]bool{}
+	for name in index.stored_columns {
+		stored[name] = true
+	}
+	for name in columns {
+		if name !in stored {
+			return false
+		}
+	}
+	return true
 }
 
 pub fn (index IndexSchemaDef) field_selector_plugin() string {
@@ -1528,64 +1606,6 @@ pub:
 	projections map[string]ProjectionDef
 }
 
-pub struct Database {
-mut:
-	db storage.PersistentDatabase
-}
-
-pub struct Session {
-	session storage.DatabaseSession
-}
-
-pub struct Transaction {
-	tx storage.TransactionSession
-}
-
-pub fn open_database(root_dir string, default_branch string) !Database {
-	return Database{
-		db: storage.PersistentDatabase.open(root_dir, default_branch)!
-	}
-}
-
-pub fn init_database(root_dir string, default_branch string) !Database {
-	return Database{
-		db: storage.PersistentDatabase.init(root_dir, default_branch)!
-	}
-}
-
-pub fn (mut database Database) close() ! {
-	database.db.close()!
-}
-
-pub fn (database Database) open_session(branch_name string) !Session {
-	return Session{
-		session: database.db.open_session(branch_name)!
-	}
-}
-
-pub fn (database Database) begin_session(branch_name string) !Session {
-	return Session{
-		session: database.db.begin_session(storage.SessionOptions.for_branch(branch_name))!
-	}
-}
-
-pub fn (session Session) begin_working_set(mut database Database) !Transaction {
-	return Transaction{
-		tx: session.session.begin_working_set(mut database.db)!
-	}
-}
-
-fn query_spec(spec storage.TypedTableSpec, projectors map[string]ProjectionDef) QuerySpec {
-	mut copied := map[string]ProjectionDef{}
-	for name, def in projectors {
-		copied[name] = def
-	}
-	return QuerySpec{
-		schema:      table_schema_def_from_storage(spec)
-		projections: copied
-	}
-}
-
 pub fn (table TableSchemaDef) has_column(name string) bool {
 	for column in table.columns {
 		if column.name == name {
@@ -1604,61 +1624,6 @@ pub fn (table TableSchemaDef) column(name string) !ColumnSchemaDef {
 	return error('table column not found: ${name}')
 }
 
-fn table_schema_def_from_storage(spec storage.TypedTableSpec) TableSchemaDef {
-	return TableSchemaDef{
-		name:        spec.table.name
-		primary_key: spec.table.primary_key.clone()
-		columns:     spec.table.columns.map(ColumnSchemaDef{
-			name: it.name
-			typ: query_column_type(it.typ)
-			nullable: it.nullable
-		})
-		indexes:     spec.indexes.map(IndexSchemaDef{
-			name: it.name
-			column: it.column
-			json_field: it.json_field
-			markdown_selector: it.markdown_selector
-			fts_text_mode: it.fts_text_mode
-			json_field_type: query_column_type(it.json_field_type)
-			stores_row: it.stores_row
-		})
-	}
-}
-
-fn storage_column_schema_query(column ColumnSchemaDef) storage.ColumnDef {
-	return storage.ColumnDef{
-		name:     column.name
-		typ:      storage_column_type(column.typ)
-		nullable: column.nullable
-	}
-}
-
-fn storage_index_schema_query(index IndexSchemaDef) storage.SchemaIndexDef {
-	return storage.SchemaIndexDef{
-		name:              index.name
-		column:            index.column
-		json_field:        index.json_field
-		markdown_selector: index.markdown_selector
-		fts_text_mode:     index.fts_text_mode
-		json_field_type:   storage_column_type(index.json_field_type)
-		stores_row:        index.stores_row
-	}
-}
-
-fn storage_field_selector_index_query(name string, column_name string, plugin_name string, selector string, value_type ColumnType, stores_row bool) !storage.SchemaIndexDef {
-	return storage.SchemaIndexDef.field_selector(name, column_name, plugin_name, selector,
-		storage_column_type(value_type), stores_row)!
-}
-
-fn storage_table_def_query(schema TableSchemaDef) !storage.TableDef {
-	mut columns := []storage.ColumnDef{cap: schema.columns.len}
-	for column in schema.columns {
-		columns << storage.ColumnDef.new(column.name, storage_column_type(column.typ),
-			column.nullable)!
-	}
-	return storage.TableDef.new(schema.name, columns, schema.primary_key.clone())
-}
-
 pub struct TableSchema {
 pub:
 	table_name                  string
@@ -1673,10 +1638,32 @@ pub:
 	supports_select_projection  bool
 }
 
-fn clone_column_value(value storage.ColumnValue) storage.ColumnValue {
+fn query_scalar_value_from_storage(value storage.ColumnValue) QueryScalarValue {
 	return match value {
-		storage.MarkdownRef {
-			storage.ColumnValue(storage.MarkdownRef{
+		storage.MarkdownRef { query_markdown_ref_from_storage(value) }
+		storage.NullValue { NullValue{} }
+		bool { value }
+		i64 { value }
+		string { value.clone() }
+		[]u8 { value.clone() }
+	}
+}
+
+fn storage_value_from_query_scalar(value QueryScalarValue) storage.ColumnValue {
+	return match value {
+		MarkdownRef { storage.ColumnValue(storage_markdown_ref_query(value)) }
+		NullValue { storage.ColumnValue(storage.NullValue{}) }
+		bool { storage.ColumnValue(value) }
+		i64 { storage.ColumnValue(value) }
+		string { storage.ColumnValue(value.clone()) }
+		[]u8 { storage.ColumnValue(value.clone()) }
+	}
+}
+
+fn clone_query_scalar_value(value QueryScalarValue) QueryScalarValue {
+	return match value {
+		MarkdownRef {
+			QueryScalarValue(MarkdownRef{
 				version:     value.version
 				doc_root_id: value.doc_root_id
 				source_hash: value.source_hash
@@ -1685,20 +1672,20 @@ fn clone_column_value(value storage.ColumnValue) storage.ColumnValue {
 				parse_flags: value.parse_flags
 			})
 		}
-		storage.NullValue {
-			storage.ColumnValue(storage.NullValue{})
+		NullValue {
+			QueryScalarValue(NullValue{})
 		}
 		bool {
-			storage.ColumnValue(value)
+			QueryScalarValue(value)
 		}
 		i64 {
-			storage.ColumnValue(value)
+			QueryScalarValue(value)
 		}
 		string {
-			storage.ColumnValue(value.clone())
+			QueryScalarValue(value.clone())
 		}
 		[]u8 {
-			storage.ColumnValue(value.clone())
+			QueryScalarValue(value.clone())
 		}
 	}
 }

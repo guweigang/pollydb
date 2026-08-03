@@ -1,4 +1,4 @@
-module pollylinkdb
+module pollylink
 
 import net.http
 import storage

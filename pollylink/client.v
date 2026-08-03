@@ -3,7 +3,6 @@ module pollylink
 import encoding.base64
 import json
 import net.http
-import pollylinkdb
 import pollyhub
 import storage
 
@@ -12,6 +11,7 @@ pub:
 	repo_name             string
 	default_branch        string
 	branch_count          int
+	branch_count_committed int
 	latest_branch         string
 	latest_commit_cid     string
 	latest_timestamp      i64
@@ -657,7 +657,7 @@ pub:
 }
 
 pub fn (handler SidecarHandler) handle(req http.Request) http.Response {
-	return pollylinkdb.handle_sidecar_request(handler.root_dir, handler.default_branch, req)
+	return handle_sidecar_request(handler.root_dir, handler.default_branch, req)
 }
 
 pub fn start_sidecar(root_dir string, default_branch string, addr string) !&http.Server {
