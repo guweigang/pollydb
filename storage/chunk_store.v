@@ -498,7 +498,7 @@ fn (store ChunkStore) persist_index_snapshot(sync_snapshot bool) ! {
 		return
 	}
 	index_path := chunk_store_index_path(store.path)
-	tmp_path := '${index_path}.tmp.${os.getpid()}.${time.now().unix_micro()}.${rand.u64()}'
+	tmp_path := '${index_path}.tmp.${os.getpid()}.${time.now().unix_micro()}.${rand.uuid_v4()}'
 	mut out := []u8{}
 	out << chunk_store_index_magic.bytes()
 	chunk_store_append_u32_le(mut out, chunk_store_index_version)

@@ -642,7 +642,7 @@ fn repository_read_bytes(path string) ![]u8 {
 }
 
 pub fn (repo Repository) persist(path string) ! {
-	tmp_path := '${path}.tmp.${os.getpid()}.${time.now().unix_micro()}.${rand.u64()}'
+	tmp_path := '${path}.tmp.${os.getpid()}.${time.now().unix_micro()}.${rand.uuid_v4()}'
 	mut tmp_file := os.open_file(tmp_path, 'wb', 0o666)!
 	mut tmp_file_open := true
 	defer {
