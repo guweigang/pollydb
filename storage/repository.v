@@ -1,7 +1,6 @@
 module storage
 
 import os
-import rand
 import time
 
 pub struct Branch {
@@ -642,7 +641,7 @@ fn repository_read_bytes(path string) ![]u8 {
 }
 
 pub fn (repo Repository) persist(path string) ! {
-	tmp_path := '${path}.tmp.${os.getpid()}.${time.now().unix_micro()}.${rand.uuid_v4()}'
+	tmp_path := atomic_stage_path(path)
 	data := repo.data()
 	write_atomic_stage(tmp_path, data)!
 	atomic_replace_file(tmp_path, path) or {

@@ -1,5 +1,7 @@
 module storage
 
+import time
+
 #include <windows.h>
 
 fn C.FlushFileBuffers(file voidptr) int
@@ -7,10 +9,22 @@ fn C.CloseHandle(object voidptr) int
 fn C.GetLastError() u32
 
 fn write_atomic_stage_windows(path string, data []u8) ! {
-	handle := C.CreateFileW(path.to_wide(), C.GENERIC_WRITE, 0, unsafe { nil }, C.CREATE_ALWAYS,
-		C.FILE_ATTRIBUTE_NORMAL, unsafe { nil })
+	mut handle := voidptr(0)
+	mut last_error := u32(0)
+	for attempt in 0 .. 200 {
+		handle = C.CreateFileW(path.to_wide(), C.GENERIC_WRITE, 0, unsafe { nil }, C.CREATE_ALWAYS,
+			C.FILE_ATTRIBUTE_NORMAL, unsafe { nil })
+		if handle != C.INVALID_HANDLE_VALUE && handle != unsafe { nil } {
+			break
+		}
+		last_error = C.GetLastError()
+		if (last_error != 5 && last_error != 32) || attempt == 199 {
+			break
+		}
+		time.sleep(2 * time.millisecond)
+	}
 	if handle == C.INVALID_HANDLE_VALUE || handle == unsafe { nil } {
-		return error('failed to create Windows staging file: ${C.GetLastError()}')
+		return error('failed to create Windows staging file: ${last_error}')
 	}
 	defer {
 		C.CloseHandle(handle)

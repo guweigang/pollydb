@@ -2,19 +2,23 @@ module storage
 
 import os
 import rand
-import time
 
 // atomic_write_bytes durably stages data before replacing the destination.
 // Besides avoiding torn metadata, the Windows staging implementation bypasses
 // the CRT write path, which can report zero-byte writes on hosted runners.
 fn atomic_write_bytes(path string, data []u8) ! {
 	os.mkdir_all(os.dir(path))!
-	tmp_path := '${path}.tmp.${os.getpid()}.${time.now().unix_micro()}.${rand.uuid_v4()}'
+	tmp_path := atomic_stage_path(path)
 	write_atomic_stage(tmp_path, data)!
 	atomic_replace_file(tmp_path, path) or {
 		os.rm(tmp_path) or {}
 		return err
 	}
+}
+
+fn atomic_stage_path(path string) string {
+	token := rand.uuid_v4().replace('-', '')
+	return os.join_path(os.dir(path), '.pt-${os.getpid()}-${token[..12]}')
 }
 
 fn write_atomic_stage(path string, data []u8) ! {
