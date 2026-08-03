@@ -18,6 +18,7 @@ fn atomic_write_bytes(path string, data []u8) ! {
 }
 
 fn write_atomic_stage(path string, data []u8) ! {
+	os.mkdir_all(os.dir(path))!
 	$if windows {
 		write_atomic_stage_windows(path, data)!
 	} $else {
