@@ -4,11 +4,30 @@ import memory
 import os
 import storage
 import term.ui as tui
+import time
 
 struct AgentViewTestEmbeddingEngine {
 pub:
 	dims    int
 	vectors map[string][]f32
+}
+
+fn write_agentview_test_file(path string, content string) {
+	$if windows {
+		for attempt in 0 .. 200 {
+			os.write_file(path, content) or {
+				if err.msg() == '0 bytes written' && attempt < 199 {
+					time.sleep(2 * time.millisecond)
+					continue
+				}
+				panic(err)
+			}
+			return
+		}
+		panic('failed to write AgentView test fixture: ${path}')
+	} $else {
+		os.write_file(path, content) or { panic(err) }
+	}
 }
 
 fn (engine AgentViewTestEmbeddingEngine) model_name() string {
@@ -41,7 +60,7 @@ fn make_multi_session_codex_fixture(dest_root string) {
 	index_path := os.join_path(dest_root, 'session_index.jsonl')
 	mut index_text := os.read_file(index_path) or { panic(err) }
 	index_text += '\n{"id":"session-002","thread_name":"Fixture thread two","updated_at":"2026-04-02T11:05:00Z"}\n'
-	os.write_file(index_path, index_text) or { panic(err) }
+	write_agentview_test_file(index_path, index_text)
 	source_path := os.join_path(dest_root, 'sessions', '2026', '04', '01',
 		'rollout-2026-04-01T10-00-00-session-001.jsonl')
 	mut second_text := os.read_file(source_path) or { panic(err) }
@@ -61,7 +80,7 @@ fn make_multi_session_codex_fixture(dest_root string) {
 	second_dir := os.join_path(dest_root, 'sessions', '2026', '04', '02')
 	os.mkdir_all(second_dir) or { panic(err) }
 	second_path := os.join_path(second_dir, 'rollout-2026-04-02T11-00-00-session-002.jsonl')
-	os.write_file(second_path, second_text) or { panic(err) }
+	write_agentview_test_file(second_path, second_text)
 }
 
 fn test_session_id_from_path() {
@@ -1878,7 +1897,7 @@ fn test_pollydb_store_sync_updates_only_changed_entries() {
 		'rollout-2026-04-01T10-00-00-session-001.jsonl')
 	mut content := os.read_file(session_path) or { panic(err) }
 	content = content.replace('I will inspect the patch.', 'I inspected the patch carefully.')
-	os.write_file(session_path, content) or { panic(err) }
+	write_agentview_test_file(session_path, content)
 
 	second := store.sync_codex(codex_root) or { panic(err) }
 	assert second.sessions == 1
