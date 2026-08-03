@@ -3,15 +3,14 @@ module storage
 #include <io.h>
 #include <windows.h>
 
-fn C._get_osfhandle(fd int) isize
+fn C._get_osfhandle(fd int) voidptr
 fn C.GetLastError() u32
 
 fn storage_file_write_windows(fd int, data []u8) !int {
-	handle_value := C._get_osfhandle(fd)
-	if handle_value == -1 {
+	handle := C._get_osfhandle(fd)
+	if handle == C.INVALID_HANDLE_VALUE || handle == unsafe { nil } {
 		return error('failed to resolve Windows file handle')
 	}
-	handle := voidptr(handle_value)
 	mut cursor := 0
 	for cursor < data.len {
 		remaining := data.len - cursor
