@@ -614,13 +614,31 @@ pub fn PersistentRepository.open_default_profiled(dir string, default_branch str
 }
 
 pub fn Repository.open(path string) !Repository {
-	data := os.read_bytes(path) or {
+	data := repository_read_bytes(path) or {
 		if !os.exists(path) {
 			return error('repository metadata not found: ${path}')
 		}
 		return err
 	}
 	return Repository.from_data(data)
+}
+
+fn repository_read_bytes(path string) ![]u8 {
+	$if windows {
+		for attempt in 0 .. 200 {
+			data := os.read_bytes(path) or {
+				if attempt == 199 {
+					return err
+				}
+				time.sleep(2 * time.millisecond)
+				continue
+			}
+			return data
+		}
+		return error('failed to read repository metadata: ${path}')
+	} $else {
+		return os.read_bytes(path)
+	}
 }
 
 pub fn (repo Repository) persist(path string) ! {

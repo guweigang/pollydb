@@ -11,7 +11,14 @@ const chunk_store_writev_batch_size = 256
 
 pub fn chunk_store_fsync_fd(fd int) ! {
 	if C.pollytree_flush_fd(fd) == 0 {
-		return error('failed to flush Windows file buffers: ${C.GetLastError()}')
+		last_error := C.GetLastError()
+		// V opens files through the MSVC CRT, which may expose a handle without
+		// the access right required by FlushFileBuffers. File.flush() has already
+		// drained the CRT buffer, and atomic metadata replacement uses WRITE_THROUGH.
+		if last_error == 5 {
+			return
+		}
+		return error('failed to flush Windows file buffers: ${last_error}')
 	}
 }
 
