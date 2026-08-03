@@ -50,19 +50,19 @@ pub fn MemoryNodeStore.new() MemoryNodeStore {
 
 pub fn PersistentNodeStore.open(path string) !PersistentNodeStore {
 	return PersistentNodeStore{
-		chunks: ChunkStore.open(path)!
-		journal_records: []u8{}
+		chunks:                ChunkStore.open(path)!
+		journal_records:       []u8{}
 		journaled_record_size: 0
-		pending: map[string][]u8{}
+		pending:               map[string][]u8{}
 	}
 }
 
 pub fn PersistentNodeStore.open_high_throughput(path string) !PersistentNodeStore {
 	return PersistentNodeStore{
-		chunks: ChunkStore.open_high_throughput(path)!
-		journal_records: []u8{}
+		chunks:                ChunkStore.open_high_throughput(path)!
+		journal_records:       []u8{}
 		journaled_record_size: 0
-		pending: map[string][]u8{}
+		pending:               map[string][]u8{}
 	}
 }
 
@@ -71,9 +71,7 @@ pub fn (mut store MemoryNodeStore) put(node Node) ! {
 }
 
 pub fn (store MemoryNodeStore) get(cid string) !Node {
-	node := store.nodes[cid] or {
-		return error('node not found: ${cid}')
-	}
+	node := store.nodes[cid] or { return error('node not found: ${cid}') }
 	return node
 }
 
@@ -82,9 +80,7 @@ pub fn (store MemoryNodeStore) has(cid string) bool {
 }
 
 pub fn (mut store MemoryNodeStore) get_bytes(cid []u8) ![]u8 {
-	node := store.nodes[cid.bytestr()] or {
-		return error('node not found: ${cid.bytestr()}')
-	}
+	node := store.nodes[cid.bytestr()] or { return error('node not found: ${cid.bytestr()}') }
 	return node.data
 }
 
@@ -97,6 +93,11 @@ pub fn (mut store MemoryNodeStore) put_tree(tree Tree) ! {
 pub fn (mut store PersistentNodeStore) close() {
 	store.flush_pending() or {}
 	store.chunks.close()
+}
+
+pub fn (mut store PersistentNodeStore) close_without_checkpoint() {
+	store.flush_pending() or {}
+	store.chunks.close_without_checkpoint()
 }
 
 pub fn (mut store PersistentNodeStore) checkpoint() ! {
@@ -114,7 +115,7 @@ pub fn (mut store PersistentNodeStore) checkpoint_timed() !PersistentNodeStoreCh
 	store.flush_pending()!
 	timings := store.chunks.checkpoint_timed()!
 	return PersistentNodeStoreCheckpointTimings{
-		data_us: timings.data_us
+		data_us:  timings.data_us
 		index_us: timings.index_us
 		total_us: timings.total_us
 	}
@@ -133,7 +134,7 @@ pub fn (mut store PersistentNodeStore) checkpoint_timed_mode(mode CheckpointMode
 	}
 	timings := store.chunks.checkpoint_timed_mode(mode)!
 	return PersistentNodeStoreCheckpointTimings{
-		data_us: timings.data_us
+		data_us:  timings.data_us
 		index_us: timings.index_us
 		total_us: timings.total_us
 	}
@@ -196,7 +197,7 @@ pub fn (mut store PersistentNodeStore) put_tree(tree Tree) ! {
 }
 
 pub fn (store PersistentNodeStore) pending_journal_records() []u8 {
-	return store.journal_records[store.journaled_record_size..].clone()
+	return store.journal_records[store.journaled_record_size..]
 }
 
 pub fn (mut store PersistentNodeStore) mark_journal_records_persisted() {
@@ -215,10 +216,10 @@ fn (mut store PersistentNodeStore) flush_pending() ! {
 	mut payloads := []ChunkPayload{cap: store.pending.len}
 	for cid, data in store.pending {
 		payloads << ChunkPayload{
-			cid: cid.bytes()
+			cid:  cid.bytes()
 			data: data
 		}
 	}
-	_ = store.chunks.put_many(payloads)!
+	_ = store.chunks.put_many_streaming(payloads)!
 	store.pending = map[string][]u8{}
 }

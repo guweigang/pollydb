@@ -1,6 +1,7 @@
 module main
 
 import agentview
+import json
 import os
 import memory
 import memorydb
@@ -11,7 +12,8 @@ import term
 
 struct PollyDbCli {
 mut:
-	args []string
+	args         []string
+	json_output bool
 }
 
 struct CliRootContext {
@@ -40,6 +42,151 @@ struct CliField {
 	value string
 }
 
+struct SchemaUpdatePreviewTableDto {
+	table_name       string
+	kind             string
+	added_indexes    []string
+	mismatch_reasons []string
+	existing_indexes int
+	incoming_indexes int
+}
+
+struct SchemaUpdatePreviewDto {
+	ddl_path         string
+	tables           []string
+	new_tables       int
+	additive_indexes int
+	unchanged        int
+	aggregate_projections int
+	memory_capabilities   int
+	has_changes      bool
+	has_mismatches   bool
+	preview          []SchemaUpdatePreviewTableDto
+	aggregate_projection_preview []SchemaResourcePreviewDto
+	memory_capability_preview   []SchemaResourcePreviewDto
+}
+
+struct SchemaUpdatePlanActionDto {
+	table_name   string
+	subject_kind string
+	subject_name string
+	kind         string
+	detail       string
+}
+
+struct SchemaUpdatePlanTableDto {
+	table_name       string
+	preview_kind     string
+	mismatch_reasons []string
+	actions          []SchemaUpdatePlanActionDto
+}
+
+struct SchemaUpdatePlanDto {
+	ddl_path     string
+	tables       []string
+	create_table int
+	add_index    int
+	register_projector int
+	register_memory_capability int
+	noop         int
+	blocked      int
+	has_changes  bool
+	has_blockers bool
+	plan         []SchemaUpdatePlanTableDto
+	aggregate_projection_actions []SchemaUpdatePlanActionDto
+	memory_capability_actions    []SchemaUpdatePlanActionDto
+}
+
+struct RegisterSchemaResultDto {
+	ddl_path       string
+	tables         []string
+	status         string
+	reason         string
+	create_table   int
+	add_index      int
+	register_projector int
+	register_memory_capability int
+	noop           int
+	blocked        int
+	projectors     int
+	memory_caps    int
+	index_rebuild  string
+	changed_tables []string
+	plan           []SchemaUpdatePlanTableDto
+	aggregate_projection_actions []SchemaUpdatePlanActionDto
+	memory_capability_actions    []SchemaUpdatePlanActionDto
+}
+
+struct SchemaResourcePreviewDto {
+	subject_kind string
+	subject_name string
+	table_name   string
+	changed      bool
+	blocked      bool
+	reason       string
+}
+
+struct SchemaTableColumnDto {
+	name       string
+	typ        string
+	nullable   bool
+	aggregate  string
+	modifiers  []string
+	enum_values []string
+}
+
+struct SchemaTableIndexDto {
+	name           string
+	target         string
+	mode           string
+	stored_columns []string
+}
+
+struct SchemaTableDto {
+	name        string
+	primary_key []string
+	columns     []SchemaTableColumnDto
+	indexes     []SchemaTableIndexDto
+}
+
+struct SchemaAggregateProjectionDto {
+	name                     string
+	table_name               string
+	column_name              string
+	aggregate                string
+	source_json_path         string
+	source_markdown_selector string
+	priority                 int
+	cost_hint                string
+}
+
+struct SchemaMemoryCapabilityDto {
+	table_name               string
+	column_name              string
+	enabled                  bool
+	embedding_index          string
+	reflection_kind          string
+	replay_anchor            bool
+	link_evidence_blocks     bool
+	link_semantic_neighbors  bool
+}
+
+struct SchemaDescribeDto {
+	ddl_path              string
+	tables                []string
+	table_specs           []SchemaTableDto
+	aggregate_projections []SchemaAggregateProjectionDto
+	memory_capabilities   []SchemaMemoryCapabilityDto
+}
+
+struct SchemaValidationDto {
+	ddl_path              string
+	tables                []string
+	aggregate_projections int
+	memory_capabilities   int
+	status                string
+}
+
 struct CliSyncExecution {
 	session  storage.SyncSession
 	exchange storage.SyncExchange
@@ -51,8 +198,18 @@ fn PollyDbCli.new(args []string) PollyDbCli {
 	if normalized.len > 0 && normalized[0] == '--' {
 		normalized = normalized[1..].clone()
 	}
+	mut filtered := []string{}
+	mut json_output := false
+	for arg in normalized {
+		if arg == '--json' {
+			json_output = true
+			continue
+		}
+		filtered << arg
+	}
 	return PollyDbCli{
-		args: normalized
+		args:        filtered
+		json_output: json_output
 	}
 }
 
@@ -541,6 +698,8 @@ fn (cli PollyDbCli) usage() string {
   pollydb export-catalog [root_dir] [branch]
   pollydb register-table [root_dir] [branch] <table_name> <primary_key_csv> <columns_csv> [indexes_csv]
   pollydb create-table [root_dir] [branch] <table_name> <primary_key_csv> <columns_csv> [indexes_csv]
+  pollydb preview-schema-update [root_dir] [branch] <ddl_path> [tables_csv]
+  pollydb plan-schema-update [root_dir] [branch] <ddl_path> [tables_csv]
   pollydb rebuild-indexes [root_dir] [branch] [tables_csv]
   pollydb projectors [root_dir] [branch]
   pollydb register-aggregate-projection [root_dir] [branch] <name> <table_name> <column_name> [json_path] [priority] [cost_hint]
@@ -614,6 +773,11 @@ Catalog and Projectors:
   export-catalog  Print all registered table schemas.
   register-table  Register or update a typed table in the catalog, including additive index updates.
   create-table  Alias for register-table.
+  register-schema  Register or update typed tables from one YAML DDL file, with optional tables_csv subset.
+  preview-schema-update  Preview whether one YAML DDL file would create tables, add indexes, or hit schema mismatch.
+  plan-schema-update  Print the concrete table and index actions that schema apply would attempt.
+  validate-schema  Validate one YAML DDL file and print the compiled table summary.
+  describe-schema  Print one YAML DDL file as compiled typed table specs.
   rebuild-indexes  Rebuild secondary indexes for all tables or one tables_csv subset.
   projectors  List registered aggregate projectors and their branch state.
   register-aggregate-projection  Register one aggregate projector in the catalog.
@@ -657,6 +821,10 @@ Context resolution:
 Quick Start:
   pollydb init
   pollydb create-table users id "id:string,name:string,email:string?,created_at:datetime:current_timestamp,updated_at:datetime:current_timestamp:auto_update" "email_idx:email"
+  pollydb register-schema ./agentview/codex_schema.yml
+  pollydb preview-schema-update ./agentview/codex_schema.yml
+  pollydb plan-schema-update ./agentview/codex_schema.yml
+  pollydb register-schema ./agentview/codex_schema.yml sessions,entries
   pollydb put-row users u-001 "id=u-001,name=Ada,email=ada@example.com"
   pollydb get-row users u-001
   pollydb describe-table users
@@ -705,6 +873,9 @@ Environment:
   POLLYDB_MEMORY_GENERATION_MODEL  Local generation GGUF used by distill-agentview-memory.
   POLLYDB_MEMORY_FAST_DISTILL  Set to 1 to use heuristic reflection text generation instead of llama.cpp generation.
   POLLYDB_MEMORY_PREVIEW  Set to 1 to preview AgentView memory cards without persisting reflections.
+
+Output:
+  --json  Emit machine-readable JSON for schema preview/plan/register commands.
 '
 }
 
@@ -833,6 +1004,21 @@ fn (mut cli PollyDbCli) run() ! {
 	}
 	if command == 'create-table' {
 		return cli.run_register_table()
+	}
+	if command == 'register-schema' {
+		return cli.run_register_schema()
+	}
+	if command == 'preview-schema-update' {
+		return cli.run_preview_schema_update()
+	}
+	if command == 'plan-schema-update' {
+		return cli.run_plan_schema_update()
+	}
+	if command == 'validate-schema' {
+		return cli.run_validate_schema()
+	}
+	if command == 'describe-schema' {
+		return cli.run_describe_schema()
 	}
 	if command == 'rebuild-indexes' {
 		return cli.run_rebuild_indexes()
@@ -972,9 +1158,18 @@ fn (cli PollyDbCli) resolve_db_context(start_idx int, require_repo bool) !CliDbC
 	root := cli.resolve_root_context(start_idx, require_repo)!
 	mut branch := root.default_branch
 	mut next_idx := root.next_idx
-	if root.branches.len > 0 && cli.args.len > next_idx && cli.args[next_idx] in root.branches {
-		branch = cli.args[next_idx]
-		next_idx++
+	if cli.args.len > next_idx {
+		candidate_branch := cli.args[next_idx]
+		if candidate_branch in root.branches {
+			branch = candidate_branch
+			next_idx++
+		} else if cli_has_repository(root.root_dir) {
+			mut repo := cli_open_repository(root.root_dir)!
+			if repo.has_branch(candidate_branch) {
+				branch = candidate_branch
+				next_idx++
+			}
+		}
 	}
 	return CliDbContext{
 		root_dir:       root.root_dir
@@ -996,13 +1191,69 @@ fn (cli PollyDbCli) resolve_sync_peer_context(start_idx int) !CliSyncPeerContext
 	mut branch := repo.default_branch
 	mut next_idx := start_idx + 1
 	branches := repo.branch_names()
-	if cli.args.len > next_idx && cli.args[next_idx] in branches {
-		branch = cli.args[next_idx]
-		next_idx++
+	if cli.args.len > next_idx {
+		candidate_branch := cli.args[next_idx]
+		if candidate_branch in branches || repo.has_branch(candidate_branch) {
+			branch = candidate_branch
+			next_idx++
+		}
 	}
 	return CliSyncPeerContext{
 		root_dir:       root_dir
 		default_branch: repo.default_branch
+		branch:         branch
+		next_idx:       next_idx
+	}
+}
+
+fn (cli PollyDbCli) resolve_schema_db_context(start_idx int) !CliDbContext {
+	mut root_dir := os.getwd()
+	mut default_branch := 'main'
+	mut known_branches := []string{}
+	mut next_idx := start_idx
+	if cli.args.len > start_idx {
+		raw := cli.args[start_idx]
+		candidate := os.real_path(raw)
+		if os.exists(candidate) && !os.is_dir(candidate) {
+			root := cli.resolve_root_context(cli.args.len, false)!
+			return CliDbContext{
+				root_dir:       root.root_dir
+				default_branch: root.default_branch
+				branch:         root.default_branch
+				next_idx:       start_idx
+			}
+		}
+		if cli_looks_like_path(raw) || os.is_dir(candidate) {
+			root_dir = candidate
+			next_idx++
+		}
+	}
+	if cli_has_repository(root_dir) {
+		repo := cli_open_repository(root_dir)!
+		default_branch = repo.default_branch
+		known_branches = repo.branch_names()
+	}
+	mut branch := default_branch
+	if cli.args.len > next_idx {
+		candidate_branch := cli.args[next_idx]
+		branch_candidate_path := os.real_path(candidate_branch)
+		if candidate_branch in known_branches {
+			branch = candidate_branch
+			next_idx++
+		} else if cli_has_repository(root_dir) {
+			mut repo := cli_open_repository(root_dir)!
+			if repo.has_branch(candidate_branch) {
+				branch = candidate_branch
+				next_idx++
+			}
+		} else if !os.exists(branch_candidate_path) && !cli_looks_like_path(candidate_branch) {
+			branch = candidate_branch
+			next_idx++
+		}
+	}
+	return CliDbContext{
+		root_dir:       root_dir
+		default_branch: default_branch
 		branch:         branch
 		next_idx:       next_idx
 	}
@@ -1098,6 +1349,7 @@ fn cli_render_sidecar_repo_info(info pollylink.RepositoryInfo) string {
 		CliField{'default_branch', info.default_branch},
 		CliField{'auth', if info.auth_enabled { cli_info('bearer') } else { cli_dim('disabled') }},
 		CliField{'branches', info.branch_count.str()},
+		CliField{'branch_count_committed', info.branch_count_committed.str()},
 		CliField{'latest_branch', if info.latest_branch.len > 0 { info.latest_branch } else { '-' }},
 		CliField{'latest_commit', if info.latest_commit_cid.len > 0 {
 			info.latest_commit_cid
@@ -1135,6 +1387,7 @@ fn cli_render_sidecar_repo_summaries(infos []pollylink.RepositoryInfo) string {
 			info.default_branch,
 			if info.auth_enabled { 'bearer' } else { 'off' },
 			info.branch_count.str(),
+			info.branch_count_committed.str(),
 			if info.latest_branch.len > 0 { info.latest_branch } else { '-' },
 			if info.allow_push_to_default { 'push' } else { 'protected' },
 			if info.require_auto_merge { 'merge' } else { '-' },
@@ -1146,7 +1399,7 @@ fn cli_render_sidecar_repo_summaries(infos []pollylink.RepositoryInfo) string {
 	}
 	mut lines := []string{}
 	lines << cli_title('Sidecar Repository Summaries')
-	lines << cli_render_table(['repo', 'default_branch', 'auth', 'branches', 'latest_branch',
+	lines << cli_render_table(['repo', 'default_branch', 'auth', 'branches', 'branch_count_committed', 'latest_branch',
 		'push_default', 'auto_merge', 'sync_policy', 'protection', 'latest_commit',
 		'latest_timestamp'], rows)
 	return lines.join('\n')
@@ -1557,8 +1810,68 @@ fn format_table_spec(spec storage.TypedTableSpec) string {
 			}
 		}
 		lines << 'indexes=${indexes.join(',')}'
+		mut stored_columns := []string{}
+		for index in spec.indexes {
+			if index.stored_columns.len > 0 {
+				stored_columns << '${index.name}:${index.stored_columns.join('|')}'
+			}
+		}
+		if stored_columns.len > 0 {
+			lines << 'index_stored_columns=${stored_columns.join(',')}'
+		}
 	}
 	return lines.join('\n')
+}
+
+fn cli_render_compiled_table_spec(spec storage.TypedTableSpec) string {
+	mut lines := []string{}
+	lines << cli_render_field_card('Table', [
+		CliField{'name', spec.name()},
+		CliField{'primary_key', spec.table.primary_key.join(',')},
+	])
+	mut column_rows := [][]string{cap: spec.table.columns.len}
+	for column in spec.table.columns {
+		mut modifiers := []string{}
+		if column.nullable {
+			modifiers << 'nullable'
+		}
+		if column.aggregate != .none {
+			modifiers << column.aggregate.str()
+		}
+		if column.default_current_timestamp {
+			modifiers << 'current_timestamp'
+		}
+		if column.auto_update_current_timestamp {
+			modifiers << 'auto_update'
+		}
+		modifier_text := if modifiers.len > 0 { modifiers.join(',') } else { '-' }
+		column_rows << [column.name, format_column_type(column), modifier_text]
+	}
+	lines << ''
+	lines << cli_title('Columns')
+	lines << cli_render_table(['name', 'type', 'modifiers'], column_rows)
+	if spec.indexes.len > 0 {
+		mut index_rows := [][]string{cap: spec.indexes.len}
+		for index in spec.indexes {
+			stored_columns := if index.stored_columns.len > 0 {
+				index.stored_columns.join(',')
+			} else {
+				'-'
+			}
+			index_rows << [index.name, index.target_label(), format_index_mode(index), stored_columns]
+		}
+		lines << ''
+		lines << cli_title('Indexes')
+		lines << cli_render_table(['name', 'target', 'mode', 'stored_columns'], index_rows)
+	}
+	return lines.join('\n')
+}
+
+fn format_index_mode(index storage.SchemaIndexDef) string {
+	if index.stores_projected_row() {
+		return 'projected_covering'
+	}
+	return if index.stores_row { 'covering' } else { 'standard' }
 }
 
 fn format_projector_state(state storage.AggregateProjectorState) string {
@@ -2225,7 +2538,7 @@ fn format_typed_row(row storage.TypedSchemaRow, spec storage.TypedTableSpec) str
 }
 
 fn branch_exists(mut db storage.PersistentDatabase, branch string) bool {
-	return branch in db.branch_names()
+	return db.has_branch(branch)
 }
 
 fn (mut cli PollyDbCli) run_init() ! {
@@ -3061,15 +3374,16 @@ fn (mut cli PollyDbCli) run_describe_table() ! {
 	if spec.indexes.len > 0 {
 		mut index_rows := [][]string{cap: spec.indexes.len}
 		for index in spec.indexes {
-			index_rows << [index.name, index.target_label(), if index.stores_row {
-				'covering'
+			stored_columns := if index.stored_columns.len > 0 {
+				index.stored_columns.join(',')
 			} else {
-				'standard'
-			}]
+				'-'
+			}
+			index_rows << [index.name, index.target_label(), format_index_mode(index), stored_columns]
 		}
 		println('')
 		println(cli_title('Indexes'))
-		println(cli_render_table(['name', 'target', 'mode'], index_rows))
+		println(cli_render_table(['name', 'target', 'mode', 'stored_columns'], index_rows))
 	}
 }
 
@@ -3116,12 +3430,731 @@ fn (mut cli PollyDbCli) run_register_table() ! {
 		db.close() or {}
 	}
 	changed := db.register_or_update_table(spec)!
-	if changed && ctx.branch in db.branch_names() {
+	if changed && db.branch_has_committed_head(ctx.branch) {
 		_ = db.rebuild_indexes_at_branch(ctx.branch, [spec.name()], storage.ChunkConfig.default())!
 	}
 	db.checkpoint()!
 	report := db.status_report()!
 	println(cli_render_status_report(report))
+}
+
+fn (mut cli PollyDbCli) run_register_schema() ! {
+	ctx := cli.resolve_schema_db_context(1)!
+	if cli.args.len <= ctx.next_idx {
+		return error('register-schema requires [root_dir] [branch] <ddl_path> [tables_csv]')
+	}
+	ddl_path := cli.args[ctx.next_idx]
+	tables_csv := if cli.args.len > ctx.next_idx + 1 { cli.args[ctx.next_idx + 1] } else { '' }
+	ddl := storage.load_yaml_ddl_file(ddl_path)!
+	target_table_names := if tables_csv.len == 0 || tables_csv == '-' {
+		[]string{}
+	} else {
+		parse_csv_values(tables_csv)
+	}
+	mut specs := if target_table_names.len == 0 {
+		ddl.to_typed_specs()!
+	} else {
+		mut filtered := []storage.TypedTableSpec{cap: target_table_names.len}
+		for table_name in target_table_names {
+			filtered << ddl.table_spec(table_name)!
+		}
+		filtered
+	}
+	projector_defs := load_cli_yaml_projection_defs(ddl, target_table_names)!
+	memory_defs := load_cli_yaml_memory_capability_defs(ddl, target_table_names)!
+	status := storage.PersistentDatabase.inspect(ctx.root_dir, ctx.branch) or {
+		storage.PersistentDatabaseStatusReport{}
+	}
+	mut db := if status.repository_exists || status.catalog_exists {
+		storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
+	} else {
+		storage.PersistentDatabase.init(ctx.root_dir, ctx.branch)!
+	}
+	defer {
+		db.close() or {}
+	}
+	plan := db.plan_schema_bundle_update(specs, projector_defs, memory_defs)
+	if plan.has_blockers() {
+		if cli.json_output {
+			mut blocked_subjects := []string{}
+			for table in plan.tables {
+				if table.preview_kind == .schema_mismatch {
+					blocked_subjects << table.table_name
+				}
+			}
+			for action in plan.aggregate_projection_actions {
+				if action.kind == .blocked {
+					blocked_subjects << action.subject_name
+				}
+			}
+			for action in plan.memory_capability_actions {
+				if action.kind == .blocked {
+					blocked_subjects << action.subject_name
+				}
+			}
+			println(json.encode(RegisterSchemaResultDto{
+				ddl_path:       ddl_path
+				tables:         specs.map(it.name())
+				status:         'aborted'
+				reason:         'schema update plan contains blocked actions'
+				create_table:   plan.count_actions(.create_table)
+				add_index:      plan.count_actions(.add_index)
+				register_projector: plan.count_actions(.register_projector)
+				register_memory_capability: plan.count_actions(.register_memory_capability)
+				noop:           plan.count_actions(.noop)
+				blocked:        plan.count_actions(.blocked)
+				projectors:     projector_defs.len
+				memory_caps:    memory_defs.len
+				index_rebuild:  'not_started'
+				changed_tables: []string{}
+				plan:           cli_plan_json_dto(ddl_path, specs, plan).plan
+				aggregate_projection_actions: cli_plan_json_dto(ddl_path, specs, plan).aggregate_projection_actions
+				memory_capability_actions: cli_plan_json_dto(ddl_path, specs, plan).memory_capability_actions
+			}))
+			return error('schema update aborted; fix blocked schema objects first: ${blocked_subjects.join(",")}')
+		}
+		println(cli_render_field_card('Register Schema', [
+			CliField{'ddl_path', ddl_path},
+			CliField{'tables', if specs.len > 0 { specs.map(it.name()).join(',') } else { '-' }},
+			CliField{'status', cli_warn('aborted')},
+			CliField{'reason', 'schema update plan contains blocked actions'},
+		]))
+		println('')
+		println(cli_render_schema_update_plan(plan))
+		mut blocked_tables := []string{}
+		for table in plan.tables {
+			if table.preview_kind == .schema_mismatch {
+				blocked_tables << table.table_name
+			}
+		}
+		for action in plan.aggregate_projection_actions {
+			if action.kind == .blocked {
+				blocked_tables << action.subject_name
+			}
+		}
+		for action in plan.memory_capability_actions {
+			if action.kind == .blocked {
+				blocked_tables << action.subject_name
+			}
+		}
+		return error('schema update aborted; fix blocked schema objects first: ${blocked_tables.join(",")}')
+	}
+	mut changed_tables := []string{}
+	for spec in specs {
+		changed := db.register_or_update_table(spec)!
+		if changed {
+			changed_tables << spec.name()
+		}
+	}
+	for def in projector_defs {
+		if def.name in db.projector_names() {
+			existing := db.projector_spec(def.name)!
+			if !aggregate_projection_defs_equal(existing, def) {
+				return error('aggregate projection already registered with different definition: ${def.name}')
+			}
+			continue
+		}
+		db.register_aggregate_projection(def)!
+	}
+	for def in memory_defs {
+		existing := find_memory_capability_def(db.memory_capabilities_for_table(def.table_name),
+			def.column_name) or {
+			db.register_memory_capability(def)!
+			continue
+		}
+		if !memory_capability_defs_equal(existing, def) {
+			return error('memory capability already registered with different definition: ${def.table_name}.${def.column_name}')
+		}
+	}
+	index_rebuild_status := if changed_tables.len == 0 {
+		cli_dim('not_needed')
+	} else if db.branch_has_committed_head(ctx.branch) {
+		'rebuilt'
+	} else {
+		cli_dim('skipped_empty_branch')
+	}
+	if changed_tables.len > 0 && db.branch_has_committed_head(ctx.branch) {
+		_ = db.rebuild_indexes_at_branch(ctx.branch, changed_tables, storage.ChunkConfig.default())!
+	}
+	db.checkpoint()!
+	if cli.json_output {
+		println(json.encode(RegisterSchemaResultDto{
+			ddl_path:       ddl_path
+			tables:         specs.map(it.name())
+			status:         'applied'
+			reason:         ''
+			create_table:   plan.count_actions(.create_table)
+			add_index:      plan.count_actions(.add_index)
+			register_projector: plan.count_actions(.register_projector)
+			register_memory_capability: plan.count_actions(.register_memory_capability)
+			noop:           plan.count_actions(.noop)
+			blocked:        plan.count_actions(.blocked)
+			projectors:     projector_defs.len
+			memory_caps:    memory_defs.len
+			index_rebuild:  term.strip_ansi(index_rebuild_status)
+			changed_tables: changed_tables
+			plan:           cli_plan_json_dto(ddl_path, specs, plan).plan
+			aggregate_projection_actions: cli_plan_json_dto(ddl_path, specs, plan).aggregate_projection_actions
+			memory_capability_actions: cli_plan_json_dto(ddl_path, specs, plan).memory_capability_actions
+		}))
+		return
+	}
+	println(cli_render_field_card('Register Schema', [
+		CliField{'ddl_path', ddl_path},
+		CliField{'tables', if specs.len > 0 { specs.map(it.name()).join(',') } else { '-' }},
+		CliField{'create_table', plan.count_actions(.create_table).str()},
+		CliField{'add_index', plan.count_actions(.add_index).str()},
+		CliField{'register_projector', plan.count_actions(.register_projector).str()},
+		CliField{'register_memory_capability', plan.count_actions(.register_memory_capability).str()},
+		CliField{'noop', plan.count_actions(.noop).str()},
+		CliField{'projectors', projector_defs.len.str()},
+		CliField{'memory_caps', memory_defs.len.str()},
+		CliField{'index_rebuild', index_rebuild_status},
+		CliField{'changed', if changed_tables.len > 0 { changed_tables.join(',') } else { cli_dim('(none)') }},
+	]))
+	println('')
+	println(cli_render_schema_update_plan(plan))
+	println('')
+	report := db.status_report()!
+	println(cli_render_status_report(report))
+}
+
+fn (mut cli PollyDbCli) run_preview_schema_update() ! {
+	ctx := cli.resolve_schema_db_context(1)!
+	if cli.args.len <= ctx.next_idx {
+		return error('preview-schema-update requires [root_dir] [branch] <ddl_path> [tables_csv]')
+	}
+	ddl_path := cli.args[ctx.next_idx]
+	tables_csv := if cli.args.len > ctx.next_idx + 1 { cli.args[ctx.next_idx + 1] } else { '' }
+	specs := load_cli_yaml_ddl_specs(ddl_path, tables_csv)!
+	ddl := storage.load_yaml_ddl_file(ddl_path)!
+	target_table_names := if tables_csv.len == 0 || tables_csv == '-' {
+		[]string{}
+	} else {
+		parse_csv_values(tables_csv)
+	}
+	projector_defs := load_cli_yaml_projection_defs(ddl, target_table_names)!
+	memory_defs := load_cli_yaml_memory_capability_defs(ddl, target_table_names)!
+	status := storage.PersistentDatabase.inspect(ctx.root_dir, ctx.branch) or {
+		storage.PersistentDatabaseStatusReport{}
+	}
+	mut db := if status.repository_exists || status.catalog_exists {
+		storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
+	} else {
+		storage.PersistentDatabase.init(ctx.root_dir, ctx.branch)!
+	}
+	defer {
+		db.close() or {}
+	}
+	preview := db.preview_schema_bundle_update(specs, projector_defs, memory_defs)
+	if cli.json_output {
+		println(json.encode(cli_preview_json_dto(ddl_path, specs, preview)))
+		return
+	}
+	println(cli_render_field_card('Schema Update Preview', [
+		CliField{'ddl_path', ddl_path},
+		CliField{'tables', if specs.len > 0 { specs.map(it.name()).join(',') } else { '-' }},
+		CliField{'new_tables', preview.count_by_kind(.new_table).str()},
+		CliField{'additive_indexes', preview.count_by_kind(.additive_indexes).str()},
+		CliField{'unchanged', preview.count_by_kind(.unchanged).str()},
+		CliField{'aggregate_projections', projector_defs.len.str()},
+		CliField{'memory_capabilities', memory_defs.len.str()},
+		CliField{'changes', if preview.has_changes() { 'yes' } else { 'no' }},
+		CliField{'mismatch', if preview.has_mismatches() { cli_warn('yes') } else { 'no' }},
+	]))
+	println('')
+	println(cli_render_schema_update_preview(preview))
+}
+
+fn (mut cli PollyDbCli) run_plan_schema_update() ! {
+	ctx := cli.resolve_schema_db_context(1)!
+	if cli.args.len <= ctx.next_idx {
+		return error('plan-schema-update requires [root_dir] [branch] <ddl_path> [tables_csv]')
+	}
+	ddl_path := cli.args[ctx.next_idx]
+	tables_csv := if cli.args.len > ctx.next_idx + 1 { cli.args[ctx.next_idx + 1] } else { '' }
+	specs := load_cli_yaml_ddl_specs(ddl_path, tables_csv)!
+	ddl := storage.load_yaml_ddl_file(ddl_path)!
+	target_table_names := if tables_csv.len == 0 || tables_csv == '-' {
+		[]string{}
+	} else {
+		parse_csv_values(tables_csv)
+	}
+	projector_defs := load_cli_yaml_projection_defs(ddl, target_table_names)!
+	memory_defs := load_cli_yaml_memory_capability_defs(ddl, target_table_names)!
+	status := storage.PersistentDatabase.inspect(ctx.root_dir, ctx.branch) or {
+		storage.PersistentDatabaseStatusReport{}
+	}
+	mut db := if status.repository_exists || status.catalog_exists {
+		storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
+	} else {
+		storage.PersistentDatabase.init(ctx.root_dir, ctx.branch)!
+	}
+	defer {
+		db.close() or {}
+	}
+	plan := db.plan_schema_bundle_update(specs, projector_defs, memory_defs)
+	if cli.json_output {
+		println(json.encode(cli_plan_json_dto(ddl_path, specs, plan)))
+		return
+	}
+	println(cli_render_field_card('Schema Update Plan', [
+		CliField{'ddl_path', ddl_path},
+		CliField{'tables', if specs.len > 0 { specs.map(it.name()).join(',') } else { '-' }},
+		CliField{'create_table', plan.count_actions(.create_table).str()},
+		CliField{'add_index', plan.count_actions(.add_index).str()},
+		CliField{'register_projector', plan.count_actions(.register_projector).str()},
+		CliField{'register_memory_capability', plan.count_actions(.register_memory_capability).str()},
+		CliField{'blocked', plan.count_actions(.blocked).str()},
+		CliField{'has_changes', if plan.has_changes() { 'yes' } else { 'no' }},
+	]))
+	println('')
+	println(cli_render_schema_update_plan(plan))
+}
+
+fn (mut cli PollyDbCli) run_validate_schema() ! {
+	if cli.args.len < 2 {
+		return error('validate-schema requires <ddl_path> [tables_csv]')
+	}
+	ddl_path := cli.args[1]
+	tables_csv := if cli.args.len > 2 { cli.args[2] } else { '' }
+	specs := load_cli_yaml_ddl_specs(ddl_path, tables_csv)!
+	ddl := storage.load_yaml_ddl_file(ddl_path)!
+	target_table_names := if tables_csv.len == 0 || tables_csv == '-' {
+		[]string{}
+	} else {
+		parse_csv_values(tables_csv)
+	}
+	projector_defs := load_cli_yaml_projection_defs(ddl, target_table_names)!
+	memory_defs := load_cli_yaml_memory_capability_defs(ddl, target_table_names)!
+	if cli.json_output {
+		println(json.encode(SchemaValidationDto{
+			ddl_path:              ddl_path
+			tables:                specs.map(it.name())
+			aggregate_projections: projector_defs.len
+			memory_capabilities:   memory_defs.len
+			status:                'ok'
+		}))
+		return
+	}
+	println(cli_render_field_card('Schema Validation', [
+		CliField{'ddl_path', ddl_path},
+		CliField{'tables', specs.map(it.name()).join(',')},
+		CliField{'aggregate_projections', projector_defs.len.str()},
+		CliField{'memory_capabilities', memory_defs.len.str()},
+		CliField{'status', 'ok'},
+	]))
+}
+
+fn (mut cli PollyDbCli) run_describe_schema() ! {
+	if cli.args.len < 2 {
+		return error('describe-schema requires <ddl_path> [tables_csv]')
+	}
+	ddl_path := cli.args[1]
+	tables_csv := if cli.args.len > 2 { cli.args[2] } else { '' }
+	specs := load_cli_yaml_ddl_specs(ddl_path, tables_csv)!
+	ddl := storage.load_yaml_ddl_file(ddl_path)!
+	target_table_names := if tables_csv.len == 0 || tables_csv == '-' {
+		[]string{}
+	} else {
+		parse_csv_values(tables_csv)
+	}
+	projector_defs := load_cli_yaml_projection_defs(ddl, target_table_names)!
+	memory_defs := load_cli_yaml_memory_capability_defs(ddl, target_table_names)!
+	if cli.json_output {
+		println(json.encode(cli_schema_describe_json_dto(ddl_path, specs, projector_defs, memory_defs)))
+		return
+	}
+	println(cli_render_field_card('Schema', [
+		CliField{'ddl_path', ddl_path},
+		CliField{'tables', specs.map(it.name()).join(',')},
+		CliField{'aggregate_projections', projector_defs.len.str()},
+		CliField{'memory_capabilities', memory_defs.len.str()},
+	]))
+	for spec in specs {
+		println('')
+		println(cli_render_compiled_table_spec(spec))
+	}
+	if projector_defs.len > 0 {
+		println('')
+		println(cli_render_aggregate_projection_defs(projector_defs))
+	}
+	if memory_defs.len > 0 {
+		println('')
+		println(cli_render_memory_capability_defs(memory_defs))
+	}
+}
+
+fn load_cli_yaml_ddl_specs(ddl_path string, tables_csv string) ![]storage.TypedTableSpec {
+	ddl := storage.load_yaml_ddl_file(ddl_path)!
+	if tables_csv.len == 0 || tables_csv == '-' {
+		return ddl.to_typed_specs()!
+	}
+	mut specs := []storage.TypedTableSpec{}
+	for table_name in parse_csv_values(tables_csv) {
+		specs << ddl.table_spec(table_name)!
+	}
+	return specs
+}
+
+fn load_cli_yaml_projection_defs(ddl storage.YamlDdlFile, target_table_names []string) ![]storage.AggregateProjectionDef {
+	mut defs := ddl.aggregate_projection_defs()!
+	if target_table_names.len == 0 {
+		return defs
+	}
+	return defs.filter(it.table_name in target_table_names)
+}
+
+fn load_cli_yaml_memory_capability_defs(ddl storage.YamlDdlFile, target_table_names []string) ![]storage.MemoryCapabilityDef {
+	mut defs := ddl.memory_capability_defs()!
+	if target_table_names.len == 0 {
+		return defs
+	}
+	return defs.filter(it.table_name in target_table_names)
+}
+
+fn aggregate_projection_defs_equal(left storage.AggregateProjectionDef, right storage.AggregateProjectionDef) bool {
+	return left.name == right.name && left.table_name == right.table_name
+		&& left.column_name == right.column_name && left.source_json_path == right.source_json_path
+		&& left.source_markdown_selector == right.source_markdown_selector
+		&& left.aggregate == right.aggregate && left.priority == right.priority
+		&& left.cost_hint == right.cost_hint
+}
+
+fn memory_capability_defs_equal(left storage.MemoryCapabilityDef, right storage.MemoryCapabilityDef) bool {
+	return left.table_name == right.table_name && left.column_name == right.column_name
+		&& left.options.enabled == right.options.enabled
+		&& left.options.embedding_index == right.options.embedding_index
+		&& left.options.reflection_kind == right.options.reflection_kind
+		&& left.options.replay_anchor == right.options.replay_anchor
+		&& left.options.link_evidence_blocks == right.options.link_evidence_blocks
+		&& left.options.link_semantic_neighbors == right.options.link_semantic_neighbors
+}
+
+fn find_memory_capability_def(defs []storage.MemoryCapabilityDef, column_name string) ?storage.MemoryCapabilityDef {
+	for def in defs {
+		if def.column_name == column_name {
+			return def
+		}
+	}
+	return none
+}
+
+fn cli_render_schema_update_preview(preview storage.TypedSchemaUpdatePreview) string {
+	if preview.tables.len == 0 && preview.aggregate_projections.len == 0
+		&& preview.memory_capabilities.len == 0 {
+		return cli_empty('Schema update preview', 'No tables selected.')
+	}
+	mut rows := [][]string{}
+	for table in preview.tables {
+		detail := match table.kind {
+			.new_table {
+				if table.added_indexes.len > 0 {
+					'new table with ${table.incoming_indexes} indexes'
+				} else {
+					'new table'
+				}
+			}
+			.unchanged {
+				'no schema change'
+			}
+			.additive_indexes {
+				'add indexes: ${table.added_indexes.join(",")}'
+			}
+			.schema_mismatch {
+				table.mismatch_reasons.join(' | ')
+			}
+		}
+		rows << [
+			table.table_name,
+			match table.kind {
+				.new_table { cli_success('new_table') }
+				.unchanged { cli_dim('unchanged') }
+				.additive_indexes { cli_info('additive_indexes') }
+				.schema_mismatch { cli_warn('schema_mismatch') }
+			},
+			detail,
+		]
+	}
+	for projection in preview.aggregate_projections {
+		rows << [
+			projection.subject_name,
+			if projection.blocked {
+				cli_warn('blocked')
+			} else if projection.changed {
+				cli_info('register_projector')
+			} else {
+				cli_dim('unchanged')
+			},
+			if projection.blocked { projection.reason } else if projection.changed { 'register aggregate projection' } else { 'no schema change' },
+		]
+	}
+	for capability in preview.memory_capabilities {
+		rows << [
+			capability.subject_name,
+			if capability.blocked {
+				cli_warn('blocked')
+			} else if capability.changed {
+				cli_info('register_memory_capability')
+			} else {
+				cli_dim('unchanged')
+			},
+			if capability.blocked { capability.reason } else if capability.changed { 'register memory capability' } else { 'no schema change' },
+		]
+	}
+	return cli_render_table(['table', 'result', 'detail'], rows)
+}
+
+fn cli_render_schema_update_plan(plan storage.TypedSchemaUpdatePlan) string {
+	if plan.tables.len == 0 && plan.aggregate_projection_actions.len == 0
+		&& plan.memory_capability_actions.len == 0 {
+		return cli_empty('Schema update plan', 'No tables selected.')
+	}
+	mut rows := [][]string{}
+	for table in plan.tables {
+		for action in table.actions {
+			rows << [
+				table.table_name,
+				match action.kind {
+					.create_table { cli_success('create_table') }
+					.add_index { cli_info('add_index') }
+					.register_projector { cli_info('register_projector') }
+					.register_memory_capability { cli_info('register_memory_capability') }
+					.noop { cli_dim('noop') }
+					.blocked { cli_warn('blocked') }
+				},
+				action.detail,
+			]
+		}
+	}
+	for action in plan.aggregate_projection_actions {
+		rows << [action.subject_name, match action.kind {
+			.create_table { cli_success('create_table') }
+			.add_index { cli_info('add_index') }
+			.register_projector { cli_info('register_projector') }
+			.register_memory_capability { cli_info('register_memory_capability') }
+			.noop { cli_dim('noop') }
+			.blocked { cli_warn('blocked') }
+		}, action.detail]
+	}
+	for action in plan.memory_capability_actions {
+		rows << [action.subject_name, match action.kind {
+			.create_table { cli_success('create_table') }
+			.add_index { cli_info('add_index') }
+			.register_projector { cli_info('register_projector') }
+			.register_memory_capability { cli_info('register_memory_capability') }
+			.noop { cli_dim('noop') }
+			.blocked { cli_warn('blocked') }
+		}, action.detail]
+	}
+	return cli_render_table(['table', 'action', 'detail'], rows)
+}
+
+fn cli_render_aggregate_projection_defs(defs []storage.AggregateProjectionDef) string {
+	mut rows := [][]string{}
+	for def in defs {
+		source := if def.source_json_path.len > 0 {
+			'json:${def.source_json_path}'
+		} else if def.source_markdown_selector.len > 0 {
+			'markdown:${def.source_markdown_selector}'
+		} else {
+			'column'
+		}
+		rows << [
+			def.name,
+			def.table_name,
+			def.column_name,
+			source,
+			def.priority.str(),
+			def.cost_hint.str(),
+		]
+	}
+	mut lines := []string{}
+	lines << cli_title('Aggregate Projections')
+	lines << cli_render_table(['name', 'table', 'column', 'source', 'priority', 'cost_hint'], rows)
+	return lines.join('\n')
+}
+
+fn cli_render_memory_capability_defs(defs []storage.MemoryCapabilityDef) string {
+	mut rows := [][]string{}
+	for def in defs {
+		rows << [
+			def.table_name,
+			def.column_name,
+			if def.options.enabled { 'enabled' } else { 'disabled' },
+			if def.options.embedding_index.len > 0 { def.options.embedding_index } else { '-' },
+			def.options.reflection_kind,
+			if def.options.replay_anchor { 'anchor' } else { '-' },
+			if def.options.link_evidence_blocks { 'evidence' } else { '-' },
+			if def.options.link_semantic_neighbors { 'neighbors' } else { '-' },
+		]
+	}
+	mut lines := []string{}
+	lines << cli_title('Memory Capabilities')
+	lines << cli_render_table(['table', 'column', 'enabled', 'embedding_index', 'reflection_kind',
+		'replay_anchor', 'link_blocks', 'link_neighbors'], rows)
+	return lines.join('\n')
+}
+
+fn preview_kind_text(kind storage.TypedTableUpdatePreviewKind) string {
+	return match kind {
+		.new_table { 'new_table' }
+		.unchanged { 'unchanged' }
+		.additive_indexes { 'additive_indexes' }
+		.schema_mismatch { 'schema_mismatch' }
+	}
+}
+
+fn plan_action_kind_text(kind storage.TypedSchemaPlanActionKind) string {
+	return match kind {
+		.create_table { 'create_table' }
+		.add_index { 'add_index' }
+		.register_projector { 'register_projector' }
+		.register_memory_capability { 'register_memory_capability' }
+		.noop { 'noop' }
+		.blocked { 'blocked' }
+	}
+}
+
+fn cli_preview_json_dto(ddl_path string, specs []storage.TypedTableSpec, preview storage.TypedSchemaUpdatePreview) SchemaUpdatePreviewDto {
+	return SchemaUpdatePreviewDto{
+		ddl_path:         ddl_path
+		tables:           specs.map(it.name())
+		new_tables:       preview.count_by_kind(.new_table)
+		additive_indexes: preview.count_by_kind(.additive_indexes)
+		unchanged:        preview.count_by_kind(.unchanged)
+		aggregate_projections: preview.aggregate_projections.len
+		memory_capabilities:   preview.memory_capabilities.len
+		has_changes:      preview.has_changes()
+		has_mismatches:   preview.has_mismatches()
+		preview:          preview.tables.map(SchemaUpdatePreviewTableDto{
+			table_name:       it.table_name
+			kind:             preview_kind_text(it.kind)
+			added_indexes:    it.added_indexes
+			mismatch_reasons: it.mismatch_reasons
+			existing_indexes: it.existing_indexes
+			incoming_indexes: it.incoming_indexes
+		})
+		aggregate_projection_preview: preview.aggregate_projections.map(SchemaResourcePreviewDto{
+			subject_kind: it.subject_kind
+			subject_name: it.subject_name
+			table_name:   it.table_name
+			changed:      it.changed
+			blocked:      it.blocked
+			reason:       it.reason
+		})
+		memory_capability_preview: preview.memory_capabilities.map(SchemaResourcePreviewDto{
+			subject_kind: it.subject_kind
+			subject_name: it.subject_name
+			table_name:   it.table_name
+			changed:      it.changed
+			blocked:      it.blocked
+			reason:       it.reason
+		})
+	}
+}
+
+fn cli_plan_json_dto(ddl_path string, specs []storage.TypedTableSpec, plan storage.TypedSchemaUpdatePlan) SchemaUpdatePlanDto {
+	return SchemaUpdatePlanDto{
+		ddl_path:     ddl_path
+		tables:       specs.map(it.name())
+		create_table: plan.count_actions(.create_table)
+		add_index:    plan.count_actions(.add_index)
+		register_projector: plan.count_actions(.register_projector)
+		register_memory_capability: plan.count_actions(.register_memory_capability)
+		noop:         plan.count_actions(.noop)
+		blocked:      plan.count_actions(.blocked)
+		has_changes:  plan.has_changes()
+		has_blockers: plan.has_blockers()
+		plan:         plan.tables.map(SchemaUpdatePlanTableDto{
+			table_name:       it.table_name
+			preview_kind:     preview_kind_text(it.preview_kind)
+			mismatch_reasons: it.mismatch_reasons
+			actions:          it.actions.map(SchemaUpdatePlanActionDto{
+				table_name:   it.table_name
+				subject_kind: it.subject_kind
+				subject_name: it.subject_name
+				kind:         plan_action_kind_text(it.kind)
+				detail:       it.detail
+			})
+		})
+		aggregate_projection_actions: plan.aggregate_projection_actions.map(SchemaUpdatePlanActionDto{
+			table_name:   it.table_name
+			subject_kind: it.subject_kind
+			subject_name: it.subject_name
+			kind:         plan_action_kind_text(it.kind)
+			detail:       it.detail
+		})
+		memory_capability_actions: plan.memory_capability_actions.map(SchemaUpdatePlanActionDto{
+			table_name:   it.table_name
+			subject_kind: it.subject_kind
+			subject_name: it.subject_name
+			kind:         plan_action_kind_text(it.kind)
+			detail:       it.detail
+		})
+	}
+}
+
+fn cli_schema_describe_json_dto(ddl_path string, specs []storage.TypedTableSpec, projector_defs []storage.AggregateProjectionDef, memory_defs []storage.MemoryCapabilityDef) SchemaDescribeDto {
+	return SchemaDescribeDto{
+		ddl_path:              ddl_path
+		tables:                specs.map(it.name())
+		table_specs:           specs.map(SchemaTableDto{
+			name:        it.name()
+			primary_key: it.table.primary_key
+			columns:     it.table.columns.map(SchemaTableColumnDto{
+				name:        it.name
+				typ:         format_column_type(it)
+				nullable:    it.nullable
+				aggregate:   it.aggregate.str()
+				modifiers:   column_modifier_labels(it)
+				enum_values: it.enum_values
+			})
+			indexes:     it.indexes.map(SchemaTableIndexDto{
+				name:           it.name
+				target:         it.target_label()
+				mode:           format_index_mode(it)
+				stored_columns: it.stored_columns
+			})
+		})
+		aggregate_projections: projector_defs.map(SchemaAggregateProjectionDto{
+			name:                     it.name
+			table_name:               it.table_name
+			column_name:              it.column_name
+			aggregate:                it.aggregate.str()
+			source_json_path:         it.source_json_path
+			source_markdown_selector: it.source_markdown_selector
+			priority:                 it.priority
+			cost_hint:                it.cost_hint.str()
+		})
+		memory_capabilities:   memory_defs.map(SchemaMemoryCapabilityDto{
+			table_name:              it.table_name
+			column_name:             it.column_name
+			enabled:                 it.options.enabled
+			embedding_index:         it.options.embedding_index
+			reflection_kind:         it.options.reflection_kind
+			replay_anchor:           it.options.replay_anchor
+			link_evidence_blocks:    it.options.link_evidence_blocks
+			link_semantic_neighbors: it.options.link_semantic_neighbors
+		})
+	}
+}
+
+fn column_modifier_labels(column storage.ColumnDef) []string {
+	mut modifiers := []string{}
+	if column.nullable {
+		modifiers << 'nullable'
+	}
+	if column.aggregate != .none {
+		modifiers << column.aggregate.str()
+	}
+	if column.default_current_timestamp {
+		modifiers << 'current_timestamp'
+	}
+	if column.auto_update_current_timestamp {
+		modifiers << 'auto_update'
+	}
+	return modifiers
 }
 
 fn (mut cli PollyDbCli) run_rebuild_indexes() ! {
@@ -3135,6 +4168,15 @@ fn (mut cli PollyDbCli) run_rebuild_indexes() ! {
 	mut db := storage.PersistentDatabase.open(ctx.root_dir, ctx.branch)!
 	defer {
 		db.close() or {}
+	}
+	if !db.branch_has_committed_head(ctx.branch) {
+		println(cli_render_field_card('Rebuild Indexes', [
+			CliField{'branch', ctx.branch},
+			CliField{'tables', if table_names.len > 0 { table_names.join(',') } else { cli_dim('(all)') }},
+			CliField{'status', cli_dim('skipped')},
+			CliField{'reason', 'branch has no committed head yet'},
+		]))
+		return
 	}
 	update := db.rebuild_indexes_at_branch(ctx.branch, table_names, storage.ChunkConfig.default())!
 	db.checkpoint()!

@@ -76,6 +76,7 @@ pub:
 	embedding_profile       string
 	json_field_type         ColumnType
 	stores_row              bool
+	stored_columns          []string
 }
 
 pub struct IndexedSchemaView {
@@ -347,6 +348,7 @@ pub fn SchemaIndexDef.new(name string, column string) !SchemaIndexDef {
 		embedding_profile:       ''
 		json_field_type:         .string_
 		stores_row:              false
+		stored_columns:          []string{}
 	}
 }
 
@@ -371,7 +373,16 @@ pub fn SchemaIndexDef.covering(name string, column string) !SchemaIndexDef {
 		embedding_profile:       ''
 		json_field_type:         .string_
 		stores_row:              true
+		stored_columns:          []string{}
 	}
+}
+
+pub fn SchemaIndexDef.covering_projected(name string, column string, stored_columns []string) !SchemaIndexDef {
+	if stored_columns.len == 0 {
+		return error('projected covering index must store at least one column')
+	}
+	mut index := SchemaIndexDef.covering(name, column)!
+	return index.with_stored_columns(stored_columns)!
 }
 
 pub fn SchemaIndexDef.json_path(name string, column string, json_field string, json_field_type ColumnType) !SchemaIndexDef {
@@ -710,6 +721,55 @@ pub fn (index SchemaIndexDef) is_fts() bool {
 
 pub fn (index SchemaIndexDef) is_embedding() bool {
 	return index.embedding_profile.len > 0
+}
+
+pub fn (index SchemaIndexDef) stores_full_row() bool {
+	return index.stores_row && index.stored_columns.len == 0
+}
+
+pub fn (index SchemaIndexDef) stores_projected_row() bool {
+	return index.stores_row && index.stored_columns.len > 0
+}
+
+pub fn (index SchemaIndexDef) can_cover_columns(columns []string) bool {
+	if !index.stores_row {
+		return false
+	}
+	if index.stored_columns.len == 0 || columns.len == 0 {
+		return true
+	}
+	mut stored := map[string]bool{}
+	for name in index.stored_columns {
+		stored[name] = true
+	}
+	for name in columns {
+		if name !in stored {
+			return false
+		}
+	}
+	return true
+}
+
+pub fn (index SchemaIndexDef) with_stored_columns(columns []string) !SchemaIndexDef {
+	if !index.stores_row {
+		return error('stored columns require a covering index: ${index.name}')
+	}
+	mut seen := map[string]bool{}
+	mut stored := []string{cap: columns.len}
+	for name in columns {
+		if name.len == 0 {
+			return error('stored column cannot be empty: ${index.name}')
+		}
+		if name in seen {
+			continue
+		}
+		seen[name] = true
+		stored << name
+	}
+	return SchemaIndexDef{
+		...index
+		stored_columns: stored
+	}
 }
 
 pub fn (index SchemaIndexDef) is_field_selector() bool {

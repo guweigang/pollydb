@@ -183,6 +183,12 @@ fn test_cli_new_strips_double_dash() {
 	assert cli.args == ['status', '/tmp/example']
 }
 
+fn test_cli_new_extracts_json_flag() {
+	cli := PollyDbCli.new(['preview-schema-update', '--json', './schema.yml'])
+	assert cli.json_output
+	assert cli.args == ['preview-schema-update', './schema.yml']
+}
+
 fn test_cli_title_renders_without_panicking() {
 	title := cli_title('Table')
 	assert title.len > 0
@@ -220,6 +226,33 @@ fn test_usage_includes_scan_index_after_and_before() {
 	assert cli.usage().contains('scan-index-before')
 }
 
+fn test_run_register_table_on_empty_branch_does_not_rebuild_indexes() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-cli-register-table-empty-branch')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	_ := storage.PersistentDatabase.init(dir, 'main') or { panic(err) }
+	mut cli := PollyDbCli.new(['create-table', dir, 'users', 'id', 'id:string,email:string', '-'])
+	cli.run_register_table() or { panic(err) }
+
+	mut reopened := storage.PersistentDatabase.open(dir, 'main') or { panic(err) }
+	defer {
+		reopened.close() or {}
+	}
+	assert reopened.has_table('users')
+	assert reopened.branch_names_committed().len == 0
+}
+
+fn test_run_rebuild_indexes_on_empty_branch_is_noop() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-cli-rebuild-indexes-empty-branch')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	_ := storage.PersistentDatabase.init(dir, 'main') or { panic(err) }
+	mut cli := PollyDbCli.new(['rebuild-indexes', dir])
+	cli.run_rebuild_indexes() or { panic(err) }
+}
+
 fn test_usage_includes_aggregate_commands() {
 	cli := PollyDbCli.new([])
 	assert cli.usage().contains('count-rows')
@@ -242,6 +275,7 @@ fn test_usage_includes_create_table_alias() {
 fn test_usage_includes_rebuild_indexes() {
 	cli := PollyDbCli.new([])
 	assert cli.usage().contains('rebuild-indexes')
+	assert cli.usage().contains('--json')
 }
 
 fn test_parse_aggregate_projection_refresh_policy() {

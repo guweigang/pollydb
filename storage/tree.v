@@ -37,32 +37,32 @@ pub:
 
 pub fn Node.new_leaf(data []u8, item_count int, min_key []u8, max_key []u8) Node {
 	return Node{
-		kind: .leaf
-		level: 0
+		kind:       .leaf
+		level:      0
 		item_count: item_count
-		cid: cid_for_bytes(data)
-		data: data
-		min_key: min_key.clone()
-		max_key: max_key.clone()
+		cid:        cid_for_bytes(data)
+		data:       data
+		min_key:    min_key.clone()
+		max_key:    max_key.clone()
 	}
 }
 
 pub fn Node.new_internal(level int, data []u8, item_count int, min_key []u8, max_key []u8) Node {
 	return Node{
-		kind: .internal
-		level: level
+		kind:       .internal
+		level:      level
 		item_count: item_count
-		cid: cid_for_bytes(data)
-		data: data
-		min_key: min_key.clone()
-		max_key: max_key.clone()
+		cid:        cid_for_bytes(data)
+		data:       data
+		min_key:    min_key.clone()
+		max_key:    max_key.clone()
 	}
 }
 
 pub fn (n Node) to_ref() NodeRef {
 	return NodeRef{
-		key: n.min_key.clone()
-		cid: n.cid
+		key:        n.min_key.clone()
+		cid:        n.cid
 		item_count: n.item_count
 	}
 }
@@ -102,13 +102,13 @@ pub:
 
 pub struct TreeBuildStageTimings {
 pub:
-	leaf_ms          i64
-	leaf_chunk_ms    i64
-	leaf_node_ms     i64
+	leaf_ms                i64
+	leaf_chunk_ms          i64
+	leaf_node_ms           i64
 	leaf_node_serialize_ms i64
-	leaf_node_cid_ms i64
-	leaf_node_add_ms i64
-	internal_ms      i64
+	leaf_node_cid_ms       i64
+	leaf_node_add_ms       i64
+	internal_ms            i64
 }
 
 pub struct TreeBuildResult {
@@ -118,11 +118,11 @@ pub:
 }
 
 struct TreeLeafBuildTimings {
-	chunk_ms i64
-	node_ms  i64
+	chunk_ms          i64
+	node_ms           i64
 	node_serialize_ms i64
-	node_cid_ms i64
-	node_add_ms i64
+	node_cid_ms       i64
+	node_add_ms       i64
 }
 
 struct TreeLeafBuildResult {
@@ -136,13 +136,13 @@ pub:
 	end   []u8
 	limit int
 mut:
-	path              []TreePathStep
-	leaf_items        []KVPair
-	item_idx          int
-	yielded           int
-	started           bool
-	current_item      KVPair
-	has_current_item  bool
+	path             []TreePathStep
+	leaf_items       []KVPair
+	item_idx         int
+	yielded          int
+	started          bool
+	current_item     KVPair
+	has_current_item bool
 }
 
 pub struct TreeReverseIterator {
@@ -221,7 +221,7 @@ struct TreePathStep {
 struct MutationLeafGroup {
 mut:
 	anchor_key []u8
-	keys       []string
+	mutations  []Mutation
 }
 
 struct TreeBoundMatch {
@@ -263,7 +263,7 @@ mut:
 
 pub fn TreeBuilder.new(cfg ChunkConfig) TreeBuilder {
 	return TreeBuilder{
-		cfg: cfg
+		cfg:   cfg
 		nodes: map[string]Node{}
 	}
 }
@@ -277,7 +277,6 @@ struct ByteWriter {
 mut:
 	buf []u8
 }
-
 
 fn (mut w ByteWriter) write_u8(v u8) {
 	w.buf << v
@@ -426,7 +425,7 @@ pub fn KVPair.from_leaf_record(data []u8) !KVPair {
 		return error('leaf record length mismatch')
 	}
 	return KVPair{
-		key: data[8..8 + key_len].clone()
+		key:   data[8..8 + key_len].clone()
 		value: data[8 + key_len..].clone()
 	}
 }
@@ -516,12 +515,12 @@ fn NodeHeader.from_bytes(data []u8) !NodeHeader {
 		cursor += 4
 	}
 	return NodeHeader{
-		kind: kind
-		level: level
-		item_count: item_count
+		kind:        kind
+		level:       level
+		item_count:  item_count
 		key_offsets: key_offsets
 		val_offsets: val_offsets
-		raw: data[header_len..].clone()
+		raw:         data[header_len..].clone()
 	}
 }
 
@@ -544,13 +543,13 @@ fn NodeLayout.from_bytes(data []u8) !NodeLayout {
 		return error('node offsets truncated')
 	}
 	return NodeLayout{
-		kind: kind
-		level: level
-		item_count: item_count
-		data: data
+		kind:             kind
+		level:            level
+		item_count:       item_count
+		data:             data
 		key_offsets_base: node_header_base_len
 		val_offsets_base: node_header_base_len + item_count * 4
-		raw_base: header_len
+		raw_base:         header_len
 	}
 }
 
@@ -630,7 +629,7 @@ fn (layout NodeLayout) find_leaf_item(key []u8) !KVPair {
 		cmp := compare_key_bytes(item_key, key)
 		if cmp == 0 {
 			return KVPair{
-				key: item_key.clone()
+				key:   item_key.clone()
 				value: layout.value_view(idx).clone()
 			}
 		}
@@ -649,7 +648,7 @@ fn (layout NodeLayout) lower_bound_leaf_item(key []u8) !KVPair {
 		item_key := layout.key_view(idx)
 		if compare_key_bytes(item_key, key) >= 0 {
 			return KVPair{
-				key: item_key.clone()
+				key:   item_key.clone()
 				value: layout.value_view(idx).clone()
 			}
 		}
@@ -699,8 +698,8 @@ pub fn NodeRef.from_record(data []u8) !NodeRef {
 		return error('internal record length mismatch')
 	}
 	return NodeRef{
-		key: data[12..12 + key_len].clone()
-		cid: data[12 + key_len..].bytestr()
+		key:        data[12..12 + key_len].clone()
+		cid:        data[12 + key_len..].bytestr()
 		item_count: item_count
 	}
 }
@@ -731,7 +730,7 @@ fn (cfg ChunkConfig) chunk_record_stream(records [][]u8) ![]ChunkGroup {
 		if should_split {
 			groups << ChunkGroup{
 				start: group_start
-				end: record_idx + 1
+				end:   record_idx + 1
 			}
 			group_start = record_idx + 1
 			hash = 0
@@ -742,7 +741,7 @@ fn (cfg ChunkConfig) chunk_record_stream(records [][]u8) ![]ChunkGroup {
 	if group_start < records.len {
 		groups << ChunkGroup{
 			start: group_start
-			end: records.len
+			end:   records.len
 		}
 	}
 
@@ -762,12 +761,14 @@ fn (cfg ChunkConfig) chunk_kvpair_stream(items []KVPair) ![]ChunkGroup {
 		mut should_split := false
 		hash = rolling_hash_u32(hash, u32(item.key.len))
 		bytes_since_cut += 4
-		if bytes_since_cut >= cfg.min_size && ((bytes_since_cut >= cfg.max_size) || (hash & cfg.mask) == 0) {
+		if bytes_since_cut >= cfg.min_size
+			&& (bytes_since_cut >= cfg.max_size || (hash & cfg.mask) == 0) {
 			should_split = true
 		}
 		hash = rolling_hash_u32(hash, u32(item.value.len))
 		bytes_since_cut += 4
-		if bytes_since_cut >= cfg.min_size && ((bytes_since_cut >= cfg.max_size) || (hash & cfg.mask) == 0) {
+		if bytes_since_cut >= cfg.min_size
+			&& (bytes_since_cut >= cfg.max_size || (hash & cfg.mask) == 0) {
 			should_split = true
 		}
 		if !should_split {
@@ -797,7 +798,7 @@ fn (cfg ChunkConfig) chunk_kvpair_stream(items []KVPair) ![]ChunkGroup {
 		if should_split {
 			groups << ChunkGroup{
 				start: group_start
-				end: item_idx + 1
+				end:   item_idx + 1
 			}
 			group_start = item_idx + 1
 			hash = 0
@@ -807,7 +808,7 @@ fn (cfg ChunkConfig) chunk_kvpair_stream(items []KVPair) ![]ChunkGroup {
 	if group_start < items.len {
 		groups << ChunkGroup{
 			start: group_start
-			end: items.len
+			end:   items.len
 		}
 	}
 	return groups
@@ -833,7 +834,7 @@ fn (cfg ChunkConfig) chunk_kvpair_stream_bulk(items []KVPair) ![]ChunkGroup {
 		}
 		groups << ChunkGroup{
 			start: group_start
-			end: item_idx + 1
+			end:   item_idx + 1
 		}
 		group_start = item_idx + 1
 		bytes_since_cut = 0
@@ -841,7 +842,7 @@ fn (cfg ChunkConfig) chunk_kvpair_stream_bulk(items []KVPair) ![]ChunkGroup {
 	if group_start < items.len {
 		groups << ChunkGroup{
 			start: group_start
-			end: items.len
+			end:   items.len
 		}
 	}
 	return groups
@@ -854,7 +855,7 @@ fn pairwise_groups(count int) []ChunkGroup {
 		end := if start + 2 < count { start + 2 } else { count }
 		groups << ChunkGroup{
 			start: start
-			end: end
+			end:   end
 		}
 		start = end
 	}
@@ -878,13 +879,13 @@ pub fn Node.from_data_with_cid(data []u8, cid string) !Node {
 	min_key := header.key_at(0)
 	max_key := header.key_at(header.item_count - 1)
 	return Node{
-		kind: header.kind
-		level: header.level
+		kind:       header.kind
+		level:      header.level
 		item_count: header.item_count
-		cid: cid
-		data: data
-		min_key: min_key
-		max_key: max_key
+		cid:        cid
+		data:       data
+		min_key:    min_key
+		max_key:    max_key
 	}
 }
 
@@ -896,7 +897,7 @@ pub fn (node Node) leaf_items() ![]KVPair {
 	mut items := []KVPair{cap: header.item_count}
 	for idx in 0 .. header.item_count {
 		items << KVPair{
-			key: header.key_at(idx)
+			key:   header.key_at(idx)
 			value: header.value_at(idx)
 		}
 	}
@@ -1032,13 +1033,13 @@ fn (mut builder TreeBuilder) build_leaf_level_with_chunker(items []KVPair, bulk 
 			cid = cid_for_bytes(data)
 		}
 		node := Node{
-			kind: .leaf
-			level: 0
+			kind:       .leaf
+			level:      0
 			item_count: chunk_items.len
-			cid: cid
-			data: data
-			min_key: chunk_items[0].key.clone()
-			max_key: chunk_items[chunk_items.len - 1].key.clone()
+			cid:        cid
+			data:       data
+			min_key:    chunk_items[0].key.clone()
+			max_key:    chunk_items[chunk_items.len - 1].key.clone()
 		}
 		if detailed {
 			mut add_sw := time.new_stopwatch()
@@ -1049,13 +1050,13 @@ fn (mut builder TreeBuilder) build_leaf_level_with_chunker(items []KVPair, bulk 
 		}
 	}
 	return TreeLeafBuildResult{
-		refs: refs
+		refs:    refs
 		timings: TreeLeafBuildTimings{
-			chunk_ms: chunk_ms
-			node_ms: node_serialize_ms + node_cid_ms + node_add_ms
+			chunk_ms:          chunk_ms
+			node_ms:           node_serialize_ms + node_cid_ms + node_add_ms
 			node_serialize_ms: node_serialize_ms
-			node_cid_ms: node_cid_ms
-			node_add_ms: node_add_ms
+			node_cid_ms:       node_cid_ms
+			node_add_ms:       node_add_ms
 		}
 	}
 }
@@ -1077,7 +1078,8 @@ fn (mut builder TreeBuilder) build_internal_level(level int, children []NodeRef)
 		for child in chunk_children {
 			total_items += child.item_count
 		}
-		node := Node.new_internal(level, data, total_items, chunk_children[0].key, chunk_children[chunk_children.len - 1].key)
+		node := Node.new_internal(level, data, total_items, chunk_children[0].key,
+			chunk_children[chunk_children.len - 1].key)
 		refs << builder.add_node(node)
 	}
 	return refs
@@ -1133,18 +1135,18 @@ fn (mut builder TreeBuilder) build_sorted_with_timings_mode(sorted []KVPair, bul
 		level++
 	}
 	return TreeBuildResult{
-		tree: Tree{
-			root: refs[0]
+		tree:    Tree{
+			root:  refs[0]
 			nodes: builder.nodes
 		}
 		timings: TreeBuildStageTimings{
-			leaf_ms: leaf_ms
-			leaf_chunk_ms: leaf_result.timings.chunk_ms
-			leaf_node_ms: leaf_result.timings.node_ms
+			leaf_ms:                leaf_ms
+			leaf_chunk_ms:          leaf_result.timings.chunk_ms
+			leaf_node_ms:           leaf_result.timings.node_ms
 			leaf_node_serialize_ms: leaf_result.timings.node_serialize_ms
-			leaf_node_cid_ms: leaf_result.timings.node_cid_ms
-			leaf_node_add_ms: leaf_result.timings.node_add_ms
-			internal_ms: internal_ms
+			leaf_node_cid_ms:       leaf_result.timings.node_cid_ms
+			leaf_node_add_ms:       leaf_result.timings.node_add_ms
+			internal_ms:            internal_ms
 		}
 	}
 }
@@ -1169,6 +1171,57 @@ pub fn Tree.build_sorted_bulk_with_timings(items []KVPair, cfg ChunkConfig) !Tre
 	return builder.build_sorted_bulk_with_timings(items)
 }
 
+pub fn (tree Tree) append_sorted_bulk_with_timings(items []KVPair, cfg ChunkConfig) !TreeBuildResult {
+	if items.len == 0 {
+		return TreeBuildResult{
+			tree:    tree
+			timings: TreeBuildStageTimings{}
+		}
+	}
+	if tree.root.cid.len == 0 {
+		return Tree.build_sorted_bulk_with_timings(items, cfg)
+	}
+	root_node := tree.root_node()!
+	if compare_key_bytes(root_node.max_key, items[0].key) >= 0 {
+		return error('append items must be greater than the current tree max key')
+	}
+	mut builder := TreeBuilder{
+		cfg:   cfg
+		nodes: tree.nodes.clone()
+	}
+	leaf_result := builder.build_leaf_level_bulk_with_timings(items)!
+	mut refs := tree.leaf_refs()!
+	refs << leaf_result.refs
+	leaf_ms := leaf_result.timings.chunk_ms + leaf_result.timings.node_ms
+	mut level := 1
+	mut internal_ms := i64(0)
+	for refs.len > 1 {
+		if builder.cfg.detailed_timings {
+			mut internal_sw := time.new_stopwatch()
+			refs = builder.build_internal_level(level, refs)!
+			internal_ms += internal_sw.elapsed().milliseconds()
+		} else {
+			refs = builder.build_internal_level(level, refs)!
+		}
+		level++
+	}
+	return TreeBuildResult{
+		tree:    Tree{
+			root:  refs[0]
+			nodes: builder.nodes
+		}
+		timings: TreeBuildStageTimings{
+			leaf_ms:                leaf_ms
+			leaf_chunk_ms:          leaf_result.timings.chunk_ms
+			leaf_node_ms:           leaf_result.timings.node_ms
+			leaf_node_serialize_ms: leaf_result.timings.node_serialize_ms
+			leaf_node_cid_ms:       leaf_result.timings.node_cid_ms
+			leaf_node_add_ms:       leaf_result.timings.node_add_ms
+			internal_ms:            internal_ms
+		}
+	}
+}
+
 pub fn build_tree(items []KVPair, cfg ChunkConfig) !Tree {
 	return Tree.build(items, cfg)
 }
@@ -1178,7 +1231,7 @@ pub fn Tree.load(root_cid string, mut node_store NodeStore) !Tree {
 	root := node_store.get(root_cid)!
 	Tree.load_reachable(root, mut node_store, mut nodes)!
 	return Tree{
-		root: root.to_ref()
+		root:  root.to_ref()
 		nodes: nodes
 	}
 }
@@ -1198,24 +1251,22 @@ fn Tree.load_reachable(node Node, mut node_store NodeStore, mut nodes map[string
 }
 
 pub fn (tree Tree) root_node() !Node {
-	node := tree.nodes[tree.root.cid] or {
-		return error('root node not found: ${tree.root.cid}')
-	}
+	node := tree.nodes[tree.root.cid] or { return error('root node not found: ${tree.root.cid}') }
 	return node
 }
 
 pub fn Mutation.put(key []u8, value []u8) Mutation {
 	return Mutation{
-		op: .put
-		key: key.clone()
+		op:    .put
+		key:   key.clone()
 		value: value.clone()
 	}
 }
 
 pub fn Mutation.delete(key []u8) Mutation {
 	return Mutation{
-		op: .delete
-		key: key.clone()
+		op:    .delete
+		key:   key.clone()
 		value: []u8{}
 	}
 }
@@ -1274,10 +1325,10 @@ pub fn Tree.lookup_in_store_with_stats(root_cid string, key []u8, mut node_store
 	for item in items {
 		if compare_key_bytes(item.key, key) == 0 {
 			return StoreLookupResult{
-				item: item
+				item:  item
 				stats: StoreLookupStats{
-					path_depth: path_depth
-					nodes_read: nodes_read
+					path_depth:      path_depth
+					nodes_read:      nodes_read
 					leaf_item_count: items.len
 				}
 			}
@@ -1308,10 +1359,10 @@ pub fn Tree.lookup_in_byte_store_with_stats(root_cid string, key []u8, mut node_
 		if layout.kind == .leaf {
 			item := layout.find_leaf_item(key)!
 			return StoreLookupResult{
-				item: item
+				item:  item
 				stats: StoreLookupStats{
-					path_depth: path_depth
-					nodes_read: nodes_read
+					path_depth:      path_depth
+					nodes_read:      nodes_read
 					leaf_item_count: layout.item_count
 				}
 			}
@@ -1335,8 +1386,8 @@ fn Tree.byte_store_path_to_leaf(root_cid []u8, key []u8, mut node_store NodeByte
 		nodes_read++
 		if layout.kind == .leaf {
 			path << ByteStorePathStep{
-				layout: layout
-				child_cids: [][]u8{}
+				layout:       layout
+				child_cids:   [][]u8{}
 				selected_idx: -1
 			}
 			return path, nodes_read
@@ -1347,8 +1398,8 @@ fn Tree.byte_store_path_to_leaf(root_cid []u8, key []u8, mut node_store NodeByte
 		}
 		selected_idx := layout.choose_child_index_for_key(key)
 		path << ByteStorePathStep{
-			layout: layout
-			child_cids: child_cids
+			layout:       layout
+			child_cids:   child_cids
 			selected_idx: selected_idx
 		}
 		current_cid = child_cids[selected_idx].clone()
@@ -1366,8 +1417,8 @@ fn Tree.byte_store_descend_leftmost(root_cid []u8, prefix []ByteStorePathStep, m
 		nodes_read++
 		if layout.kind == .leaf {
 			path << ByteStorePathStep{
-				layout: layout
-				child_cids: [][]u8{}
+				layout:       layout
+				child_cids:   [][]u8{}
 				selected_idx: -1
 			}
 			return path, nodes_read
@@ -1377,8 +1428,8 @@ fn Tree.byte_store_descend_leftmost(root_cid []u8, prefix []ByteStorePathStep, m
 			child_cids << layout.child_cid_view(idx)!.clone()
 		}
 		path << ByteStorePathStep{
-			layout: layout
-			child_cids: child_cids
+			layout:       layout
+			child_cids:   child_cids
 			selected_idx: 0
 		}
 		current_cid = child_cids[0].clone()
@@ -1395,8 +1446,8 @@ fn Tree.byte_store_descend_leftmost_append(root_cid []u8, mut path []ByteStorePa
 		nodes_read++
 		if layout.kind == .leaf {
 			path << ByteStorePathStep{
-				layout: layout
-				child_cids: [][]u8{}
+				layout:       layout
+				child_cids:   [][]u8{}
 				selected_idx: -1
 			}
 			return nodes_read
@@ -1406,8 +1457,8 @@ fn Tree.byte_store_descend_leftmost_append(root_cid []u8, mut path []ByteStorePa
 			child_cids << layout.child_cid_view(idx)!.clone()
 		}
 		path << ByteStorePathStep{
-			layout: layout
-			child_cids: child_cids
+			layout:       layout
+			child_cids:   child_cids
 			selected_idx: 0
 		}
 		current_cid = child_cids[0].clone()
@@ -1425,8 +1476,8 @@ fn Tree.byte_store_descend_rightmost(root_cid []u8, prefix []ByteStorePathStep, 
 		nodes_read++
 		if layout.kind == .leaf {
 			path << ByteStorePathStep{
-				layout: layout
-				child_cids: [][]u8{}
+				layout:       layout
+				child_cids:   [][]u8{}
 				selected_idx: -1
 			}
 			return path, nodes_read
@@ -1437,8 +1488,8 @@ fn Tree.byte_store_descend_rightmost(root_cid []u8, prefix []ByteStorePathStep, 
 		}
 		last_idx := child_cids.len - 1
 		path << ByteStorePathStep{
-			layout: layout
-			child_cids: child_cids
+			layout:       layout
+			child_cids:   child_cids
 			selected_idx: last_idx
 		}
 		current_cid = child_cids[last_idx].clone()
@@ -1455,8 +1506,8 @@ fn Tree.byte_store_descend_rightmost_append(root_cid []u8, mut path []ByteStoreP
 		nodes_read++
 		if layout.kind == .leaf {
 			path << ByteStorePathStep{
-				layout: layout
-				child_cids: [][]u8{}
+				layout:       layout
+				child_cids:   [][]u8{}
 				selected_idx: -1
 			}
 			return nodes_read
@@ -1467,8 +1518,8 @@ fn Tree.byte_store_descend_rightmost_append(root_cid []u8, mut path []ByteStoreP
 		}
 		last_idx := child_cids.len - 1
 		path << ByteStorePathStep{
-			layout: layout
-			child_cids: child_cids
+			layout:       layout
+			child_cids:   child_cids
 			selected_idx: last_idx
 		}
 		current_cid = child_cids[last_idx].clone()
@@ -1484,12 +1535,13 @@ fn Tree.byte_store_next_leaf_path(mut path []ByteStorePathStep, mut node_store N
 			continue
 		}
 		path[depth] = ByteStorePathStep{
-			layout: step.layout
-			child_cids: step.child_cids
+			layout:       step.layout
+			child_cids:   step.child_cids
 			selected_idx: next_idx
 		}
 		path = unsafe { path[..depth + 1] }
-		return Tree.byte_store_descend_leftmost_append(step.child_cids[next_idx], mut path, mut node_store)
+		return Tree.byte_store_descend_leftmost_append(step.child_cids[next_idx], mut path, mut
+			node_store)
 	}
 	return error('no next leaf')
 }
@@ -1502,12 +1554,13 @@ fn Tree.byte_store_prev_leaf_path(mut path []ByteStorePathStep, mut node_store N
 			continue
 		}
 		path[depth] = ByteStorePathStep{
-			layout: step.layout
-			child_cids: step.child_cids
+			layout:       step.layout
+			child_cids:   step.child_cids
 			selected_idx: prev_idx
 		}
 		path = unsafe { path[..depth + 1] }
-		return Tree.byte_store_descend_rightmost_append(step.child_cids[prev_idx], mut path, mut node_store)
+		return Tree.byte_store_descend_rightmost_append(step.child_cids[prev_idx], mut path, mut
+			node_store)
 	}
 	return error('no previous leaf')
 }
@@ -1524,10 +1577,10 @@ pub fn Tree.lower_bound_in_byte_store_with_stats(root_cid string, key []u8, mut 
 			continue
 		}
 		return StoreLookupResult{
-			item: item
+			item:  item
 			stats: StoreLookupStats{
-				path_depth: path.len
-				nodes_read: nodes_read
+				path_depth:      path.len
+				nodes_read:      nodes_read
 				leaf_item_count: leaf.item_count
 			}
 		}
@@ -1536,7 +1589,8 @@ pub fn Tree.lower_bound_in_byte_store_with_stats(root_cid string, key []u8, mut 
 }
 
 pub fn Tree.ordered_scan_in_byte_store(root_cid string, start_key []u8, end_key []u8, limit int, reverse bool, mut node_store NodeByteStore) ![]KVPair {
-	items, _ := Tree.ordered_scan_in_byte_store_with_stats(root_cid, start_key, end_key, limit, reverse, mut node_store)!
+	items, _ := Tree.ordered_scan_in_byte_store_with_stats(root_cid, start_key, end_key, limit,
+		reverse, mut node_store)!
 	return items
 }
 
@@ -1549,9 +1603,11 @@ pub fn Tree.ordered_scan_in_byte_store_with_stats(root_cid string, start_key []u
 	if reverse {
 		mut path := []ByteStorePathStep{}
 		if end_key.len == 0 {
-			path, stats.nodes_read = Tree.byte_store_descend_rightmost(root_cid.bytes(), []ByteStorePathStep{}, mut node_store)!
+			path, stats.nodes_read = Tree.byte_store_descend_rightmost(root_cid.bytes(),
+				[]ByteStorePathStep{}, mut node_store)!
 		} else {
-			path, stats.nodes_read = Tree.byte_store_path_to_leaf(root_cid.bytes(), end_key, mut node_store)!
+			path, stats.nodes_read = Tree.byte_store_path_to_leaf(root_cid.bytes(), end_key, mut
+				node_store)!
 		}
 		mut seek_key := end_key.clone()
 		mut started := end_key.len == 0
@@ -1571,7 +1627,7 @@ pub fn Tree.ordered_scan_in_byte_store_with_stats(root_cid string, start_key []u
 					return matches, stats
 				}
 				matches << KVPair{
-					key: item_key.clone()
+					key:   item_key.clone()
 					value: leaf.value_view(idx).clone()
 				}
 				if limit > 0 && matches.len >= limit {
@@ -1586,9 +1642,11 @@ pub fn Tree.ordered_scan_in_byte_store_with_stats(root_cid string, start_key []u
 	}
 	mut path := []ByteStorePathStep{}
 	if start_key.len == 0 {
-		path, stats.nodes_read = Tree.byte_store_descend_leftmost(root_cid.bytes(), []ByteStorePathStep{}, mut node_store)!
+		path, stats.nodes_read = Tree.byte_store_descend_leftmost(root_cid.bytes(),
+			[]ByteStorePathStep{}, mut node_store)!
 	} else {
-		path, stats.nodes_read = Tree.byte_store_path_to_leaf(root_cid.bytes(), start_key, mut node_store)!
+		path, stats.nodes_read = Tree.byte_store_path_to_leaf(root_cid.bytes(), start_key, mut
+			node_store)!
 	}
 	mut seek_key := start_key.clone()
 	mut started := start_key.len == 0
@@ -1608,7 +1666,7 @@ pub fn Tree.ordered_scan_in_byte_store_with_stats(root_cid string, start_key []u
 				return matches, stats
 			}
 			matches << KVPair{
-				key: item_key.clone()
+				key:   item_key.clone()
 				value: leaf.value_view(idx).clone()
 			}
 			if limit > 0 && matches.len >= limit {
@@ -1642,16 +1700,14 @@ pub fn Tree.prefix_scan_in_byte_store(root_cid string, start_key []u8, prefix []
 				return matches
 			}
 			matches << KVPair{
-				key: item_key.clone()
+				key:   item_key.clone()
 				value: leaf.value_view(idx).clone()
 			}
 			if limit > 0 && matches.len >= limit {
 				return matches
 			}
 		}
-		_ = Tree.byte_store_next_leaf_path(mut path, mut node_store) or {
-			return matches
-		}
+		_ = Tree.byte_store_next_leaf_path(mut path, mut node_store) or { return matches }
 		seek_key = prefix.clone()
 	}
 	return matches
@@ -1680,22 +1736,22 @@ pub fn Tree.suffix_scan_in_byte_store(root_cid string, start_key []u8, prefix []
 				return matches
 			}
 		}
-		_ = Tree.byte_store_next_leaf_path(mut path, mut node_store) or {
-			return matches
-		}
+		_ = Tree.byte_store_next_leaf_path(mut path, mut node_store) or { return matches }
 		seek_key = prefix.clone()
 	}
 	return matches
 }
 
 pub fn Tree.count_range_in_byte_store(root_cid string, start_key []u8, end_key []u8, mut node_store NodeByteStore) !int {
-	return Tree.count_range_node_in_byte_store(root_cid.bytes(), start_key, end_key, []u8{}, mut node_store)
+	return Tree.count_range_node_in_byte_store(root_cid.bytes(), start_key, end_key, []u8{}, mut
+		node_store)
 }
 
 pub fn Tree.sum_i64_column_range_in_byte_store(root_cid string, start_key []u8, end_key []u8, codec TypedRowCodec, column_name string, mut node_store NodeByteStore) !i64 {
 	mut path := []ByteStorePathStep{}
 	if start_key.len == 0 {
-		path, _ = Tree.byte_store_descend_leftmost(root_cid.bytes(), []ByteStorePathStep{}, mut node_store)!
+		path, _ = Tree.byte_store_descend_leftmost(root_cid.bytes(), []ByteStorePathStep{}, mut
+			node_store)!
 	} else {
 		path, _ = Tree.byte_store_path_to_leaf(root_cid.bytes(), start_key, mut node_store)!
 	}
@@ -1717,9 +1773,7 @@ pub fn Tree.sum_i64_column_range_in_byte_store(root_cid string, start_key []u8, 
 			}
 			total += codec.decode_i64_column(leaf.value_view(idx), column_name)!
 		}
-		_ = Tree.byte_store_next_leaf_path(mut path, mut node_store) or {
-			return total
-		}
+		_ = Tree.byte_store_next_leaf_path(mut path, mut node_store) or { return total }
 		seek_key = []u8{}
 	}
 	return total
@@ -1732,7 +1786,8 @@ fn Tree.count_range_node_in_byte_store(current_cid []u8, start_key []u8, end_key
 		mut started := start_key.len == 0
 		mut start_idx := 0
 		if !started {
-			for start_idx < layout.item_count && compare_key_bytes(layout.key_view(start_idx), start_key) < 0 {
+			for start_idx < layout.item_count
+				&& compare_key_bytes(layout.key_view(start_idx), start_key) < 0 {
 				start_idx++
 			}
 		}
@@ -1769,12 +1824,13 @@ fn Tree.count_range_node_in_byte_store(current_cid []u8, start_key []u8, end_key
 		if child_upper.len > 0 && compare_key_bytes(child_upper, start_key) <= 0 {
 			continue
 		}
-		if compare_key_bytes(child_lower, start_key) >= 0
-			&& (end_key.len == 0 || (child_upper.len > 0 && compare_key_bytes(child_upper, end_key) <= 0)) {
+		if compare_key_bytes(child_lower, start_key) >= 0 && (end_key.len == 0
+			|| (child_upper.len > 0 && compare_key_bytes(child_upper, end_key) <= 0)) {
 			total += layout.child_item_count(idx)!
 			continue
 		}
-		total += Tree.count_range_node_in_byte_store(layout.child_cid_view(idx)!, start_key, end_key, child_upper.clone(), mut node_store)!
+		total += Tree.count_range_node_in_byte_store(layout.child_cid_view(idx)!, start_key,
+			end_key, child_upper.clone(), mut node_store)!
 	}
 	return total
 }
@@ -1785,15 +1841,14 @@ pub fn Tree.next_leaf_start_keys_in_byte_store(root_cid string, start_key []u8, 
 	}
 	mut path := []ByteStorePathStep{}
 	if start_key.len == 0 {
-		path, _ = Tree.byte_store_descend_leftmost(root_cid.bytes(), []ByteStorePathStep{}, mut node_store)!
+		path, _ = Tree.byte_store_descend_leftmost(root_cid.bytes(), []ByteStorePathStep{}, mut
+			node_store)!
 	} else {
 		path, _ = Tree.byte_store_path_to_leaf(root_cid.bytes(), start_key, mut node_store)!
 	}
 	mut starts := [][]u8{}
 	for {
-		_ = Tree.byte_store_next_leaf_path(mut path, mut node_store) or {
-			return starts
-		}
+		_ = Tree.byte_store_next_leaf_path(mut path, mut node_store) or { return starts }
 		leaf := path[path.len - 1].layout
 		if leaf.item_count == 0 {
 			continue
@@ -1812,9 +1867,7 @@ pub fn Tree.lookup_in_persistent_store_with_stats(root_cid string, key []u8, mut
 }
 
 pub fn (tree Tree) has(key []u8) bool {
-	_ := tree.get(key) or {
-		return false
-	}
+	_ := tree.get(key) or { return false }
 	return true
 }
 
@@ -1832,24 +1885,24 @@ pub fn (tree Tree) key_stats(key []u8) !TreeKeyStats {
 	path := tree.path_to_leaf(key)!
 	leaf_items := path[path.len - 1].node.leaf_items()!
 	return TreeKeyStats{
-		path_depth: path.len
+		path_depth:      path.len
 		leaf_item_count: leaf_items.len
 	}
 }
 
 pub fn TreeIterator.new(tree Tree, start []u8, end []u8, limit int) !TreeIterator {
 	mut iter := TreeIterator{
-		tree: tree
-		end: end.clone()
-		limit: limit
-		path: []TreePathStep{}
-		leaf_items: []KVPair{}
-			item_idx: 0
-			yielded: 0
-			started: false
-			current_item: KVPair{}
-			has_current_item: false
-		}
+		tree:             tree
+		end:              end.clone()
+		limit:            limit
+		path:             []TreePathStep{}
+		leaf_items:       []KVPair{}
+		item_idx:         0
+		yielded:          0
+		started:          false
+		current_item:     KVPair{}
+		has_current_item: false
+	}
 	iter.seek(start)!
 	return iter
 }
@@ -1867,7 +1920,8 @@ pub fn (mut iter TreeIterator) seek(start []u8) ! {
 	iter.current_item = KVPair{}
 	iter.has_current_item = false
 	if start.len > 0 {
-		for iter.item_idx < iter.leaf_items.len && compare_key_bytes(iter.leaf_items[iter.item_idx].key, start) < 0 {
+		for iter.item_idx < iter.leaf_items.len
+			&& compare_key_bytes(iter.leaf_items[iter.item_idx].key, start) < 0 {
 			iter.item_idx++
 		}
 	}
@@ -1892,9 +1946,7 @@ pub fn (mut iter TreeIterator) peek() !KVPair {
 	mut item_idx := iter.item_idx
 	for {
 		if item_idx >= leaf_items.len {
-			path = iter.tree.next_leaf_path(path) or {
-				return error('iterator exhausted')
-			}
+			path = iter.tree.next_leaf_path(path) or { return error('iterator exhausted') }
 			leaf_items = path[path.len - 1].node.leaf_items()!
 			item_idx = 0
 			continue
@@ -1925,15 +1977,15 @@ pub fn (mut iter TreeIterator) next() !KVPair {
 			continue
 		}
 		item := iter.leaf_items[iter.item_idx]
-			if iter.end.len > 0 && compare_key_bytes(item.key, iter.end) >= 0 {
-				return error('iterator exhausted')
-			}
-			iter.item_idx++
-			iter.yielded++
-			iter.current_item = item
-			iter.has_current_item = true
-			return item
+		if iter.end.len > 0 && compare_key_bytes(item.key, iter.end) >= 0 {
+			return error('iterator exhausted')
 		}
+		iter.item_idx++
+		iter.yielded++
+		iter.current_item = item
+		iter.has_current_item = true
+		return item
+	}
 	return error('iterator exhausted')
 }
 
@@ -1941,9 +1993,7 @@ pub fn (tree Tree) range_scan(start []u8, end []u8, limit int) ![]KVPair {
 	mut iter := TreeIterator.new(tree, start, end, limit)!
 	mut items := []KVPair{}
 	for {
-		item := iter.next() or {
-			break
-		}
+		item := iter.next() or { break }
 		items << item
 	}
 	return items
@@ -1955,42 +2005,42 @@ pub fn (tree Tree) cursor(start []u8, end []u8, limit int) !TreeCursor {
 
 pub fn TreeCursor.forward(tree Tree, start []u8, end []u8, limit int) !TreeCursor {
 	return TreeCursor{
-		mode: .forward
-		tree: tree
-		limit: limit
+		mode:         .forward
+		tree:         tree
+		limit:        limit
 		forward_iter: TreeIterator.new(tree, start, end, limit)!
 	}
 }
 
 pub fn TreeCursor.reverse(tree Tree, start []u8, end []u8, limit int) !TreeCursor {
 	return TreeCursor{
-		mode: .reverse
-		tree: tree
-		limit: limit
+		mode:         .reverse
+		tree:         tree
+		limit:        limit
 		reverse_iter: TreeReverseIterator.new(tree, start, end, limit)!
 	}
 }
 
 pub fn TreeCursor.prefix(tree Tree, prefix []u8, limit int) !TreeCursor {
 	return TreeCursor{
-		mode: .prefix
-		tree: tree
-		limit: limit
+		mode:        .prefix
+		tree:        tree
+		limit:       limit
 		prefix_iter: TreePrefixIterator.new(tree, prefix, limit)!
 	}
 }
 
 pub fn TreeRawIterator.new(tree Tree, start []u8, end []u8, limit int) !TreeRawIterator {
 	mut iter := TreeRawIterator{
-		tree: tree
-		end: end.clone()
-		limit: limit
-		path: []TreePathStep{}
-		leaf_layout: NodeLayout{}
-		item_idx: 0
-		yielded: 0
-		started: false
-		current_item: KVPair{}
+		tree:             tree
+		end:              end.clone()
+		limit:            limit
+		path:             []TreePathStep{}
+		leaf_layout:      NodeLayout{}
+		item_idx:         0
+		yielded:          0
+		started:          false
+		current_item:     KVPair{}
 		has_current_item: false
 	}
 	iter.seek(start)!
@@ -2045,7 +2095,7 @@ pub fn (mut iter TreeRawIterator) next() !KVPair {
 			return error('iterator exhausted')
 		}
 		item := KVPair{
-			key: item_key
+			key:   item_key
 			value: iter.leaf_layout.value_view(iter.item_idx)
 		}
 		iter.item_idx++
@@ -2059,10 +2109,10 @@ pub fn (mut iter TreeRawIterator) next() !KVPair {
 
 pub fn (tree Tree) raw_cursor(start []u8, end []u8, limit int) !TreeRawCursor {
 	return TreeRawCursor{
-		tree: tree
-		end: end.clone()
+		tree:  tree
+		end:   end.clone()
 		limit: limit
-		iter: TreeRawIterator.new(tree, start, end, limit)!
+		iter:  TreeRawIterator.new(tree, start, end, limit)!
 	}
 }
 
@@ -2084,9 +2134,7 @@ pub fn (mut cursor TreeRawCursor) skip(count int) !int {
 	}
 	mut skipped := 0
 	for skipped < count {
-		_ = cursor.next() or {
-			return skipped
-		}
+		_ = cursor.next() or { return skipped }
 		skipped++
 	}
 	return skipped
@@ -2136,9 +2184,7 @@ pub fn (mut cursor TreeCursor) skip(count int) !int {
 	}
 	mut skipped := 0
 	for skipped < count {
-		_ = cursor.next() or {
-			return skipped
-		}
+		_ = cursor.next() or { return skipped }
 		skipped++
 	}
 	return skipped
@@ -2151,9 +2197,7 @@ pub fn (mut cursor TreeCursor) collect(count int) ![]KVPair {
 		if count > 0 && remaining <= 0 {
 			break
 		}
-		item := cursor.next() or {
-			break
-		}
+		item := cursor.next() or { break }
 		items << item
 		if count > 0 {
 			remaining--
@@ -2181,11 +2225,11 @@ pub fn (tree Tree) prefix_scan(prefix []u8, limit int) ![]KVPair {
 
 pub fn TreePrefixIterator.new(tree Tree, prefix []u8, limit int) !TreePrefixIterator {
 	return TreePrefixIterator{
-		tree: tree
-		prefix: prefix.clone()
-		limit: limit
-		iter: TreeIterator.new(tree, prefix, []u8{}, limit)!
-		current_item: KVPair{}
+		tree:             tree
+		prefix:           prefix.clone()
+		limit:            limit
+		iter:             TreeIterator.new(tree, prefix, []u8{}, limit)!
+		current_item:     KVPair{}
 		has_current_item: false
 	}
 }
@@ -2222,15 +2266,15 @@ pub fn (mut iter TreePrefixIterator) next() !KVPair {
 
 pub fn TreeReverseIterator.new(tree Tree, start []u8, end []u8, limit int) !TreeReverseIterator {
 	mut iter := TreeReverseIterator{
-		tree: tree
-		start: start.clone()
-		limit: limit
-		path: []TreePathStep{}
-		leaf_items: []KVPair{}
-		item_idx: -1
-		yielded: 0
-		started: false
-		current_item: KVPair{}
+		tree:             tree
+		start:            start.clone()
+		limit:            limit
+		path:             []TreePathStep{}
+		leaf_items:       []KVPair{}
+		item_idx:         -1
+		yielded:          0
+		started:          false
+		current_item:     KVPair{}
 		has_current_item: false
 	}
 	iter.seek(end)!
@@ -2275,9 +2319,7 @@ pub fn (mut iter TreeReverseIterator) peek() !KVPair {
 	mut item_idx := iter.item_idx
 	for {
 		if item_idx < 0 {
-			path = iter.tree.prev_leaf_path(path) or {
-				return error('iterator exhausted')
-			}
+			path = iter.tree.prev_leaf_path(path) or { return error('iterator exhausted') }
 			leaf_items = path[path.len - 1].node.leaf_items()!
 			item_idx = leaf_items.len - 1
 			continue
@@ -2324,9 +2366,7 @@ pub fn (tree Tree) reverse_range_scan(start []u8, end []u8, limit int) ![]KVPair
 	mut iter := TreeReverseIterator.new(tree, start, end, limit)!
 	mut items := []KVPair{}
 	for {
-		item := iter.next() or {
-			break
-		}
+		item := iter.next() or { break }
 		items << item
 	}
 	return items
@@ -2418,18 +2458,16 @@ fn (tree Tree) descend_leftmost(node Node, prefix []TreePathStep) ![]TreePathSte
 	for current.kind != .leaf {
 		children := current.child_refs()!
 		path << TreePathStep{
-			node: current
-			child_refs: children
+			node:         current
+			child_refs:   children
 			selected_idx: 0
 		}
 		next_cid := children[0].cid
-		current = tree.nodes[next_cid] or {
-			return error('child node not found: ${next_cid}')
-		}
+		current = tree.nodes[next_cid] or { return error('child node not found: ${next_cid}') }
 	}
 	path << TreePathStep{
-		node: current
-		child_refs: []NodeRef{}
+		node:         current
+		child_refs:   []NodeRef{}
 		selected_idx: -1
 	}
 	return path
@@ -2442,18 +2480,16 @@ fn (tree Tree) descend_rightmost(node Node, prefix []TreePathStep) ![]TreePathSt
 		children := current.child_refs()!
 		last_idx := children.len - 1
 		path << TreePathStep{
-			node: current
-			child_refs: children
+			node:         current
+			child_refs:   children
 			selected_idx: last_idx
 		}
 		next_cid := children[last_idx].cid
-		current = tree.nodes[next_cid] or {
-			return error('child node not found: ${next_cid}')
-		}
+		current = tree.nodes[next_cid] or { return error('child node not found: ${next_cid}') }
 	}
 	path << TreePathStep{
-		node: current
-		child_refs: []NodeRef{}
+		node:         current
+		child_refs:   []NodeRef{}
 		selected_idx: -1
 	}
 	return path
@@ -2468,14 +2504,12 @@ fn (tree Tree) next_leaf_path(path []TreePathStep) ![]TreePathStep {
 		}
 		mut next_path := path[..depth].clone()
 		next_path << TreePathStep{
-			node: step.node
-			child_refs: step.child_refs
+			node:         step.node
+			child_refs:   step.child_refs
 			selected_idx: next_idx
 		}
 		next_cid := step.child_refs[next_idx].cid
-		next_node := tree.nodes[next_cid] or {
-			return error('child node not found: ${next_cid}')
-		}
+		next_node := tree.nodes[next_cid] or { return error('child node not found: ${next_cid}') }
 		return tree.descend_leftmost(next_node, next_path)
 	}
 	return error('no next leaf')
@@ -2490,14 +2524,12 @@ fn (tree Tree) prev_leaf_path(path []TreePathStep) ![]TreePathStep {
 		}
 		mut prev_path := path[..depth].clone()
 		prev_path << TreePathStep{
-			node: step.node
-			child_refs: step.child_refs
+			node:         step.node
+			child_refs:   step.child_refs
 			selected_idx: prev_idx
 		}
 		prev_cid := step.child_refs[prev_idx].cid
-		prev_node := tree.nodes[prev_cid] or {
-			return error('child node not found: ${prev_cid}')
-		}
+		prev_node := tree.nodes[prev_cid] or { return error('child node not found: ${prev_cid}') }
 		return tree.descend_rightmost(prev_node, prev_path)
 	}
 	return error('no previous leaf')
@@ -2509,8 +2541,8 @@ fn (tree Tree) path_to_leaf(key []u8) ![]TreePathStep {
 	for {
 		if node.kind == .leaf {
 			path << TreePathStep{
-				node: node
-				child_refs: []NodeRef{}
+				node:         node
+				child_refs:   []NodeRef{}
 				selected_idx: -1
 			}
 			return path
@@ -2518,14 +2550,12 @@ fn (tree Tree) path_to_leaf(key []u8) ![]TreePathStep {
 		children := node.child_refs()!
 		idx := choose_child_index(key, children)
 		path << TreePathStep{
-			node: node
-			child_refs: children
+			node:         node
+			child_refs:   children
 			selected_idx: idx
 		}
 		next_cid := children[idx].cid
-		node = tree.nodes[next_cid] or {
-			return error('path node not found: ${next_cid}')
-		}
+		node = tree.nodes[next_cid] or { return error('path node not found: ${next_cid}') }
 	}
 	return error('unreachable tree path state')
 }
@@ -2613,9 +2643,19 @@ pub fn (tree Tree) diff(next Tree) TreeDiff {
 	return TreeDiff{
 		old_root_cid: tree.root.cid
 		new_root_cid: next.root.cid
-		added_cids: added
+		added_cids:   added
 		removed_cids: removed
-		reused_cids: reused
+		reused_cids:  reused
+	}
+}
+
+fn (tree Tree) diff_for_write(next Tree, cfg ChunkConfig) TreeDiff {
+	if cfg.enable_write_diff {
+		return tree.diff(next)
+	}
+	return TreeDiff{
+		old_root_cid: tree.root.cid
+		new_root_cid: next.root.cid
 	}
 }
 
@@ -2647,6 +2687,36 @@ pub fn (tree Tree) apply_mutations(mutations []Mutation, cfg ChunkConfig) !TreeU
 			diff: tree.diff(tree)
 		}
 	}
+	if tree.root.cid.len == 0 {
+		mut item_map := map[string][]u8{}
+		for mutation in mutations {
+			match mutation.op {
+				.put {
+					item_map[mutation.key.bytestr()] = mutation.value.clone()
+				}
+				.delete {
+					return error('cannot delete from an empty tree')
+				}
+			}
+		}
+		if item_map.len == 0 {
+			return error('empty-tree mutation batch produced no items')
+		}
+		mut keys := item_map.keys()
+		keys.sort()
+		mut items := []KVPair{cap: keys.len}
+		for key in keys {
+			items << KVPair{
+				key:   key.bytes()
+				value: item_map[key].clone()
+			}
+		}
+		next_tree := Tree.build(items, cfg)!
+		return TreeUpdate{
+			tree: next_tree
+			diff: tree.diff_for_write(next_tree, cfg)
+		}
+	}
 	mut groups := map[string]MutationLeafGroup{}
 	mut group_order := []string{}
 	for mutation in mutations {
@@ -2656,12 +2726,12 @@ pub fn (tree Tree) apply_mutations(mutations []Mutation, cfg ChunkConfig) !TreeU
 		if group_id !in groups {
 			groups[group_id] = MutationLeafGroup{
 				anchor_key: mutation.key.clone()
-				keys: []string{}
+				mutations:  []Mutation{}
 			}
 			group_order << group_id
 		}
 		mut group := groups[group_id]
-		group.keys << mutation.key.hex()
+		group.mutations << mutation
 		groups[group_id] = group
 	}
 	group_order.sort_with_compare(fn [groups] (a &string, b &string) int {
@@ -2672,11 +2742,8 @@ pub fn (tree Tree) apply_mutations(mutations []Mutation, cfg ChunkConfig) !TreeU
 	for group_id in group_order {
 		group := groups[group_id]
 		mut op_map := map[string]Mutation{}
-		for mutation in mutations {
-			key_id := mutation.key.hex()
-			if key_id in group.keys {
-				op_map[key_id] = mutation
-			}
+		for mutation in group.mutations {
+			op_map[mutation.key.hex()] = mutation
 		}
 		path := current.path_to_leaf(group.anchor_key)!
 		leaf := path[path.len - 1].node
@@ -2687,64 +2754,348 @@ pub fn (tree Tree) apply_mutations(mutations []Mutation, cfg ChunkConfig) !TreeU
 			mutation := op_map[key_id]
 			match mutation.op {
 				.put {
-					leaf_items = apply_put_to_items(leaf_items, KVPair{
-						key: mutation.key.clone()
+					apply_put_to_items_mut(mut leaf_items, KVPair{
+						key:   mutation.key.clone()
 						value: mutation.value.clone()
 					})
 				}
 				.delete {
-					leaf_items = apply_delete_to_items(leaf_items, mutation.key)
+					apply_delete_to_items_mut(mut leaf_items, mutation.key)
 				}
 			}
 		}
 		current = if leaf_items.len == 0 {
 			current.remove_path_leaf(path, cfg)!
 		} else {
-			current.replace_leaf_items(group.anchor_key, leaf_items, cfg)!
+			current.replace_leaf_path_items(path, leaf_items, cfg)!
 		}
 	}
 	return TreeUpdate{
 		tree: current
-		diff: tree.diff(current)
+		diff: tree.diff_for_write(current, cfg)
 	}
 }
 
-fn apply_put_to_items(items []KVPair, item KVPair) []KVPair {
-	mut next := items.clone()
+pub fn (tree Tree) apply_mutations_no_duplicates(mutations []Mutation, cfg ChunkConfig) !TreeUpdate {
+	if mutations.len == 0 {
+		return TreeUpdate{
+			tree: tree
+			diff: tree.diff(tree)
+		}
+	}
+	if tree.root.cid.len == 0 {
+		mut sorted := mutations.clone()
+		sorted.sort_with_compare(fn (a &Mutation, b &Mutation) int {
+			return compare_key_bytes(a.key, b.key)
+		})
+		mut items := []KVPair{cap: sorted.len}
+		for mutation in sorted {
+			match mutation.op {
+				.put {
+					items << KVPair{
+						key:   mutation.key.clone()
+						value: mutation.value.clone()
+					}
+				}
+				.delete {
+					return error('cannot delete from an empty tree')
+				}
+			}
+		}
+		next_tree := Tree.build(items, cfg)!
+		return TreeUpdate{
+			tree: next_tree
+			diff: tree.diff_for_write(next_tree, cfg)
+		}
+	}
+	mut sorted := mutations.clone()
+	sorted.sort_with_compare(fn (a &Mutation, b &Mutation) int {
+		return compare_key_bytes(a.key, b.key)
+	})
+	mut groups := []MutationLeafGroup{}
+	mut mutation_idx := 0
+	mut path := tree.path_to_leaf(sorted[0].key)!
+	for mutation_idx < sorted.len {
+		next_path := tree.next_leaf_path(path) or { []TreePathStep{} }
+		has_upper := next_path.len > 0
+		mut upper_key := []u8{}
+		if has_upper {
+			next_leaf_items := next_path[next_path.len - 1].node.leaf_items()!
+			if next_leaf_items.len > 0 {
+				upper_key = next_leaf_items[0].key.clone()
+			}
+		}
+		mut group_mutations := []Mutation{}
+		for mutation_idx < sorted.len {
+			mutation := sorted[mutation_idx]
+			if has_upper && upper_key.len > 0 && compare_key_bytes(mutation.key, upper_key) >= 0 {
+				break
+			}
+			group_mutations << mutation
+			mutation_idx++
+		}
+		if group_mutations.len > 0 {
+			groups << MutationLeafGroup{
+				anchor_key: group_mutations[0].key.clone()
+				mutations:  group_mutations
+			}
+		}
+		if mutation_idx >= sorted.len {
+			break
+		}
+		if next_path.len > 0 {
+			path = next_path.clone()
+		} else {
+			path = tree.path_to_leaf(sorted[mutation_idx].key)!
+		}
+	}
+	mut current := tree
+	for group in groups {
+		group_path := current.path_to_leaf(group.anchor_key)!
+		leaf := group_path[group_path.len - 1].node
+		leaf_items := apply_sorted_mutations_to_leaf_items(leaf.leaf_items()!, group.mutations)
+		current = if leaf_items.len == 0 {
+			current.remove_path_leaf(group_path, cfg)!
+		} else {
+			current.replace_leaf_path_items(group_path, leaf_items, cfg)!
+		}
+	}
+	return TreeUpdate{
+		tree: current
+		diff: tree.diff_for_write(current, cfg)
+	}
+}
+
+pub fn (tree Tree) apply_insert_mutations_no_existing(mutations []Mutation, cfg ChunkConfig) ?TreeUpdate {
+	if mutations.len == 0 {
+		return TreeUpdate{
+			tree: tree
+			diff: tree.diff(tree)
+		}
+	}
+	mut sorted := mutations.clone()
+	sorted.sort_with_compare(fn (a &Mutation, b &Mutation) int {
+		return compare_key_bytes(a.key, b.key)
+	})
+	for idx, mutation in sorted {
+		if mutation.op != .put {
+			return none
+		}
+		if idx > 0 && compare_key_bytes(sorted[idx - 1].key, mutation.key) == 0 {
+			return none
+		}
+	}
+	if tree.root.cid.len == 0 {
+		mut items := []KVPair{cap: sorted.len}
+		for mutation in sorted {
+			items << KVPair{
+				key:   mutation.key.clone()
+				value: mutation.value.clone()
+			}
+		}
+		next_tree := Tree.build(items, cfg) or { return none }
+		return TreeUpdate{
+			tree: next_tree
+			diff: tree.diff_for_write(next_tree, cfg)
+		}
+	}
+	mut groups := []MutationLeafGroup{}
+	mut mutation_idx := 0
+	mut path := tree.path_to_leaf(sorted[0].key) or { return none }
+	for mutation_idx < sorted.len {
+		next_path := tree.next_leaf_path(path) or { []TreePathStep{} }
+		has_upper := next_path.len > 0
+		mut upper_key := []u8{}
+		if has_upper {
+			next_leaf_items := next_path[next_path.len - 1].node.leaf_items() or { return none }
+			if next_leaf_items.len > 0 {
+				upper_key = next_leaf_items[0].key.clone()
+			}
+		}
+		mut group_mutations := []Mutation{}
+		for mutation_idx < sorted.len {
+			mutation := sorted[mutation_idx]
+			if has_upper && upper_key.len > 0 && compare_key_bytes(mutation.key, upper_key) >= 0 {
+				break
+			}
+			group_mutations << mutation
+			mutation_idx++
+		}
+		if group_mutations.len > 0 {
+			groups << MutationLeafGroup{
+				anchor_key: group_mutations[0].key.clone()
+				mutations:  group_mutations
+			}
+		}
+		if mutation_idx >= sorted.len {
+			break
+		}
+		if next_path.len > 0 {
+			path = next_path.clone()
+		} else {
+			path = tree.path_to_leaf(sorted[mutation_idx].key) or { return none }
+		}
+	}
+	mut current := tree
+	for group in groups {
+		group_path := current.path_to_leaf(group.anchor_key) or { return none }
+		leaf := group_path[group_path.len - 1].node
+		leaf_items := apply_sorted_insert_mutations_to_leaf_items(leaf.leaf_items() or {
+			return none
+		}, group.mutations) or {
+			return none
+		}
+		current = current.replace_leaf_path_items(group_path, leaf_items, cfg) or { return none }
+	}
+	return TreeUpdate{
+		tree: current
+		diff: tree.diff_for_write(current, cfg)
+	}
+}
+
+fn apply_sorted_mutations_to_leaf_items(items []KVPair, mutations []Mutation) []KVPair {
+	mut out := []KVPair{cap: items.len + mutations.len}
+	mut item_idx := 0
+	mut mutation_idx := 0
+	for item_idx < items.len || mutation_idx < mutations.len {
+		if mutation_idx >= mutations.len {
+			for item_idx < items.len {
+				out << items[item_idx]
+				item_idx++
+			}
+			break
+		}
+		if item_idx >= items.len {
+			for mutation_idx < mutations.len {
+				mutation := mutations[mutation_idx]
+				if mutation.op == .put {
+					out << KVPair{
+						key:   mutation.key.clone()
+						value: mutation.value.clone()
+					}
+				}
+				mutation_idx++
+			}
+			break
+		}
+		item := items[item_idx]
+		mutation := mutations[mutation_idx]
+		cmp := compare_key_bytes(item.key, mutation.key)
+		if cmp < 0 {
+			out << item
+			item_idx++
+			continue
+		}
+		if cmp > 0 {
+			if mutation.op == .put {
+				out << KVPair{
+					key:   mutation.key.clone()
+					value: mutation.value.clone()
+				}
+			}
+			mutation_idx++
+			continue
+		}
+		if mutation.op == .put {
+			out << KVPair{
+				key:   mutation.key.clone()
+				value: mutation.value.clone()
+			}
+		}
+		item_idx++
+		mutation_idx++
+	}
+	return out
+}
+
+fn apply_sorted_insert_mutations_to_leaf_items(items []KVPair, mutations []Mutation) ?[]KVPair {
+	mut out := []KVPair{cap: items.len + mutations.len}
+	mut item_idx := 0
+	mut mutation_idx := 0
+	for item_idx < items.len || mutation_idx < mutations.len {
+		if mutation_idx >= mutations.len {
+			for item_idx < items.len {
+				out << items[item_idx]
+				item_idx++
+			}
+			break
+		}
+		if item_idx >= items.len {
+			for mutation_idx < mutations.len {
+				mutation := mutations[mutation_idx]
+				out << KVPair{
+					key:   mutation.key.clone()
+					value: mutation.value.clone()
+				}
+				mutation_idx++
+			}
+			break
+		}
+		item := items[item_idx]
+		mutation := mutations[mutation_idx]
+		cmp := compare_key_bytes(item.key, mutation.key)
+		if cmp < 0 {
+			out << item
+			item_idx++
+			continue
+		}
+		if cmp > 0 {
+			out << KVPair{
+				key:   mutation.key.clone()
+				value: mutation.value.clone()
+			}
+			mutation_idx++
+			continue
+		}
+		return none
+	}
+	return out
+}
+
+fn apply_put_to_items_mut(mut items []KVPair, item KVPair) {
 	mut inserted := false
-	for idx, existing in next {
+	for idx, existing in items {
 		cmp := compare_key_bytes(item.key, existing.key)
 		if cmp == 0 {
-			next[idx] = item
+			items[idx] = item
 			inserted = true
 			break
 		}
 		if cmp < 0 {
-			next.insert(idx, item)
+			items.insert(idx, item)
 			inserted = true
 			break
 		}
 	}
 	if !inserted {
-		next << item
+		items << item
 	}
+}
+
+fn apply_put_to_items(items []KVPair, item KVPair) []KVPair {
+	mut next := items.clone()
+	apply_put_to_items_mut(mut next, item)
 	return next
+}
+
+fn apply_delete_to_items_mut(mut items []KVPair, key []u8) {
+	for idx, item in items {
+		if compare_key_bytes(key, item.key) == 0 {
+			items.delete(idx)
+			break
+		}
+	}
 }
 
 fn apply_delete_to_items(items []KVPair, key []u8) []KVPair {
 	mut next := items.clone()
-	for idx, item in next {
-		if compare_key_bytes(key, item.key) == 0 {
-			next.delete(idx)
-			break
-		}
-	}
+	apply_delete_to_items_mut(mut next, key)
 	return next
 }
 
 fn (tree Tree) rebuild_path(path []TreePathStep, leaf_items []KVPair, cfg ChunkConfig) !Tree {
 	mut builder := TreeBuilder{
-		cfg: cfg
+		cfg:   cfg
 		nodes: tree.nodes.clone()
 	}
 	mut refs := builder.build_leaf_level(leaf_items)!
@@ -2755,7 +3106,7 @@ fn (tree Tree) rebuild_path(path []TreePathStep, leaf_items []KVPair, cfg ChunkC
 			level++
 		}
 		return Tree{
-			root: refs[0]
+			root:  refs[0]
 			nodes: builder.nodes
 		}
 	}
@@ -2773,7 +3124,7 @@ fn (tree Tree) rebuild_path(path []TreePathStep, leaf_items []KVPair, cfg ChunkC
 		level++
 	}
 	return Tree{
-		root: refs[0]
+		root:  refs[0]
 		nodes: builder.nodes
 	}
 }
@@ -2783,7 +3134,7 @@ fn (tree Tree) remove_path_leaf(path []TreePathStep, cfg ChunkConfig) !Tree {
 		return error('deleting the last key would produce an empty tree')
 	}
 	mut builder := TreeBuilder{
-		cfg: cfg
+		cfg:   cfg
 		nodes: tree.nodes.clone()
 	}
 	mut refs := []NodeRef{}
@@ -2815,12 +3166,16 @@ fn (tree Tree) remove_path_leaf(path []TreePathStep, cfg ChunkConfig) !Tree {
 		level++
 	}
 	return Tree{
-		root: refs[0]
+		root:  refs[0]
 		nodes: builder.nodes
 	}
 }
 
 fn (tree Tree) replace_leaf_items(anchor_key []u8, leaf_items []KVPair, cfg ChunkConfig) !Tree {
 	path := tree.path_to_leaf(anchor_key)!
+	return tree.replace_leaf_path_items(path, leaf_items, cfg)
+}
+
+fn (tree Tree) replace_leaf_path_items(path []TreePathStep, leaf_items []KVPair, cfg ChunkConfig) !Tree {
 	return tree.rebuild_path(path, leaf_items, cfg)
 }

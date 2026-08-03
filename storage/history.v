@@ -20,10 +20,10 @@ pub:
 
 pub struct Commit {
 pub:
-	cid         string
-	root_cid    string
-	parent_cids []string
-	meta        CommitMeta
+	cid           string
+	root_cid      string
+	parent_cids   []string
+	meta          CommitMeta
 	virtual_roots []VirtualRootRef
 }
 
@@ -34,7 +34,7 @@ pub:
 }
 
 struct CommitReader {
-	data   []u8
+	data []u8
 mut:
 	cursor int
 }
@@ -84,19 +84,19 @@ pub fn MemoryCommitStore.new() MemoryCommitStore {
 
 pub fn PersistentCommitStore.open(path string) !PersistentCommitStore {
 	return PersistentCommitStore{
-		chunks: ChunkStore.open(path)!
-		journal_records: []u8{}
+		chunks:                ChunkStore.open(path)!
+		journal_records:       []u8{}
 		journaled_record_size: 0
-		pending: map[string][]u8{}
+		pending:               map[string][]u8{}
 	}
 }
 
 pub fn PersistentCommitStore.open_high_throughput(path string) !PersistentCommitStore {
 	return PersistentCommitStore{
-		chunks: ChunkStore.open_high_throughput(path)!
-		journal_records: []u8{}
+		chunks:                ChunkStore.open_high_throughput(path)!
+		journal_records:       []u8{}
 		journaled_record_size: 0
-		pending: map[string][]u8{}
+		pending:               map[string][]u8{}
 	}
 }
 
@@ -105,9 +105,7 @@ pub fn (mut store MemoryCommitStore) put(commit Commit) ! {
 }
 
 pub fn (store MemoryCommitStore) get(cid string) !Commit {
-	commit := store.commits[cid] or {
-		return error('commit not found: ${cid}')
-	}
+	commit := store.commits[cid] or { return error('commit not found: ${cid}') }
 	return commit
 }
 
@@ -118,6 +116,11 @@ pub fn (store MemoryCommitStore) has(cid string) bool {
 pub fn (mut store PersistentCommitStore) close() {
 	store.flush_pending() or {}
 	store.chunks.close()
+}
+
+pub fn (mut store PersistentCommitStore) close_without_checkpoint() {
+	store.flush_pending() or {}
+	store.chunks.close_without_checkpoint()
 }
 
 pub fn (mut store PersistentCommitStore) checkpoint() ! {
@@ -135,7 +138,7 @@ pub fn (mut store PersistentCommitStore) checkpoint_timed() !PersistentCommitSto
 	store.flush_pending()!
 	timings := store.chunks.checkpoint_timed()!
 	return PersistentCommitStoreCheckpointTimings{
-		data_us: timings.data_us
+		data_us:  timings.data_us
 		index_us: timings.index_us
 		total_us: timings.total_us
 	}
@@ -154,7 +157,7 @@ pub fn (mut store PersistentCommitStore) checkpoint_timed_mode(mode CheckpointMo
 	}
 	timings := store.chunks.checkpoint_timed_mode(mode)!
 	return PersistentCommitStoreCheckpointTimings{
-		data_us: timings.data_us
+		data_us:  timings.data_us
 		index_us: timings.index_us
 		total_us: timings.total_us
 	}
@@ -194,7 +197,7 @@ pub fn (store PersistentCommitStore) has(cid string) bool {
 }
 
 pub fn (store PersistentCommitStore) pending_journal_records() []u8 {
-	return store.journal_records[store.journaled_record_size..].clone()
+	return store.journal_records[store.journaled_record_size..]
 }
 
 pub fn (mut store PersistentCommitStore) mark_journal_records_persisted() {
@@ -213,11 +216,11 @@ fn (mut store PersistentCommitStore) flush_pending() ! {
 	mut payloads := []ChunkPayload{cap: store.pending.len}
 	for cid, data in store.pending {
 		payloads << ChunkPayload{
-			cid: cid.bytes()
+			cid:  cid.bytes()
 			data: data
 		}
 	}
-	_ = store.chunks.put_many(payloads)!
+	_ = store.chunks.put_many_streaming(payloads)!
 	store.pending = map[string][]u8{}
 }
 
@@ -228,10 +231,10 @@ pub fn Commit.new(root_cid string, parent_cids []string, meta CommitMeta) Commit
 pub fn Commit.new_with_virtual_roots(root_cid string, parent_cids []string, meta CommitMeta, virtual_roots []VirtualRootRef) Commit {
 	cid := commit_cid_for(root_cid, parent_cids, meta, virtual_roots)
 	return Commit{
-		cid: cid
-		root_cid: root_cid
-		parent_cids: parent_cids.clone()
-		meta: meta
+		cid:           cid
+		root_cid:      root_cid
+		parent_cids:   parent_cids.clone()
+		meta:          meta
 		virtual_roots: virtual_roots.clone()
 	}
 }
@@ -243,7 +246,7 @@ pub fn Snapshot.new(tree Tree, parent_cids []string, meta CommitMeta) Snapshot {
 pub fn Snapshot.new_with_virtual_roots(tree Tree, parent_cids []string, meta CommitMeta, virtual_roots []VirtualRootRef) Snapshot {
 	return Snapshot{
 		commit: Commit.new_with_virtual_roots(tree.root.cid, parent_cids, meta, virtual_roots)
-		tree: tree
+		tree:   tree
 	}
 }
 
@@ -320,11 +323,11 @@ pub fn Commit.from_data(data []u8) !Commit {
 			source_data_root_cid := reader.read_field()!.bytestr()
 			fresh := reader.read_u8()! == 1
 			virtual_roots << VirtualRootRef{
-				name: name
-				root_cid: virtual_root_cid
+				name:                 name
+				root_cid:             virtual_root_cid
 				source_data_root_cid: source_data_root_cid
-				fresh: fresh
-				stale_reason: ''
+				fresh:                fresh
+				stale_reason:         ''
 			}
 		}
 	}
@@ -349,8 +352,8 @@ pub fn Commit.from_data(data []u8) !Commit {
 		}
 	}
 	commit := Commit.new_with_virtual_roots(root_cid, parent_cids, CommitMeta{
-		author: author
-		message: message
+		author:    author
+		message:   message
 		timestamp: timestamp
 	}, virtual_roots)
 	if reader.cursor != data.len {
@@ -465,7 +468,8 @@ fn (mut reader CommitReader) read_u32() !u32 {
 	if reader.cursor + 4 > reader.data.len {
 		return error('commit record truncated')
 	}
-	value := u32(reader.data[reader.cursor]) | (u32(reader.data[reader.cursor + 1]) << 8) | (u32(reader.data[reader.cursor + 2]) << 16) | (u32(reader.data[reader.cursor + 3]) << 24)
+	value := u32(reader.data[reader.cursor]) | (u32(reader.data[reader.cursor + 1]) << 8) | (u32(reader.data[
+		reader.cursor + 2]) << 16) | (u32(reader.data[reader.cursor + 3]) << 24)
 	reader.cursor += 4
 	return value
 }

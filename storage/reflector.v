@@ -635,7 +635,14 @@ pub fn (mut database PersistentDatabase) replay_query(mut engine memory.Embeddin
 		scope:       .path
 		scope_set:   true
 	})!
-	session := database.open_session(request.branch_name)!
+	// 使用 commit-scoped session 实现后视偏差隔离：如果指定了 as_of_commit_cid，
+	// 只读取该 commit 时间点及之前存在的 memory_links 和 memory_reflections
+	session_opts := if request.as_of_commit_cid.len > 0 {
+		SessionOptions.for_commit(request.branch_name, request.as_of_commit_cid)
+	} else {
+		SessionOptions.for_branch(request.branch_name)
+	}
+	session := database.begin_session(session_opts)!
 	link_rows := session.scan_table(mut database, 'memory_links', 0)!
 	mut links := []memory.MemoryLink{cap: link_rows.len}
 	for row in link_rows {
@@ -891,6 +898,108 @@ fn (mut database PersistentDatabase) persist_reflection_job(job memory.Reflectio
 	}
 }
 
+// BatchedReflectionWrite 表示一次批量写入中的单张卡片数据
+pub struct BatchedReflectionWrite {
+pub:
+	reflection_id  string
+	reflection_row TypedRowData
+	link_rows      []TypedRowData
+	link_ids       []string
+	cwd            string
+	created_at     string
+	derived_hash   string
+}
+
+// build_reflection_rows 构建卡片的 row 数据但不提交（用于批量写入）
+pub fn (mut database PersistentDatabase) build_reflection_rows(job memory.ReflectionJob, input memory.ReflectionPersistInput) !BatchedReflectionWrite {
+	if input.summary_md.trim_space().len == 0 {
+		return error('reflection summary_md cannot be empty')
+	}
+	database.ensure_memory_reflections_table()!
+	database.ensure_memory_links_table()!
+	derived_from_root_hash := database.engine.root_cid_at_branch(job.branch_name)!
+	summary_ref := database.ingest_markdown(input.summary_md)!
+	insight_ref := if input.insight_md.trim_space().len > 0 {
+		database.ingest_markdown(input.insight_md)!
+	} else {
+		MarkdownRef{}
+	}
+	reflection_id := rand.uuid_v4()
+	created_at := current_datetime_string()
+	source_refs := memory.reflection_job_source_refs(job)
+	mut row := TypedRowData.new()
+	row.set('reflection_id', reflection_id)
+	reflection_kind := if input.reflection_kind.len > 0 { input.reflection_kind } else { job.reflection_kind }
+	row.set('reflection_kind', reflection_kind)
+	row.set('title', input.title)
+	row.set('summary_md', summary_ref)
+	if input.insight_md.trim_space().len > 0 {
+		row.set('insight_md', insight_ref)
+	} else {
+		row.set('insight_md', NullValue{})
+	}
+	row.set('source_refs', memory.encode_reflection_source_refs(source_refs))
+	if input.parent_ref.len > 0 {
+		row.set('parent_ref', input.parent_ref)
+	} else {
+		row.set('parent_ref', NullValue{})
+	}
+	if input.topic_key.len > 0 {
+		row.set('topic_key', input.topic_key)
+	} else {
+		row.set('topic_key', NullValue{})
+	}
+	row.set('derived_from_root_hash', derived_from_root_hash)
+	if input.supersedes_reflection_id.len > 0 {
+		row.set('supersedes_reflection_id', input.supersedes_reflection_id)
+	} else {
+		row.set('supersedes_reflection_id', NullValue{})
+	}
+	row.set('created_at', created_at)
+	links := memory.build_reflection_links(job, reflection_id, source_refs, derived_from_root_hash,
+		created_at)
+	mut link_rows := []TypedRowData{cap: links.len}
+	mut link_ids := []string{cap: links.len}
+	for link in links {
+		mut link_row := TypedRowData.new()
+		link_row.set('link_id', link.link_id)
+		link_row.set('link_kind', link.link_kind)
+		link_row.set('from_table_name', link.from_table_name)
+		link_row.set('from_primary_key_b64', base64.encode(link.from_primary_key))
+		if link.from_column_name.len > 0 {
+			link_row.set('from_column_name', link.from_column_name)
+		} else {
+			link_row.set('from_column_name', NullValue{})
+		}
+		link_row.set('to_table_name', link.to_table_name)
+		link_row.set('to_primary_key_b64', base64.encode(link.to_primary_key))
+		if link.to_column_name.len > 0 {
+			link_row.set('to_column_name', link.to_column_name)
+		} else {
+			link_row.set('to_column_name', NullValue{})
+		}
+		link_row.set('metadata_json', link.metadata_json)
+		link_row.set('derived_from_root_hash', link.derived_from_root_hash)
+		link_row.set('created_at', link.created_at)
+		link_rows << link_row
+		link_ids << link.link_id
+	}
+	// 从 job 推断 cwd（通过 session 查找）
+	mut cwd := ''
+	if job.branch_name.len > 0 {
+		// cwd 由调用者通过 anchor 设置，这里暂空
+	}
+	return BatchedReflectionWrite{
+		reflection_id:  reflection_id
+		reflection_row: row
+		link_rows:      link_rows
+		link_ids:       link_ids
+		cwd:            cwd
+		created_at:     created_at
+		derived_hash:   derived_from_root_hash
+	}
+}
+
 fn reflection_preferred_scope(spec TypedTableSpec, capability MemoryCapabilityDef) memory.MarkdownEmbeddingScope {
 	if capability.options.embedding_index.len > 0 {
 		for index in spec.indexes {
@@ -956,6 +1065,34 @@ pub fn (mut database PersistentDatabase) save_scene_block(branch_name string, bl
 	database.apply_typed_write_set(branch_name, writes, cfg, meta)!
 }
 
+pub fn (mut database PersistentDatabase) save_memory_link(branch_name string, link memory.MemoryLink, cfg ChunkConfig, meta CommitMeta) ! {
+	database.ensure_memory_links_table()!
+	mut link_row := TypedRowData.new()
+	link_row.set('link_id', link.link_id)
+	link_row.set('link_kind', link.link_kind)
+	link_row.set('from_table_name', link.from_table_name)
+	link_row.set('from_primary_key_b64', base64.encode(link.from_primary_key))
+	if link.from_column_name.len > 0 {
+		link_row.set('from_column_name', link.from_column_name)
+	} else {
+		link_row.set('from_column_name', NullValue{})
+	}
+	link_row.set('to_table_name', link.to_table_name)
+	link_row.set('to_primary_key_b64', base64.encode(link.to_primary_key))
+	if link.to_column_name.len > 0 {
+		link_row.set('to_column_name', link.to_column_name)
+	} else {
+		link_row.set('to_column_name', NullValue{})
+	}
+	link_row.set('metadata_json', link.metadata_json)
+	link_row.set('derived_from_root_hash', link.derived_from_root_hash)
+	link_row.set('created_at', link.created_at)
+
+	mut writes := TypedWriteSet.new()
+	writes.put('memory_links', link.link_id.bytes(), link_row)
+	database.apply_typed_write_set(branch_name, writes, cfg, meta)!
+}
+
 pub fn (mut database PersistentDatabase) get_scene_block(branch_name string, scene_id string) !memory.SceneBlock {
 	database.ensure_scene_blocks_table()!
 	session := database.open_session(branch_name)!
@@ -964,8 +1101,17 @@ pub fn (mut database PersistentDatabase) get_scene_block(branch_name string, sce
 }
 
 pub fn (mut database PersistentDatabase) list_scene_blocks(branch_name string) ![]memory.SceneBlock {
+	return database.list_scene_blocks_at(branch_name, '')
+}
+
+pub fn (mut database PersistentDatabase) list_scene_blocks_at(branch_name string, commit_cid string) ![]memory.SceneBlock {
 	database.ensure_scene_blocks_table()!
-	session := database.open_session(branch_name)!
+	session_opts := if commit_cid.len > 0 {
+		SessionOptions.for_commit(branch_name, commit_cid)
+	} else {
+		SessionOptions.for_branch(branch_name)
+	}
+	session := database.begin_session(session_opts)!
 	rows := session.scan_table(mut database, 'scene_blocks', 0) or { []TypedSchemaRow{} }
 	mut out := []memory.SceneBlock{}
 	for row in rows {
@@ -1017,8 +1163,17 @@ pub fn (mut database PersistentDatabase) save_persona_profile(branch_name string
 }
 
 pub fn (mut database PersistentDatabase) list_persona_profiles(branch_name string) ![]memory.PersonaProfile {
+	return database.list_persona_profiles_at(branch_name, '')
+}
+
+pub fn (mut database PersistentDatabase) list_persona_profiles_at(branch_name string, commit_cid string) ![]memory.PersonaProfile {
 	database.ensure_persona_profiles_table()!
-	session := database.open_session(branch_name)!
+	session_opts := if commit_cid.len > 0 {
+		SessionOptions.for_commit(branch_name, commit_cid)
+	} else {
+		SessionOptions.for_branch(branch_name)
+	}
+	session := database.begin_session(session_opts)!
 	rows := session.scan_table(mut database, 'persona_profiles', 0) or { []TypedSchemaRow{} }
 	mut out := []memory.PersonaProfile{}
 	for row in rows {
@@ -1044,5 +1199,256 @@ fn decode_persona_profile_row(row TypedSchemaRow) !memory.PersonaProfile {
 		preference_kind: preference_kind
 		content: content
 		created_at: created_at
+	}
+}
+
+// reflection_evolution_chain 沿 parent_ref 链回溯，构建一条记忆的完整演化链
+// depth=0 是查询起点的 reflection_id，depth=1 是其 parent，以此类推
+pub fn (mut database PersistentDatabase) reflection_evolution_chain(branch_name string, reflection_id string) !memory.ReflectionEvolutionChain {
+	if !database.has_table('memory_reflections') {
+		return memory.ReflectionEvolutionChain{
+			root_reflection_id: reflection_id
+			nodes: []memory.ReflectionEvolutionNode{}
+		}
+	}
+	session := database.open_session(branch_name)!
+	mut nodes := []memory.ReflectionEvolutionNode{}
+	mut current_id := reflection_id
+	mut depth := 0
+	mut visited := map[string]bool{} // 防止 parent_ref 形成环
+	max_depth := 128 // 安全上限
+	for current_id.len > 0 && depth <= max_depth {
+		if current_id in visited {
+			break
+		}
+		visited[current_id] = true
+		row := session.get_row(mut database, 'memory_reflections', current_id.bytes()) or {
+			// 引用的 parent_ref 对应的卡片可能已被删除或不存在
+			break
+		}
+		node := decode_reflection_evolution_node(mut database, row, depth)!
+		current_id = node.parent_ref
+		nodes << node
+		depth++
+	}
+	return memory.ReflectionEvolutionChain{
+		root_reflection_id: reflection_id
+		nodes: nodes
+	}
+}
+
+// reflection_supersede_graph 构建围绕一条记忆的更替关系图
+// 向上追溯：当前卡片更替了谁（supersedes_reflection_id 链）
+// 向下追溯：谁更替了当前卡片（扫描所有卡片中 supersedes_reflection_id 指向当前卡片的）
+pub fn (mut database PersistentDatabase) reflection_supersede_graph(branch_name string, reflection_id string) !memory.ReflectionSupersedeGraph {
+	if !database.has_table('memory_reflections') {
+		return memory.ReflectionSupersedeGraph{
+			root_reflection_id: reflection_id
+			nodes: map[string]memory.ReflectionSupersedeNode{}
+		}
+	}
+	session := database.open_session(branch_name)!
+	all_rows := session.scan_table(mut database, 'memory_reflections', 0) or { []TypedSchemaRow{} }
+	// 构建 reflection_id -> row 的索引
+	mut row_by_id := map[string]TypedSchemaRow{}
+	for row in all_rows {
+		id := optional_row_string(row, 'reflection_id')
+		if id.len > 0 {
+			row_by_id[id] = row
+		}
+	}
+	// 构建 superseded_by 反向索引
+	mut superseded_by := map[string][]string{}
+	for id, row in row_by_id {
+		supersedes := optional_row_string(row, 'supersedes_reflection_id')
+		if supersedes.len > 0 {
+			superseded_by[supersedes] << id
+		}
+	}
+	// 收集相关节点：从 reflection_id 向上追溯 + 向下展开
+	mut nodes := map[string]memory.ReflectionSupersedeNode{}
+	mut queue := []string{}
+	mut visited := map[string]bool{}
+	queue << reflection_id
+	// 向上追溯 supersedes 链
+	mut upstream_id := reflection_id
+	max_upstream := 64
+	for step := 0; step < max_upstream; step += 1 {
+		row := row_by_id[upstream_id] or { break }
+		supersedes := optional_row_string(row, 'supersedes_reflection_id')
+		if supersedes.len == 0 {
+			break
+		}
+		if supersedes in visited {
+			break
+		}
+		visited[supersedes] = true
+		queue << supersedes
+		upstream_id = supersedes
+	}
+	// 向下收集被更替的节点
+	mut i := 0
+	for i < queue.len {
+		id := queue[i]
+		for child_id in superseded_by[id] {
+			if child_id !in visited {
+				visited[child_id] = true
+				queue << child_id
+			}
+		}
+		i++
+	}
+	// 构建所有相关节点
+	for id in queue {
+		row := row_by_id[id] or { continue }
+		node := decode_reflection_supersede_node(row, superseded_by)!
+		nodes[id] = node
+	}
+	return memory.ReflectionSupersedeGraph{
+		root_reflection_id: reflection_id
+		nodes: nodes
+	}
+}
+
+fn decode_reflection_evolution_node(mut database PersistentDatabase, row TypedSchemaRow, depth int) !memory.ReflectionEvolutionNode {
+	reflection_id := required_row_string(row, 'reflection_id')!
+	reflection_kind := required_row_string(row, 'reflection_kind')!
+	title := required_row_string(row, 'title')!
+	parent_ref := optional_row_string(row, 'parent_ref')
+	topic_key := optional_row_string(row, 'topic_key')
+	derived_from_root_hash := required_row_string(row, 'derived_from_root_hash')!
+	supersedes_reflection_id := optional_row_string(row, 'supersedes_reflection_id')
+	created_at := required_row_string(row, 'created_at')!
+	source_refs_raw := required_row_string(row, 'source_refs')!
+	source_refs := memory.decode_reflection_source_refs(source_refs_raw)!
+	summary_ref_value := row.data.get('summary_md')!
+	summary_md := match summary_ref_value {
+		MarkdownRef { database.load_markdown(summary_ref_value)! }
+		else { '' }
+	}
+	insight_value := row.data.get('insight_md') or { NullValue{} }
+	insight_md := match insight_value {
+		MarkdownRef { database.load_markdown(insight_value)! }
+		else { '' }
+	}
+	return memory.ReflectionEvolutionNode{
+		reflection_id:            reflection_id
+		reflection_kind:          reflection_kind
+		title:                    title
+		summary_md:               summary_md
+		insight_md:               insight_md
+		topic_key:                topic_key
+		parent_ref:               parent_ref
+		derived_from_root_hash:   derived_from_root_hash
+		supersedes_reflection_id: supersedes_reflection_id
+		created_at:               created_at
+		source_count:             source_refs.len
+		depth:                    depth
+	}
+}
+
+fn decode_reflection_supersede_node(row TypedSchemaRow, superseded_by map[string][]string) !memory.ReflectionSupersedeNode {
+	reflection_id := required_row_string(row, 'reflection_id')!
+	title := required_row_string(row, 'title')!
+	reflection_kind := required_row_string(row, 'reflection_kind')!
+	topic_key := optional_row_string(row, 'topic_key')
+	supersedes_reflection_id := optional_row_string(row, 'supersedes_reflection_id')
+	created_at := required_row_string(row, 'created_at')!
+	by_ids := superseded_by[reflection_id] or { []string{} }
+	return memory.ReflectionSupersedeNode{
+		reflection_id:            reflection_id
+		title:                    title
+		reflection_kind:          reflection_kind
+		topic_key:                topic_key
+		supersedes_reflection_id: supersedes_reflection_id
+		superseded_by_ids:        by_ids
+		created_at:               created_at
+		active:                   by_ids.len == 0
+	}
+}
+
+// scene_block_card_timeline 通过回溯 commit 历史重建场景块的卡片添加时间线
+// 不依赖物理 memory_chain 链接，直接基于 pollydb 的 commit 不可变历史
+pub fn (mut database PersistentDatabase) scene_block_card_timeline(branch_name string, scene_id string, max_commits int) !memory.SceneBlockCardTimeline {
+	if !database.has_table('scene_blocks') {
+		return memory.SceneBlockCardTimeline{
+			scene_id: scene_id
+		}
+	}
+	// 1. 获取当前场景块的最新状态
+	current_block := database.get_scene_block(branch_name, scene_id) or {
+		return memory.SceneBlockCardTimeline{
+			scene_id: scene_id
+		}
+	}
+	// 2. 获取分支 commit 历史
+	limit := if max_commits > 0 { max_commits } else { 512 }
+	mut commits := database.branch_log(branch_name, limit)!
+	if commits.len == 0 {
+		return memory.SceneBlockCardTimeline{
+			scene_id:         scene_id
+			repo:             current_block.repo
+			cwd:              current_block.cwd
+			topic:            current_block.topic
+			current_card_ids: current_block.atomic_memory_ids.clone()
+			total_commits:    0
+		}
+	}
+	// 3. 翻转 commit 列表，从最旧到最新
+	mut ordered := []Commit{}
+	for i := commits.len - 1; i >= 0; i-- {
+		ordered << commits[i]
+	}
+	// 4. 遍历每个 commit，检查 scene_block 的变化
+	mut seen_cards := map[string]bool{}
+	mut events := []memory.SceneCardAdditionEvent{}
+	mut matching_commits := 0
+	for commit in ordered {
+		mut reader := database.snapshot_table_reader_for_commit(commit.cid, 'scene_blocks') or {
+			// 这个 commit 中 scene_blocks 表尚未存在
+			continue
+		}
+		row := reader.get_row(scene_id.bytes()) or {
+			// 这个 commit 中该场景块尚未创建
+			continue
+		}
+		matching_commits++
+		atomic_ids_raw := optional_row_string_from_reader(row, 'atomic_memory_ids')
+		if atomic_ids_raw.len == 0 {
+			continue
+		}
+		card_ids := json.decode([]string, atomic_ids_raw) or { []string{} }
+		for pos, card_id in card_ids {
+			if card_id in seen_cards {
+				continue
+			}
+			seen_cards[card_id] = true
+			events << memory.SceneCardAdditionEvent{
+				reflection_id:  card_id
+				commit_cid:     commit.cid
+				commit_message: commit.meta.message
+				commit_author:  commit.meta.author
+				commit_time:    commit.meta.timestamp
+				position:       pos
+			}
+		}
+	}
+	return memory.SceneBlockCardTimeline{
+		scene_id:         scene_id
+		repo:             current_block.repo
+		cwd:              current_block.cwd
+		topic:            current_block.topic
+		current_card_ids: current_block.atomic_memory_ids.clone()
+		events:           events
+		total_commits:    commits.len
+		matching_commits: matching_commits
+	}
+}
+
+fn optional_row_string_from_reader(row TypedSchemaRow, field string) string {
+	value := row.data.get(field) or { return '' }
+	return match value {
+		string { value }
+		else { '' }
 	}
 }

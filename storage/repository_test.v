@@ -1,22 +1,99 @@
 module storage
 
 import os
+import time
+
+fn repository_persist_atomic_worker(path string, worker_id int, rounds int) bool {
+	for idx in 0 .. rounds {
+		mut repo := Repository.new('main')
+		repo.branches['main'] = 'commit-${worker_id}-${idx}'
+		repo.persist(path) or {
+			eprintln(err)
+			return false
+		}
+		_ = Repository.open(path) or {
+			eprintln(err)
+			return false
+		}
+	}
+	return true
+}
+
+fn test_repository_persist_atomic_under_concurrent_writers() {
+	dir := os.join_path(os.vtmp_dir(),
+		'pollytree-repo-persist-atomic-${os.getpid()}-${time.now().unix_micro()}')
+	os.mkdir_all(dir) or { panic(err) }
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	path := os.join_path(dir, 'repo.meta')
+	Repository.new('main').persist(path) or { panic(err) }
+
+	mut worker0 := spawn repository_persist_atomic_worker(path, 0, 20)
+	mut worker1 := spawn repository_persist_atomic_worker(path, 1, 20)
+	mut worker2 := spawn repository_persist_atomic_worker(path, 2, 20)
+	mut worker3 := spawn repository_persist_atomic_worker(path, 3, 20)
+	assert worker0.wait()
+	assert worker1.wait()
+	assert worker2.wait()
+	assert worker3.wait()
+	_ = Repository.open(path) or { panic(err) }
+}
 
 fn repository_fixture_tree(cfg ChunkConfig) !Tree {
 	mut items := []KVPair{}
 	for idx in 0 .. 12 {
 		items << KVPair{
-			key: 'key-${idx:02}'.bytes()
+			key:   'key-${idx:02}'.bytes()
 			value: 'value-${idx:02}-payload'.bytes()
 		}
 	}
 	return Tree.build(items, cfg)
 }
 
+fn test_persistent_repository_stale_checkpoint_preserves_newer_branch_journal() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask:     0
+	}
+	dir := os.join_path(os.vtmp_dir(),
+		'pollytree-stale-branch-journal-${os.getpid()}-${time.now().unix_micro()}')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	tree := repository_fixture_tree(cfg) or { panic(err) }
+	mut repo1 := PersistentRepository.init(dir, 'main') or { panic(err) }
+	first := repo1.commit_to_branch('main', tree, CommitMeta{
+		author:    'gwg'
+		message:   'first'
+		timestamp: 1
+	}) or { panic(err) }
+
+	mut stale := PersistentRepository.open_default(dir, 'main') or { panic(err) }
+	assert (stale.branch('main') or { panic(err) }).commit_cid == first.snapshot.commit.cid
+
+	tree2 := tree.put(KVPair{
+		key:   'key-05'.bytes()
+		value: 'value-05-new'.bytes()
+	}, cfg) or { panic(err) }
+	second := repo1.commit_to_branch('main', tree2, CommitMeta{
+		author:    'gwg'
+		message:   'second'
+		timestamp: 2
+	}) or { panic(err) }
+
+	stale.close() or { panic(err) }
+	mut reopened := PersistentRepository.open_default(dir, 'main') or { panic(err) }
+	assert (reopened.branch('main') or { panic(err) }).commit_cid == second.snapshot.commit.cid
+	reopened.close_without_checkpoint()
+	repo1.close_without_checkpoint()
+}
+
 fn repository_commit_fixture(mut repo Repository, branch_name string, tree Tree, timestamp i64, message string, mut node_store MemoryNodeStore, mut commit_store MemoryCommitStore) !BranchUpdate {
 	return repo.commit_to_branch(branch_name, tree, CommitMeta{
-		author: 'gwg'
-		message: message
+		author:    'gwg'
+		message:   message
 		timestamp: timestamp
 	}, mut node_store, mut commit_store)
 }
@@ -25,7 +102,7 @@ fn test_repository_commit_to_new_branch_persists_snapshot_and_head() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
@@ -33,8 +110,8 @@ fn test_repository_commit_to_new_branch_persists_snapshot_and_head() {
 	mut commit_store := MemoryCommitStore.new()
 
 	update := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -51,47 +128,57 @@ fn test_repository_create_branch_from_existing_commit() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	main_update := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
-	feature := repo.create_branch('feature/login', main_update.snapshot.commit.cid) or { panic(err) }
+	feature := repo.create_branch('feature/login', main_update.snapshot.commit.cid) or {
+		panic(err)
+	}
 
 	assert feature.commit_cid == main_update.snapshot.commit.cid
 	assert repo.branch_names() == ['feature/login', 'main']
+}
+
+fn test_repository_branch_names_include_empty_branches() {
+	mut repo := Repository.new('main')
+	_ = repo.create_branch('main', '') or { panic(err) }
+	_ = repo.create_branch('feature', '') or { panic(err) }
+	assert repo.branch_names() == ['feature', 'main']
+	assert repo.branch_names_committed() == []string{}
 }
 
 fn test_repository_commit_to_existing_branch_uses_parent_head() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree1 := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	first := repo.commit_to_branch('main', tree1, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
 	tree2 := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'value-05-updated'.bytes()
 	}, cfg) or { panic(err) }
 	second := repo.commit_to_branch('main', tree2, CommitMeta{
-		author: 'gwg'
-		message: 'update'
+		author:    'gwg'
+		message:   'update'
 		timestamp: 2
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -104,37 +191,39 @@ fn test_repository_tree_at_branch_loads_reachable_tree() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	update := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
 	loaded := repo.tree_at_branch('main', mut node_store, mut commit_store) or { panic(err) }
 
 	assert loaded.root.cid == update.snapshot.tree.root.cid
-	assert loaded.reachable_cids() or { panic(err) } == update.snapshot.tree.reachable_cids() or { panic(err) }
+	assert loaded.reachable_cids() or { panic(err) } == update.snapshot.tree.reachable_cids() or {
+		panic(err)
+	}
 }
 
 fn test_repository_apply_mutations_to_branch_advances_head_and_returns_diff() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	first := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -142,8 +231,8 @@ fn test_repository_apply_mutations_to_branch_advances_head_and_returns_diff() {
 		Mutation.put('key-05'.bytes(), 'value-05-updated'.bytes()),
 		Mutation.delete('key-08'.bytes()),
 	], cfg, CommitMeta{
-		author: 'gwg'
-		message: 'apply mutations'
+		author:    'gwg'
+		message:   'apply mutations'
 		timestamp: 2
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -163,7 +252,7 @@ fn test_repository_transaction_at_branch_rehydrates_registered_tables() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	user_codec := RowCodec.new(['name', 'email']) or { panic(err) }
 	mut seed := RowData.new()
@@ -171,7 +260,7 @@ fn test_repository_transaction_at_branch_rehydrates_registered_tables() {
 	seed.set('email', 'ada@example.com'.bytes())
 	tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: user_codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -179,8 +268,8 @@ fn test_repository_transaction_at_branch_rehydrates_registered_tables() {
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	_ = repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -200,7 +289,7 @@ fn test_repository_apply_write_set_to_branch_commits_transaction_result() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	user_codec := RowCodec.new(['name', 'email']) or { panic(err) }
 	mut seed := RowData.new()
@@ -208,7 +297,7 @@ fn test_repository_apply_write_set_to_branch_commits_transaction_result() {
 	seed.set('email', 'ada@example.com'.bytes())
 	tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: user_codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -216,8 +305,8 @@ fn test_repository_apply_write_set_to_branch_commits_transaction_result() {
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	first := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -231,8 +320,8 @@ fn test_repository_apply_write_set_to_branch_commits_transaction_result() {
 			SchemaIndexDef.new('email', 'email') or { panic(err) },
 		]) or { panic(err) },
 	], writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'txn commit'
+		author:    'gwg'
+		message:   'txn commit'
 		timestamp: 2
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -256,7 +345,7 @@ fn test_repository_apply_typed_write_set_to_branch_commits_typed_rows() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	table_def := TableDef.new('users', [
 		ColumnDef.new('id', .i64_, false) or { panic(err) },
@@ -271,7 +360,7 @@ fn test_repository_apply_typed_write_set_to_branch_commits_typed_rows() {
 	seed.set('email', 'ada@example.com')
 	tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -279,8 +368,8 @@ fn test_repository_apply_typed_write_set_to_branch_commits_typed_rows() {
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	first := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -290,14 +379,16 @@ fn test_repository_apply_typed_write_set_to_branch_commits_typed_rows() {
 	row.set('email', 'grace@example.com')
 	writes.put('users', '002'.bytes(), row)
 	result := repo.apply_typed_write_set_to_branch('main', [spec], writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'typed txn'
+		author:    'gwg'
+		message:   'typed txn'
 		timestamp: 2
 	}, mut node_store, mut commit_store) or { panic(err) }
 
 	assert result.update.snapshot.commit.parent_cids == [first.snapshot.commit.cid]
 	assert result.transaction_update.diff.added_cids.len > 0
-	tx := repo.typed_transaction_at_branch('main', [spec], mut node_store, mut commit_store) or { panic(err) }
+	tx := repo.typed_transaction_at_branch('main', [spec], mut node_store, mut commit_store) or {
+		panic(err)
+	}
 	view := tx.indexed_view('users') or { panic(err) }
 	rows := view.find_by_index('email', 'grace@example.com', 0) or { panic(err) }
 	assert rows.len == 1
@@ -308,7 +399,7 @@ fn test_repository_persistent_stores_roundtrip_branch_tree() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree := repository_fixture_tree(cfg) or { panic(err) }
 	node_path := os.join_path(os.vtmp_dir(), 'pollytree-persistent-repo-nodes.bin')
@@ -328,8 +419,8 @@ fn test_repository_persistent_stores_roundtrip_branch_tree() {
 	}
 
 	update := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'persisted init'
+		author:    'gwg'
+		message:   'persisted init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -362,7 +453,7 @@ fn test_persistent_repository_roundtrip() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree := repository_fixture_tree(cfg) or { panic(err) }
 	repo_path := os.join_path(os.vtmp_dir(), 'pollytree-persistent-repository.bin')
@@ -378,8 +469,8 @@ fn test_persistent_repository_roundtrip() {
 		panic(err)
 	}
 	update := persistent.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'persistent init'
+		author:    'gwg'
+		message:   'persistent init'
 		timestamp: 1
 	}) or { panic(err) }
 	persistent.close() or { panic(err) }
@@ -401,7 +492,7 @@ fn test_persistent_repository_open_default_roundtrip() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree := repository_fixture_tree(cfg) or { panic(err) }
 	dir := os.join_path(os.vtmp_dir(), 'pollytree-persistent-repository-default')
@@ -411,8 +502,8 @@ fn test_persistent_repository_open_default_roundtrip() {
 
 	mut persistent := PersistentRepository.init(dir, 'main') or { panic(err) }
 	update := persistent.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'default layout init'
+		author:    'gwg'
+		message:   'default layout init'
 		timestamp: 1
 	}) or { panic(err) }
 	persistent.close() or { panic(err) }
@@ -442,7 +533,7 @@ fn test_repository_working_set_accumulates_uncommitted_changes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	user_codec := RowCodec.new(['name', 'email']) or { panic(err) }
 	mut seed := RowData.new()
@@ -450,7 +541,7 @@ fn test_repository_working_set_accumulates_uncommitted_changes() {
 	seed.set('email', 'ada@example.com'.bytes())
 	tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: user_codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -458,8 +549,8 @@ fn test_repository_working_set_accumulates_uncommitted_changes() {
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	first := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -488,7 +579,7 @@ fn test_repository_commit_working_set_advances_head_and_resets_stage() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	user_codec := RowCodec.new(['name', 'email']) or { panic(err) }
 	mut seed := RowData.new()
@@ -496,7 +587,7 @@ fn test_repository_commit_working_set_advances_head_and_resets_stage() {
 	seed.set('email', 'ada@example.com'.bytes())
 	tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: user_codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -504,8 +595,8 @@ fn test_repository_commit_working_set_advances_head_and_resets_stage() {
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	first := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -522,8 +613,8 @@ fn test_repository_commit_working_set_advances_head_and_resets_stage() {
 	_ = set.apply_write_set(writes, cfg) or { panic(err) }
 
 	result := repo.commit_working_set(mut set, CommitMeta{
-		author: 'gwg'
-		message: 'commit working set'
+		author:    'gwg'
+		message:   'commit working set'
 		timestamp: 2
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -539,7 +630,7 @@ fn test_repository_typed_working_set_accumulates_uncommitted_changes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	table_def := TableDef.new('users', [
 		ColumnDef.new('id', .i64_, false) or { panic(err) },
@@ -554,7 +645,7 @@ fn test_repository_typed_working_set_accumulates_uncommitted_changes() {
 	seed.set('email', 'ada@example.com')
 	tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -562,8 +653,8 @@ fn test_repository_typed_working_set_accumulates_uncommitted_changes() {
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	first := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -590,7 +681,7 @@ fn test_repository_commit_typed_working_set_advances_head_and_resets_stage() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	table_def := TableDef.new('users', [
 		ColumnDef.new('id', .i64_, false) or { panic(err) },
@@ -605,7 +696,7 @@ fn test_repository_commit_typed_working_set_advances_head_and_resets_stage() {
 	seed.set('email', 'ada@example.com')
 	tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -613,8 +704,8 @@ fn test_repository_commit_typed_working_set_advances_head_and_resets_stage() {
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	first := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -629,8 +720,8 @@ fn test_repository_commit_typed_working_set_advances_head_and_resets_stage() {
 	_ = set.apply_write_set(writes, cfg) or { panic(err) }
 
 	result := repo.commit_typed_working_set(mut set, CommitMeta{
-		author: 'gwg'
-		message: 'commit typed working set'
+		author:    'gwg'
+		message:   'commit typed working set'
 		timestamp: 2
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -646,7 +737,7 @@ fn test_repository_typed_working_set_status_summarizes_row_and_index_changes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	table_def := TableDef.new('users', [
 		ColumnDef.new('id', .i64_, false) or { panic(err) },
@@ -661,7 +752,7 @@ fn test_repository_typed_working_set_status_summarizes_row_and_index_changes() {
 	seed.set('email', 'ada@example.com')
 	tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -669,8 +760,8 @@ fn test_repository_typed_working_set_status_summarizes_row_and_index_changes() {
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	_ = repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -700,7 +791,7 @@ fn test_repository_typed_merge_branch_into_working_set_stages_non_conflicting_me
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	table_def := TableDef.new('users', [
 		ColumnDef.new('id', .i64_, false) or { panic(err) },
@@ -715,7 +806,7 @@ fn test_repository_typed_merge_branch_into_working_set_stages_non_conflicting_me
 	seed.set('email', 'ada@example.com')
 	tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -723,8 +814,8 @@ fn test_repository_typed_merge_branch_into_working_set_stages_non_conflicting_me
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	base := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 	repo.create_branch('feature', base.snapshot.commit.cid) or { panic(err) }
@@ -735,16 +826,16 @@ fn test_repository_typed_merge_branch_into_working_set_stages_non_conflicting_me
 	mut feature_writes := TypedWriteSet.new()
 	feature_writes.put('users', '002'.bytes(), feature_row)
 	_ = repo.apply_typed_write_set_to_branch('feature', [spec], feature_writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature typed update'
+		author:    'gwg'
+		message:   'feature typed update'
 		timestamp: 2
 	}, mut node_store, mut commit_store) or { panic(err) }
 
 	mut set := repo.typed_working_set_at_branch('main', [spec], mut node_store, mut commit_store) or {
 		panic(err)
 	}
-	result := repo.typed_merge_branch_into_working_set(mut set, 'feature', []ConflictResolution{}, cfg,
-		mut node_store, mut commit_store) or { panic(err) }
+	result := repo.typed_merge_branch_into_working_set(mut set, 'feature', []ConflictResolution{},
+		cfg, mut node_store, mut commit_store) or { panic(err) }
 
 	assert result.merge_result.conflicts.len == 0
 	assert set.has_changes()
@@ -759,7 +850,7 @@ fn test_repository_typed_merge_branch_into_working_set_applies_conflict_resoluti
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	table_def := TableDef.new('users', [
 		ColumnDef.new('id', .i64_, false) or { panic(err) },
@@ -774,7 +865,7 @@ fn test_repository_typed_merge_branch_into_working_set_applies_conflict_resoluti
 	seed.set('email', 'ada@example.com')
 	tree := Tree.build([
 		KVPair{
-			key: TableView.new(Tree{}, 'users').key_for('001'.bytes())
+			key:   TableView.new(Tree{}, 'users').key_for('001'.bytes())
 			value: codec.encode(seed) or { panic(err) }
 		},
 	], cfg) or { panic(err) }
@@ -782,8 +873,8 @@ fn test_repository_typed_merge_branch_into_working_set_applies_conflict_resoluti
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
 	base := repo.commit_to_branch('main', tree, CommitMeta{
-		author: 'gwg'
-		message: 'init'
+		author:    'gwg'
+		message:   'init'
 		timestamp: 1
 	}, mut node_store, mut commit_store) or { panic(err) }
 	repo.create_branch('feature', base.snapshot.commit.cid) or { panic(err) }
@@ -794,8 +885,8 @@ fn test_repository_typed_merge_branch_into_working_set_applies_conflict_resoluti
 	mut feature_writes := TypedWriteSet.new()
 	feature_writes.put('users', '001'.bytes(), feature_row)
 	_ = repo.apply_typed_write_set_to_branch('feature', [spec], feature_writes, cfg, CommitMeta{
-		author: 'gwg'
-		message: 'feature conflict update'
+		author:    'gwg'
+		message:   'feature conflict update'
 		timestamp: 2
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -813,9 +904,9 @@ fn test_repository_typed_merge_branch_into_working_set_applies_conflict_resoluti
 	resolved_row.set('id', i64(1))
 	resolved_row.set('email', 'resolved@example.com')
 	result := repo.typed_merge_branch_into_working_set(mut set, 'feature', [
-		ConflictResolution.use_manual(TableView.new(Tree{}, 'users').key_for('001'.bytes()), codec.encode(
-			resolved_row
-		) or { panic(err) }),
+		ConflictResolution.use_manual(TableView.new(Tree{}, 'users').key_for('001'.bytes()), codec.encode(resolved_row) or {
+			panic(err)
+		}),
 	], cfg, mut node_store, mut commit_store) or { panic(err) }
 
 	assert result.merge_result.conflicts.len == 1
@@ -835,29 +926,34 @@ fn test_repository_merge_branch_into_working_set_stages_non_conflicting_merge() 
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree1 := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
-	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut commit_store) or { panic(err) }
+	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut
+		commit_store) or { panic(err) }
 	repo.create_branch('feature', base.snapshot.commit.cid) or { panic(err) }
 
 	tree_feature := tree1.put(KVPair{
-		key: 'key-06'.bytes()
+		key:   'key-06'.bytes()
 		value: 'feature-update'.bytes()
 	}, cfg) or { panic(err) }
-	_ = repository_commit_fixture(mut repo, 'feature', tree_feature, 2, 'feature update', mut node_store, mut commit_store) or { panic(err) }
+	_ = repository_commit_fixture(mut repo, 'feature', tree_feature, 2, 'feature update', mut
+		node_store, mut commit_store) or { panic(err) }
 
-	mut set := repo.working_set_at_branch('main', []TableSpec{}, mut node_store, mut commit_store) or { panic(err) }
+	mut set := repo.working_set_at_branch('main', []TableSpec{}, mut node_store, mut commit_store) or {
+		panic(err)
+	}
 	mut writes := WriteSet.new()
 	mut row := RowData.new()
 	row.set('noop', 'value'.bytes())
 	_ = row
 	_ = set.apply_write_set(WriteSet.new(), cfg) or { panic(err) }
 
-	result := repo.merge_branch_into_working_set(mut set, 'feature', []ConflictResolution{}, cfg, mut node_store, mut commit_store) or { panic(err) }
+	result := repo.merge_branch_into_working_set(mut set, 'feature', []ConflictResolution{}, cfg, mut
+		node_store, mut commit_store) or { panic(err) }
 
 	assert result.merge_result.conflicts.len == 0
 	assert set.has_changes()
@@ -870,24 +966,28 @@ fn test_repository_merge_branch_into_working_set_applies_conflict_resolution() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree1 := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
-	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut commit_store) or { panic(err) }
+	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut
+		commit_store) or { panic(err) }
 	repo.create_branch('feature', base.snapshot.commit.cid) or { panic(err) }
 
 	tree_feature := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'feature-update'.bytes()
 	}, cfg) or { panic(err) }
-	_ = repository_commit_fixture(mut repo, 'feature', tree_feature, 2, 'feature update', mut node_store, mut commit_store) or { panic(err) }
+	_ = repository_commit_fixture(mut repo, 'feature', tree_feature, 2, 'feature update', mut
+		node_store, mut commit_store) or { panic(err) }
 
-	mut set := repo.working_set_at_branch('main', []TableSpec{}, mut node_store, mut commit_store) or { panic(err) }
+	mut set := repo.working_set_at_branch('main', []TableSpec{}, mut node_store, mut commit_store) or {
+		panic(err)
+	}
 	mut main_tree := set.transaction().current_tree().put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'main-working-update'.bytes()
 	}, cfg) or { panic(err) }
 	set.replace_working_tree(main_tree) or { panic(err) }
@@ -906,26 +1006,29 @@ fn test_repository_merge_base_branch_finds_common_ancestor() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree1 := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
-	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut commit_store) or { panic(err) }
+	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut
+		commit_store) or { panic(err) }
 	repo.create_branch('feature', base.snapshot.commit.cid) or { panic(err) }
 
 	tree2 := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'main-update'.bytes()
 	}, cfg) or { panic(err) }
-	_ = repository_commit_fixture(mut repo, 'main', tree2, 2, 'main update', mut node_store, mut commit_store) or { panic(err) }
+	_ = repository_commit_fixture(mut repo, 'main', tree2, 2, 'main update', mut node_store, mut
+		commit_store) or { panic(err) }
 
 	tree3 := tree1.put(KVPair{
-		key: 'key-06'.bytes()
+		key:   'key-06'.bytes()
 		value: 'feature-update'.bytes()
 	}, cfg) or { panic(err) }
-	_ = repository_commit_fixture(mut repo, 'feature', tree3, 3, 'feature update', mut node_store, mut commit_store) or { panic(err) }
+	_ = repository_commit_fixture(mut repo, 'feature', tree3, 3, 'feature update', mut node_store, mut
+		commit_store) or { panic(err) }
 
 	merge_base := repo.merge_base_branch('main', 'feature', mut commit_store) or { panic(err) }
 	assert merge_base.cid == base.snapshot.commit.cid
@@ -935,28 +1038,33 @@ fn test_repository_merge_branches_merges_non_conflicting_changes() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree1 := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
-	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut commit_store) or { panic(err) }
+	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut
+		commit_store) or { panic(err) }
 	repo.create_branch('feature', base.snapshot.commit.cid) or { panic(err) }
 
 	tree_main := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'main-update'.bytes()
 	}, cfg) or { panic(err) }
-	main_update := repository_commit_fixture(mut repo, 'main', tree_main, 2, 'main update', mut node_store, mut commit_store) or { panic(err) }
+	main_update := repository_commit_fixture(mut repo, 'main', tree_main, 2, 'main update', mut
+		node_store, mut commit_store) or { panic(err) }
 
 	tree_feature := tree1.put(KVPair{
-		key: 'key-06'.bytes()
+		key:   'key-06'.bytes()
 		value: 'feature-update'.bytes()
 	}, cfg) or { panic(err) }
-	feature_update := repository_commit_fixture(mut repo, 'feature', tree_feature, 3, 'feature update', mut node_store, mut commit_store) or { panic(err) }
+	feature_update := repository_commit_fixture(mut repo, 'feature', tree_feature, 3,
+		'feature update', mut node_store, mut commit_store) or { panic(err) }
 
-	result := repo.merge_branches('main', 'feature', cfg, mut node_store, mut commit_store) or { panic(err) }
+	result := repo.merge_branches('main', 'feature', cfg, mut node_store, mut commit_store) or {
+		panic(err)
+	}
 	assert result.base_commit.cid == base.snapshot.commit.cid
 	assert result.ours_commit.cid == main_update.snapshot.commit.cid
 	assert result.theirs_commit.cid == feature_update.snapshot.commit.cid
@@ -980,28 +1088,33 @@ fn test_repository_merge_branches_reports_conflicts() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree1 := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
-	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut commit_store) or { panic(err) }
+	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut
+		commit_store) or { panic(err) }
 	repo.create_branch('feature', base.snapshot.commit.cid) or { panic(err) }
 
 	tree_main := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'main-update'.bytes()
 	}, cfg) or { panic(err) }
-	_ = repository_commit_fixture(mut repo, 'main', tree_main, 2, 'main update', mut node_store, mut commit_store) or { panic(err) }
+	_ = repository_commit_fixture(mut repo, 'main', tree_main, 2, 'main update', mut node_store, mut
+		commit_store) or { panic(err) }
 
 	tree_feature := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'feature-update'.bytes()
 	}, cfg) or { panic(err) }
-	_ = repository_commit_fixture(mut repo, 'feature', tree_feature, 3, 'feature update', mut node_store, mut commit_store) or { panic(err) }
+	_ = repository_commit_fixture(mut repo, 'feature', tree_feature, 3, 'feature update', mut
+		node_store, mut commit_store) or { panic(err) }
 
-	result := repo.merge_branches('main', 'feature', cfg, mut node_store, mut commit_store) or { panic(err) }
+	result := repo.merge_branches('main', 'feature', cfg, mut node_store, mut commit_store) or {
+		panic(err)
+	}
 	assert result.base_commit.cid == base.snapshot.commit.cid
 	assert result.conflicts.len == 1
 	assert result.conflicts[0].key.bytestr() == 'key-05'
@@ -1013,28 +1126,33 @@ fn test_merge_result_resolve_conflicts_with_ours() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree1 := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
-	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut commit_store) or { panic(err) }
+	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut
+		commit_store) or { panic(err) }
 	repo.create_branch('feature', base.snapshot.commit.cid) or { panic(err) }
 
 	tree_main := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'main-update'.bytes()
 	}, cfg) or { panic(err) }
-	_ = repository_commit_fixture(mut repo, 'main', tree_main, 2, 'main update', mut node_store, mut commit_store) or { panic(err) }
+	_ = repository_commit_fixture(mut repo, 'main', tree_main, 2, 'main update', mut node_store, mut
+		commit_store) or { panic(err) }
 
 	tree_feature := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'feature-update'.bytes()
 	}, cfg) or { panic(err) }
-	_ = repository_commit_fixture(mut repo, 'feature', tree_feature, 3, 'feature update', mut node_store, mut commit_store) or { panic(err) }
+	_ = repository_commit_fixture(mut repo, 'feature', tree_feature, 3, 'feature update', mut
+		node_store, mut commit_store) or { panic(err) }
 
-	result := repo.merge_branches('main', 'feature', cfg, mut node_store, mut commit_store) or { panic(err) }
+	result := repo.merge_branches('main', 'feature', cfg, mut node_store, mut commit_store) or {
+		panic(err)
+	}
 	resolution := result.resolve_conflicts([
 		ConflictResolution.use_ours('key-05'.bytes()),
 	], cfg) or { panic(err) }
@@ -1054,28 +1172,33 @@ fn test_merge_result_resolve_conflicts_with_manual_value() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree1 := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
-	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut commit_store) or { panic(err) }
+	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut
+		commit_store) or { panic(err) }
 	repo.create_branch('feature', base.snapshot.commit.cid) or { panic(err) }
 
 	tree_main := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'main-update'.bytes()
 	}, cfg) or { panic(err) }
-	_ = repository_commit_fixture(mut repo, 'main', tree_main, 2, 'main update', mut node_store, mut commit_store) or { panic(err) }
+	_ = repository_commit_fixture(mut repo, 'main', tree_main, 2, 'main update', mut node_store, mut
+		commit_store) or { panic(err) }
 
 	tree_feature := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'feature-update'.bytes()
 	}, cfg) or { panic(err) }
-	_ = repository_commit_fixture(mut repo, 'feature', tree_feature, 3, 'feature update', mut node_store, mut commit_store) or { panic(err) }
+	_ = repository_commit_fixture(mut repo, 'feature', tree_feature, 3, 'feature update', mut
+		node_store, mut commit_store) or { panic(err) }
 
-	result := repo.merge_branches('main', 'feature', cfg, mut node_store, mut commit_store) or { panic(err) }
+	result := repo.merge_branches('main', 'feature', cfg, mut node_store, mut commit_store) or {
+		panic(err)
+	}
 	resolution := result.resolve_conflicts([
 		ConflictResolution.use_manual('key-05'.bytes(), 'resolved-value'.bytes()),
 	], cfg) or { panic(err) }
@@ -1094,32 +1217,35 @@ fn test_repository_merge_branch_into_commits_resolved_tree() {
 	cfg := ChunkConfig{
 		min_size: 64
 		max_size: 128
-		mask: 0
+		mask:     0
 	}
 	tree1 := repository_fixture_tree(cfg) or { panic(err) }
 	mut repo := Repository.new('main')
 	mut node_store := MemoryNodeStore.new()
 	mut commit_store := MemoryCommitStore.new()
-	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut commit_store) or { panic(err) }
+	base := repository_commit_fixture(mut repo, 'main', tree1, 1, 'init', mut node_store, mut
+		commit_store) or { panic(err) }
 	repo.create_branch('feature', base.snapshot.commit.cid) or { panic(err) }
 
 	tree_main := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'main-update'.bytes()
 	}, cfg) or { panic(err) }
-	main_update := repository_commit_fixture(mut repo, 'main', tree_main, 2, 'main update', mut node_store, mut commit_store) or { panic(err) }
+	main_update := repository_commit_fixture(mut repo, 'main', tree_main, 2, 'main update', mut
+		node_store, mut commit_store) or { panic(err) }
 
 	tree_feature := tree1.put(KVPair{
-		key: 'key-05'.bytes()
+		key:   'key-05'.bytes()
 		value: 'feature-update'.bytes()
 	}, cfg) or { panic(err) }
-	feature_update := repository_commit_fixture(mut repo, 'feature', tree_feature, 3, 'feature update', mut node_store, mut commit_store) or { panic(err) }
+	feature_update := repository_commit_fixture(mut repo, 'feature', tree_feature, 3,
+		'feature update', mut node_store, mut commit_store) or { panic(err) }
 
 	merge_commit := repo.merge_branch_into('main', 'feature', [
 		ConflictResolution.use_theirs('key-05'.bytes()),
 	], cfg, CommitMeta{
-		author: 'gwg'
-		message: 'merge feature'
+		author:    'gwg'
+		message:   'merge feature'
 		timestamp: 4
 	}, mut node_store, mut commit_store) or { panic(err) }
 
@@ -1142,24 +1268,23 @@ fn test_repository_merge_branch_into_commits_resolved_tree() {
 fn test_auto_merge_by_roots_merges_non_conflicting_changes() {
 	cfg := ChunkConfig.default()
 	base_tree := Tree.build([
-		KVPair{key: 'k1'.bytes(), value: 'base-1'.bytes()},
-		KVPair{key: 'k2'.bytes(), value: 'base-2'.bytes()},
+		KVPair{ key: 'k1'.bytes(), value: 'base-1'.bytes() },
+		KVPair{ key: 'k2'.bytes(), value: 'base-2'.bytes() },
 	], cfg) or { panic(err) }
 	ours_tree := base_tree.put(KVPair{
-		key: 'k1'.bytes()
+		key:   'k1'.bytes()
 		value: 'ours-1'.bytes()
 	}, cfg) or { panic(err) }
 	theirs_tree := base_tree.put(KVPair{
-		key: 'k2'.bytes()
+		key:   'k2'.bytes()
 		value: 'theirs-2'.bytes()
 	}, cfg) or { panic(err) }
 	mut store := MemoryNodeStore.new()
 	store.put_tree(base_tree) or { panic(err) }
 	store.put_tree(ours_tree) or { panic(err) }
 	store.put_tree(theirs_tree) or { panic(err) }
-	result := auto_merge_by_roots(base_tree.root.cid, ours_tree.root.cid, theirs_tree.root.cid, cfg, mut store) or {
-		panic(err)
-	}
+	result := auto_merge_by_roots(base_tree.root.cid, ours_tree.root.cid, theirs_tree.root.cid,
+		cfg, mut store) or { panic(err) }
 	assert result.conflicts.len == 0
 	items := result.tree.items() or { panic(err) }
 	mut values := map[string]string{}

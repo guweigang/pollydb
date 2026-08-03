@@ -2,6 +2,7 @@ module storage
 
 import os
 import hash.crc32
+import rand
 import time
 
 pub struct ChunkStoreEntry {
@@ -136,6 +137,13 @@ fn ChunkStore.open_with_modes(path string, maintain_index bool, defer_index_buil
 
 pub fn (mut store ChunkStore) close() {
 	store.checkpoint_internal(true, true) or {}
+	store.file.close()
+}
+
+pub fn (mut store ChunkStore) close_without_checkpoint() {
+	if store.data_dirty {
+		store.file.flush()
+	}
 	store.file.close()
 }
 
@@ -387,6 +395,37 @@ pub fn (mut store ChunkStore) put_many(payloads []ChunkPayload) ![]ChunkStoreEnt
 	return entries
 }
 
+pub fn (mut store ChunkStore) put_many_streaming(payloads []ChunkPayload) ![]ChunkStoreEntry {
+	if payloads.len == 0 {
+		return []ChunkStoreEntry{}
+	}
+	mut entries := []ChunkStoreEntry{cap: payloads.len}
+	mut header := []u8{cap: 8}
+	mut offset := store.write_offset
+	for payload in payloads {
+		header.clear()
+		chunk_store_append_header(mut header, payload.cid.len, payload.data.len)
+		_ = store.file.write(header)!
+		_ = store.file.write(payload.cid)!
+		_ = store.file.write(payload.data)!
+		entry := ChunkStoreEntry{
+			offset: offset
+			length: payload.data.len
+		}
+		entries << entry
+		if store.maintain_index {
+			store.index_add(payload.cid, entry)
+		}
+		offset += u64(8 + payload.cid.len + payload.data.len)
+	}
+	store.write_offset = offset
+	store.data_dirty = true
+	if store.maintain_index {
+		store.index_dirty = true
+	}
+	return entries
+}
+
 pub fn (mut store ChunkStore) put_encoded_batch(records []u8, metas []ChunkRecordMeta) ![]ChunkStoreEntry {
 	if metas.len == 0 {
 		return []ChunkStoreEntry{}
@@ -459,7 +498,7 @@ fn (store ChunkStore) persist_index_snapshot(sync_snapshot bool) ! {
 		return
 	}
 	index_path := chunk_store_index_path(store.path)
-	tmp_path := '${index_path}.tmp'
+	tmp_path := '${index_path}.tmp.${os.getpid()}.${time.now().unix_micro()}.${rand.u64()}'
 	mut out := []u8{}
 	out << chunk_store_index_magic.bytes()
 	chunk_store_append_u32_le(mut out, chunk_store_index_version)
@@ -482,10 +521,10 @@ fn (store ChunkStore) persist_index_snapshot(sync_snapshot bool) ! {
 			chunk_store_fsync_fd(tmp_file.fd)!
 		}
 	}
-	if os.exists(index_path) {
-		os.rm(index_path) or {}
+	os.mv(tmp_path, index_path) or {
+		os.rm(tmp_path) or {}
+		return err
 	}
-	os.mv(tmp_path, index_path)!
 }
 
 fn (store ChunkStore) sync_index_snapshot_file() ! {

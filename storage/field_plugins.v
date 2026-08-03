@@ -39,16 +39,19 @@ pub mut:
 }
 
 struct MarkdownFieldIndexStrategy {}
+
 struct MarkdownFieldProjectionStrategy {}
+
 struct MarkdownFieldMergeStrategy {}
+
 struct MarkdownExternalFieldStorage {}
 
 pub fn FieldCapabilityRegistry.new() FieldCapabilityRegistry {
 	return FieldCapabilityRegistry{
-		index_strategies: []FieldIndexStrategy{}
+		index_strategies:      []FieldIndexStrategy{}
 		projection_strategies: []FieldProjectionStrategy{}
-		merge_strategies: []FieldMergeStrategy{}
-		external_storages: []ExternalFieldStorage{}
+		merge_strategies:      []FieldMergeStrategy{}
+		external_storages:     []ExternalFieldStorage{}
 	}
 }
 
@@ -240,7 +243,8 @@ pub fn expand_field_selector_index_values(root_dir string, column ColumnDef, sto
 	strategy := field_index_strategy_for(column) or {
 		return error('field selector index requires capability-enabled column: ${index.column}')
 	}
-	return strategy.expand_index_values(root_dir, column, stored, index.field_selector(), index.json_field_type)
+	return strategy.expand_index_values(root_dir, column, stored, index.field_selector(),
+		index.json_field_type)
 }
 
 fn (strategy MarkdownFieldIndexStrategy) plugin_name() string {
@@ -260,8 +264,13 @@ fn (strategy MarkdownFieldIndexStrategy) expand_index_values(root_dir string, co
 		return error('markdown field index strategy requires markdown column: ${column.name}')
 	}
 	match stored {
-		NullValue { return []ColumnValue{} }
+		NullValue {
+			return []ColumnValue{}
+		}
 		MarkdownRef {
+			if stored.is_zero() {
+				return []ColumnValue{}
+			}
 			source := load_markdown_source(root_dir, stored.doc_root_id)!
 			doc := vmarkdown.parse(source)!
 			return markdown_index_values(selector, doc, value_type)
@@ -297,6 +306,9 @@ fn (strategy MarkdownFieldProjectionStrategy) compute_projection(mut db Persiste
 		value := row.data.get(column.name)!
 		match value {
 			MarkdownRef {
+				if value.is_zero() {
+					continue
+				}
 				source := db.load_markdown(value) or {
 					return error('field projection failed to load markdown source: ${err}')
 				}
@@ -392,6 +404,7 @@ fn markdown_diff_summary_text(diff MarkdownDiff, limit int) string {
 			.edited { 'edited' }
 			.reused { 'reused' }
 		}
+
 		location := if entry.new_anchor.len > 0 { entry.new_anchor } else { entry.old_anchor }
 		lines << '${verb} ${entry.kind} @ ${location}'
 	}

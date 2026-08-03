@@ -93,6 +93,32 @@ fn test_typed_row_codec_decode_projected_reads_only_selected_columns() {
 	assert email_value is NullValue
 }
 
+fn test_typed_row_codec_projected_payload_can_omit_required_columns() {
+	table := TableDef.new('entries', [
+		ColumnDef.new('id', .string_, false) or { panic(err) },
+		ColumnDef.new('session_id', .string_, false) or { panic(err) },
+		ColumnDef.new('content_text', .string_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table)
+	mut row := TypedRowData.new()
+	row.set('id', 'entry-1')
+	row.set('session_id', 'session-1')
+	row.set('content_text', 'large markdown text')
+
+	encoded := codec.encode_projected_without_validation(row, ['id', 'session_id']) or {
+		panic(err)
+	}
+	projected := codec.decode_projected(encoded, ['id', 'session_id']) or { panic(err) }
+	assert projected.has('id')
+	assert projected.has('session_id')
+	assert !projected.has('content_text')
+	if _ := codec.decode_projected(encoded, ['content_text']) {
+		assert false
+	} else {
+		assert err.msg().contains('required column missing')
+	}
+}
+
 fn test_typed_row_codec_decode_i64_column_reads_scalar_without_full_decode() {
 	table := TableDef.new('users', [
 		ColumnDef.new('id', .i64_, false) or { panic(err) },
@@ -839,6 +865,39 @@ fn test_typed_indexed_schema_view_put_updates_index() {
 	new_rows := indexed.find_by_index('email', 'grace+new@example.com', 0) or { panic(err) }
 	assert old_rows.len == 0
 	assert new_rows.len == 1
+}
+
+fn test_typed_indexed_schema_view_covering_index_updates_stored_row_when_key_is_unchanged() {
+	cfg := ChunkConfig{min_size: 64, max_size: 128, mask: 0}
+	table_def := TableDef.new('users', [
+		ColumnDef.new('id', .i64_, false) or { panic(err) },
+		ColumnDef.new('email', .string_, false) or { panic(err) },
+		ColumnDef.new('active', .bool_, false) or { panic(err) },
+	], ['id']) or { panic(err) }
+	codec := TypedRowCodec.new(table_def)
+	mut seed := TypedRowData.new()
+	seed.set('id', i64(1))
+	seed.set('email', 'ada@example.com')
+	seed.set('active', true)
+	base := Tree{}
+	schema := TypedSchemaView.new(TableView.new(base, 'users'), codec)
+	mut indexed := TypedIndexedSchemaView.new(schema, [
+		SchemaIndexDef.covering('email_cover', 'email') or { panic(err) },
+	]) or { panic(err) }
+	indexed = indexed.put('001'.bytes(), seed, cfg) or { panic(err) }
+
+	mut updated := TypedRowData.new()
+	updated.set('id', i64(1))
+	updated.set('email', 'ada@example.com')
+	updated.set('active', false)
+	indexed = indexed.put('001'.bytes(), updated, cfg) or { panic(err) }
+	rows := indexed.find_by_index('email_cover', 'ada@example.com', 0) or { panic(err) }
+	assert rows.len == 1
+	active := rows[0].data.get('active') or { panic(err) }
+	match active {
+		bool { assert active == false }
+		else { panic('expected bool active from covering index row') }
+	}
 }
 
 fn test_rebuild_typed_aggregates_for_specs_persists_sum_keys() {

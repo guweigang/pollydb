@@ -158,8 +158,7 @@ fn database_docs_general_fts_spec() !TypedTableSpec {
 			tokenizer:      'unicode61 remove_diacritics 2'
 			prefix_lengths: [2, 3, 4]
 		})!,
-		SchemaIndexDef.fts_markdown_with_options('body_fts_idx', 'body', .visible_text_with_code,
-			FtsIndexOptions{
+		SchemaIndexDef.fts_markdown_with_options('body_fts_idx', 'body', .visible_text_with_code, FtsIndexOptions{
 			prefix_lengths: [2, 4]
 		})!,
 	])
@@ -227,9 +226,24 @@ fn test_persistent_database_typed_roundtrip() {
 		string { assert name == 'ada' }
 		else { panic('expected string name') }
 	}
+
 	rows := view.find_by_index('email', 'ada@example.com', 0) or { panic(err) }
 	assert rows.len == 1
 	assert rows[0].primary_key.bytestr() == '001'
+}
+
+fn test_persistent_database_exposes_empty_default_branch() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-empty-default-branch')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	assert db.has_branch('main')
+	assert db.branch_names() == ['main']
+	assert db.branch_names_committed().len == 0
 }
 
 fn test_persistent_database_catalog_preserves_column_aggregates() {
@@ -251,6 +265,84 @@ fn test_persistent_database_catalog_preserves_column_aggregates() {
 	assert !(loaded.table.supports_sum_aggregate('name'))
 }
 
+fn test_persistent_database_registers_yaml_ddl_specs() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-register-yaml-ddl')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	os.mkdir_all(dir) or { panic(err) }
+	ddl_path := os.join_path(dir, 'schema.yml')
+	ddl_text := 'schema_version: 1
+
+tables:
+  - name: users
+    primary_key: [id]
+    columns:
+      - name: id
+        type: string
+        nullable: false
+      - name: name
+        type: string
+        nullable: false
+      - name: email
+        type: string
+        nullable: false
+    indexes:
+      - name: email_idx
+        kind: column
+        column: email
+
+  - name: docs
+    primary_key: [id]
+    columns:
+      - name: id
+        type: string
+        nullable: false
+      - name: content_text
+        type: string
+        nullable: false
+    indexes:
+      - name: content_fts_idx
+        kind: fts_text
+        column: content_text
+        tokenizer: unicode61 remove_diacritics 2
+        prefix_lengths: [2, 3]
+'
+	os.write_file(ddl_path, ddl_text) or { panic(err) }
+
+	ddl := load_yaml_ddl_file(ddl_path) or { panic(err) }
+	specs := ddl.to_typed_specs() or { panic(err) }
+	assert specs.len == 2
+
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	for spec in specs {
+		db.register_or_update_table(spec) or { panic(err) }
+	}
+	db.checkpoint() or { panic(err) }
+	db.close() or { panic(err) }
+
+	mut reopened := PersistentDatabase.open(dir, 'main') or { panic(err) }
+	defer {
+		reopened.close() or {}
+	}
+	assert reopened.table_names() == ['docs', 'users']
+
+	users := reopened.table_spec('users') or { panic(err) }
+	assert users.table.primary_key == ['id']
+	assert users.table.columns.len == 3
+	assert users.indexes.len == 1
+	assert users.indexes[0].name == 'email_idx'
+	assert users.indexes[0].column == 'email'
+
+	docs := reopened.table_spec('docs') or { panic(err) }
+	assert docs.table.columns.len == 2
+	assert docs.indexes.len == 1
+	assert docs.indexes[0].name == 'content_fts_idx'
+	assert docs.indexes[0].is_fts()
+	assert docs.indexes[0].fts_tokenizer == 'unicode61 remove_diacritics 2'
+	assert docs.indexes[0].fts_prefix_lengths == [2, 3]
+}
+
 fn test_persistent_database_register_or_update_table_adds_indexes() {
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-update-table-indexes')
 	defer {
@@ -264,8 +356,9 @@ fn test_persistent_database_register_or_update_table_adds_indexes() {
 	spec_without_index := database_users_no_index_spec() or { panic(err) }
 	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
 	db.register_table(spec_without_index) or { panic(err) }
-	seed_tree := database_seed_tree(spec_without_index, '001', 'ada', 'ada@example.com',
-		cfg) or { panic(err) }
+	seed_tree := database_seed_tree(spec_without_index, '001', 'ada', 'ada@example.com', cfg) or {
+		panic(err)
+	}
 	_ = db.commit_to_branch('main', seed_tree, CommitMeta{
 		author:    'gwg'
 		message:   'seed users'
@@ -291,6 +384,197 @@ fn test_persistent_database_register_or_update_table_adds_indexes() {
 	}
 	assert rows.len == 1
 	assert rows[0].primary_key.bytestr() == '001'
+}
+
+fn test_persistent_database_registers_yaml_ddl_projectors_and_memory_capabilities() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-yaml-ddl-projections-memory')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	ddl_path := os.join_path(dir, 'schema.yml')
+	os.mkdir_all(dir) or { panic(err) }
+	ddl_text := '
+schema_version: 1
+tables:
+  - name: docs
+    primary_key: [id]
+    columns:
+      - name: id
+        type: string
+        nullable: false
+      - name: body
+        type: markdown
+        nullable: false
+    indexes:
+      - name: body_vec_idx
+        kind: embedding_markdown
+        column: body
+        scope: path
+        profile: bge-small
+aggregate_projections:
+  - name: count(docs.body.links)
+    table_name: docs
+    column_name: body
+    kind: count_field_selector
+    plugin: markdown
+    selector: links
+memory_capabilities:
+  - table_name: docs
+    column_name: body
+    embedding_index: body_vec_idx
+    reflection_kind: summary
+'
+	os.write_file(ddl_path, ddl_text) or { panic(err) }
+
+	ddl := load_yaml_ddl_file(ddl_path) or { panic(err) }
+	specs := ddl.to_typed_specs() or { panic(err) }
+	projectors := ddl.aggregate_projection_defs() or { panic(err) }
+	capabilities := ddl.memory_capability_defs() or { panic(err) }
+
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	for spec in specs {
+		db.register_or_update_table(spec) or { panic(err) }
+	}
+	for projector in projectors {
+		db.register_aggregate_projection(projector) or { panic(err) }
+	}
+	for capability in capabilities {
+		db.register_memory_capability(capability) or { panic(err) }
+	}
+	db.checkpoint() or { panic(err) }
+	db.close() or { panic(err) }
+
+	mut reopened := PersistentDatabase.open(dir, 'main') or { panic(err) }
+	defer {
+		reopened.close() or {}
+	}
+	assert reopened.projector_names() == ['count(docs.body.links)']
+	projector := reopened.projector_spec('count(docs.body.links)') or { panic(err) }
+	assert projector.field_projection_selector() == 'links'
+	capability := reopened.memory_capability('docs', 'body') or {
+		panic('expected memory capability for docs.body')
+	}
+	assert capability.options.embedding_index == 'body_vec_idx'
+	assert capability.options.reflection_kind == 'summary'
+}
+
+fn test_persistent_database_preview_schema_update_reports_new_unchanged_added_and_mismatch() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-preview-schema-update')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(database_users_no_index_spec() or { panic(err) }) or { panic(err) }
+
+	users_same := database_users_no_index_spec() or { panic(err) }
+	users_added_index := database_users_spec() or { panic(err) }
+	users_mismatch := TypedTableSpec.new(TableDef.new('users', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('name', .string_, false)!,
+		ColumnDef.new('email', .bytes_, false)!,
+	], ['id'])!, []) or { panic(err) }
+	new_notes := database_notes_spec() or { panic(err) }
+
+	preview := db.preview_schema_update([
+		users_same,
+		users_added_index,
+		users_mismatch,
+		new_notes,
+	])
+	assert preview.tables.len == 4
+	assert preview.has_changes()
+	assert preview.has_mismatches()
+
+	assert preview.tables[0].table_name == 'users'
+	assert preview.tables[0].kind == .unchanged
+	assert preview.tables[0].added_indexes.len == 0
+
+	assert preview.tables[1].table_name == 'users'
+	assert preview.tables[1].kind == .additive_indexes
+	assert preview.tables[1].added_indexes == ['email']
+
+	assert preview.tables[2].table_name == 'users'
+	assert preview.tables[2].kind == .schema_mismatch
+	assert preview.tables[2].mismatch_reasons.len > 0
+	assert preview.tables[2].mismatch_reasons[0].contains('column email type differs')
+
+	assert preview.tables[3].table_name == 'notes'
+	assert preview.tables[3].kind == .new_table
+	assert preview.count_by_kind(.unchanged) == 1
+	assert preview.count_by_kind(.additive_indexes) == 1
+	assert preview.count_by_kind(.schema_mismatch) == 1
+	assert preview.count_by_kind(.new_table) == 1
+	assert preview.changed_table_names() == ['users', 'notes']
+	assert preview.mismatch_table_names() == ['users']
+}
+
+fn test_persistent_database_plan_schema_update_lists_actions() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-plan-schema-update')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(database_users_no_index_spec() or { panic(err) }) or { panic(err) }
+
+	users_added_index := database_users_spec() or { panic(err) }
+	users_mismatch := TypedTableSpec.new(TableDef.new('users', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('name', .string_, false)!,
+		ColumnDef.new('email', .bytes_, false)!,
+	], ['id'])!, []) or { panic(err) }
+	new_notes := database_notes_spec() or { panic(err) }
+
+	plan := db.plan_schema_update([
+		users_added_index,
+		users_mismatch,
+		new_notes,
+	])
+	assert plan.tables.len == 3
+	assert plan.has_changes()
+	assert plan.has_blockers()
+	assert plan.count_actions(.add_index) == 1
+	assert plan.count_actions(.create_table) == 1
+	assert plan.count_actions(.blocked) == 1
+	assert plan.tables[0].actions[0].kind == .add_index
+	assert plan.tables[0].actions[0].detail.contains('email')
+	assert plan.tables[1].actions[0].kind == .blocked
+	assert plan.tables[2].actions[0].kind == .create_table
+}
+
+fn test_persistent_database_preview_and_plan_schema_bundle_include_projectors_and_memory() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-schema-bundle-preview-plan')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(database_docs_general_fts_spec() or { panic(err) }) or { panic(err) }
+	projector := AggregateProjectionDef.count_field_selector('count(docs.body.links)', 'docs',
+		'body', 'markdown', 'links') or { panic(err) }
+	capability := MemoryCapabilityDef.reflective_field('docs', 'body', ReflectionOptions{
+		embedding_index:         'body_fts_idx'
+		reflection_kind:         'summary'
+		link_semantic_neighbors: false
+	}) or { panic(err) }
+
+	preview := db.preview_schema_bundle_update([database_docs_general_fts_spec() or { panic(err) }], [
+		projector,
+	], [capability])
+	assert preview.has_changes()
+	assert !preview.has_mismatches()
+	assert preview.aggregate_projections.len == 1
+	assert preview.aggregate_projections[0].changed
+	assert preview.memory_capabilities.len == 1
+	assert preview.memory_capabilities[0].changed
+
+	plan := db.plan_schema_bundle_update([database_docs_general_fts_spec() or { panic(err) }], [
+		projector,
+	], [capability])
+	assert plan.has_changes()
+	assert !plan.has_blockers()
+	assert plan.count_actions(.register_projector) == 1
+	assert plan.count_actions(.register_memory_capability) == 1
+	assert plan.aggregate_projection_actions.len == 1
+	assert plan.memory_capability_actions.len == 1
 }
 
 fn test_database_session_lookup_index_ordered_projected_uses_covering_reader_path() {
@@ -330,8 +614,8 @@ fn test_database_session_lookup_index_ordered_projected_uses_covering_reader_pat
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	rows := session.lookup_index_ordered_projected(mut db, 'users', 'email', ColumnValue(NullValue{}),
-		false, []u8{}, 2, ['id', 'email'], true) or { panic(err) }
+	rows := session.lookup_index_ordered_projected(mut db, 'users', 'email',
+		ColumnValue(NullValue{}), false, []u8{}, 2, ['id', 'email'], true) or { panic(err) }
 	assert rows.len == 2
 	assert rows[0].primary_key.bytestr() == '003'
 	assert rows[1].primary_key.bytestr() == '002'
@@ -509,6 +793,63 @@ fn test_persistent_database_cfg_routed_split_backed_apply_matches_mixed_apply() 
 	db_split.close() or { panic(err) }
 }
 
+fn test_persistent_database_split_backed_public_index_readers_use_virtual_roots() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-split-public-index-readers')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	cfg := ChunkConfig{
+		min_size:                        64
+		max_size:                        128
+		mask:                            0
+		enable_partitioned_rebuild:      true
+		enable_split_backed_working_set: true
+	}
+	spec := database_users_covering_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	mut writes := TypedWriteSet.new()
+	mut row_001 := TypedRowData.new()
+	row_001.set('id', '001')
+	row_001.set('name', 'ada')
+	row_001.set('email', 'ada@example.com')
+	writes.put('users', '001'.bytes(), row_001)
+	result := db.apply_typed_write_set('main', writes, cfg, CommitMeta{
+		author:    'gwg'
+		message:   'split-backed covering index'
+		timestamp: 1
+	}) or { panic(err) }
+	commit := result.update.snapshot.commit
+	assert commit.virtual_roots.len > 0
+
+	session := db.open_session('main') or { panic(err) }
+	session_rows := session.lookup_index(mut db, 'users', 'email', 'ada@example.com', 10) or {
+		panic(err)
+	}
+	assert session_rows.len == 1
+	assert session_rows[0].data.get('name') or { panic(err) } == ColumnValue('ada')
+
+	projected_rows := session.lookup_index_projected(mut db, 'users', 'email', 'ada@example.com',
+		10, ['id', 'email']) or { panic(err) }
+	assert projected_rows.len == 1
+	assert projected_rows[0].data.get('email') or { panic(err) } == ColumnValue('ada@example.com')
+
+	mut branch_reader := session.index_reader(mut db, 'users', 'email') or { panic(err) }
+	branch_rows := branch_reader.find_rows_covering('ada@example.com', 10) or { panic(err) }
+	assert branch_rows.len == 1
+	assert branch_rows[0].primary_key.bytestr() == '001'
+
+	mut snapshot_reader := db.snapshot_index_reader_for_commit(commit.cid, 'users', 'email') or {
+		panic(err)
+	}
+	snapshot_rows := snapshot_reader.find_rows_covering('ada@example.com', 10) or { panic(err) }
+	assert snapshot_rows.len == 1
+	assert snapshot_rows[0].data.get('name') or { panic(err) } == ColumnValue('ada')
+}
+
 fn test_persistent_database_split_group_commit_roundtrip() {
 	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-split-group-commit')
 	defer {
@@ -589,6 +930,108 @@ fn test_persistent_database_catalog_preserves_enum_json_and_json_path_indexes() 
 	assert loaded.indexes[3].json_field == 'enabled'
 	assert loaded.indexes[3].json_field_type == .bool_
 	assert loaded.indexes[3].stores_row
+}
+
+fn test_persistent_database_catalog_preserves_projected_covering_index_columns() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-catalog-projected-covering')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	table := TableDef.new('entries', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('session_id', .string_, false)!,
+		ColumnDef.new('timestamp', .datetime_, false)!,
+		ColumnDef.new('content_text', .string_, false)!,
+	], ['id'])!
+	spec := TypedTableSpec.new(table, [
+		SchemaIndexDef.covering_projected('entries_session_cover_idx', 'session_id', [
+			'id',
+			'timestamp',
+		])!,
+	])!
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	db.register_table(spec) or { panic(err) }
+	db.close() or { panic(err) }
+
+	mut reopened := PersistentDatabase.open(dir, 'main') or { panic(err) }
+	defer {
+		reopened.close() or {}
+	}
+	loaded := reopened.table_spec('entries') or { panic(err) }
+	assert loaded.indexes.len == 1
+	assert loaded.indexes[0].stores_row
+	assert !loaded.indexes[0].stores_full_row()
+	assert loaded.indexes[0].stored_columns == ['id', 'timestamp']
+	assert loaded.indexes[0].can_cover_columns(['id'])
+	assert !loaded.indexes[0].can_cover_columns(['content_text'])
+}
+
+fn test_persistent_database_projected_covering_index_falls_back_for_missing_columns() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask:     0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-projected-covering-fallback')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	table := TableDef.new('entries', [
+		ColumnDef.new('id', .string_, false)!,
+		ColumnDef.new('session_id', .string_, false)!,
+		ColumnDef.new('timestamp', .datetime_, false)!,
+		ColumnDef.new('content_text', .string_, false)!,
+	], ['id'])!
+	spec := TypedTableSpec.new(table, [
+		SchemaIndexDef.covering_projected('entries_session_cover_idx', 'session_id', [
+			'id',
+			'timestamp',
+		])!,
+	])!
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+	mut row := TypedRowData.new()
+	row.set('id', 'entry-001')
+	row.set('session_id', 'session-001')
+	row.set('timestamp', '2026-03-30T10:00:00.000000Z')
+	row.set('content_text', 'alpha searchable body')
+	_ = session.put_rows(mut db, 'entries', {
+		'entry-001': row
+	}, cfg, CommitMeta{
+		author:    'gwg'
+		message:   'seed projected covering entry'
+		timestamp: 1
+	}) or { panic(err) }
+
+	covered := session.lookup_index_projected(mut db, 'entries', 'entries_session_cover_idx',
+		'session-001', 10, ['id', 'timestamp']) or { panic(err) }
+	assert covered.len == 1
+	assert covered[0].data.get('id') or { panic(err) } == ColumnValue('entry-001')
+	assert !covered[0].data.has('content_text')
+
+	missing_column := session.lookup_index_projected(mut db, 'entries',
+		'entries_session_cover_idx', 'session-001', 10, ['id', 'content_text']) or { panic(err) }
+	assert missing_column.len == 1
+	assert missing_column[0].data.get('id') or { panic(err) } == ColumnValue('entry-001')
+	assert missing_column[0].data.get('content_text') or { panic(err) } == ColumnValue('alpha searchable body')
+
+	mut reader := session.index_reader(mut db, 'entries', 'entries_session_cover_idx') or {
+		panic(err)
+	}
+	reader_rows := reader.find_rows_covering_projected('session-001', 10, ['id', 'content_text']) or {
+		panic(err)
+	}
+	assert reader_rows.len == 1
+	assert reader_rows[0].data.get('content_text') or { panic(err) } == ColumnValue('alpha searchable body')
+
+	full_rows := session.lookup_index(mut db, 'entries', 'entries_session_cover_idx',
+		'session-001', 10) or { panic(err) }
+	assert full_rows.len == 1
+	assert full_rows[0].data.get('content_text') or { panic(err) } == ColumnValue('alpha searchable body')
 }
 
 fn test_persistent_database_catalog_preserves_markdown_selector_indexes() {
@@ -733,8 +1176,7 @@ fn test_persistent_database_catalog_preserves_memory_capabilities() {
 	spec := database_docs_embedding_spec() or { panic(err) }
 	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
 	db.register_table(spec) or { panic(err) }
-	db.register_memory_capability(MemoryCapabilityDef.reflective_field('docs', 'body',
-		ReflectionOptions{
+	db.register_memory_capability(MemoryCapabilityDef.reflective_field('docs', 'body', ReflectionOptions{
 		embedding_index:         'body_path_vec_idx'
 		reflection_kind:         'summary'
 		replay_anchor:           true
@@ -774,8 +1216,7 @@ fn test_persistent_database_register_memory_capability_requires_matching_embeddi
 	db.register_table(spec) or { panic(err) }
 
 	mut saw_missing_err := false
-	db.register_memory_capability(MemoryCapabilityDef.reflective_field('docs', 'body',
-		ReflectionOptions{
+	db.register_memory_capability(MemoryCapabilityDef.reflective_field('docs', 'body', ReflectionOptions{
 		embedding_index: 'missing_vec_idx'
 	}) or { panic(err) }) or {
 		assert err.msg().contains('embedding_index not found on table')
@@ -784,8 +1225,7 @@ fn test_persistent_database_register_memory_capability_requires_matching_embeddi
 	assert saw_missing_err
 
 	mut saw_wrong_column_err := false
-	db.register_memory_capability(MemoryCapabilityDef.reflective_field('docs', 'body',
-		ReflectionOptions{
+	db.register_memory_capability(MemoryCapabilityDef.reflective_field('docs', 'body', ReflectionOptions{
 		embedding_index: 'summary_vec_idx'
 	}) or { panic(err) }) or {
 		assert err.msg().contains('embedding_index must target the same column')
@@ -851,6 +1291,7 @@ fn test_persistent_database_datetime_current_timestamp_and_auto_update() {
 			panic('expected created_at datetime string')
 		}
 	}
+
 	match updated_at {
 		string {
 			updated_at_text = updated_at
@@ -860,6 +1301,7 @@ fn test_persistent_database_datetime_current_timestamp_and_auto_update() {
 			panic('expected updated_at datetime string')
 		}
 	}
+
 	time.sleep(2 * time.millisecond)
 	mut patch := TypedRowData.new()
 	patch.set('title', 'published')
@@ -875,6 +1317,7 @@ fn test_persistent_database_datetime_current_timestamp_and_auto_update() {
 		string { assert next_created_at == created_at_text }
 		else { panic('expected created_at datetime string after update') }
 	}
+
 	match next_updated_at {
 		string {
 			assert next_updated_at != updated_at_text
@@ -884,6 +1327,7 @@ fn test_persistent_database_datetime_current_timestamp_and_auto_update() {
 			panic('expected updated_at datetime string after update')
 		}
 	}
+
 	title := updated.data.get('title') or { panic(err) }
 	match title {
 		string { assert title == 'published' }
@@ -941,8 +1385,8 @@ fn test_persistent_database_datetime_index_between_lookup() {
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	rows := session.lookup_index_between(mut db, 'events', 'created_at_idx', '2026-03-30T10:30:00.000000Z',
-		'2026-03-30T12:00:00.000000Z', 10) or { panic(err) }
+	rows := session.lookup_index_between(mut db, 'events', 'created_at_idx',
+		'2026-03-30T10:30:00.000000Z', '2026-03-30T12:00:00.000000Z', 10) or { panic(err) }
 	assert rows.len == 2
 	assert rows[0].primary_key.bytestr() == '002'
 	assert rows[1].primary_key.bytestr() == '003'
@@ -998,8 +1442,8 @@ fn test_persistent_database_datetime_index_after_lookup() {
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	rows := session.lookup_index_after(mut db, 'events', 'created_at_idx', '2026-03-30T11:00:00.000000Z',
-		10) or { panic(err) }
+	rows := session.lookup_index_after(mut db, 'events', 'created_at_idx',
+		'2026-03-30T11:00:00.000000Z', 10) or { panic(err) }
 	assert rows.len == 1
 	assert rows[0].primary_key.bytestr() == '003'
 }
@@ -1054,10 +1498,67 @@ fn test_persistent_database_datetime_index_before_lookup() {
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	rows := session.lookup_index_before(mut db, 'events', 'created_at_idx', '2026-03-30T11:00:00.000000Z',
-		10) or { panic(err) }
+	rows := session.lookup_index_before(mut db, 'events', 'created_at_idx',
+		'2026-03-30T11:00:00.000000Z', 10) or { panic(err) }
 	assert rows.len == 1
 	assert rows[0].primary_key.bytestr() == '001'
+}
+
+fn test_persistent_database_plain_index_projected_range_lookups_use_projected_rows() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask:     0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-projected-range')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_events_datetime_indexed_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	mut writes := TypedWriteSet.new()
+	ids := ['001', '002', '003']
+	titles := ['a', 'b', 'c']
+	created_values := ['2026-03-30T10:00:00.000000Z', '2026-03-30T11:00:00.000000Z',
+		'2026-03-30T12:00:00.000000Z']
+	for idx, id in ids {
+		mut row := TypedRowData.new()
+		row.set('id', id)
+		row.set('title', titles[idx])
+		row.set('created_at', created_values[idx])
+		writes.put('events', id.bytes(), row)
+	}
+	_ = db.apply_typed_write_set('main', writes, cfg, CommitMeta{
+		author:    'gwg'
+		message:   'seed projected range events'
+		timestamp: 1
+	}) or { panic(err) }
+	session := db.open_session('main') or { panic(err) }
+
+	after_rows := session.lookup_index_after_projected(mut db, 'events', 'created_at_idx',
+		'2026-03-30T11:00:00.000000Z', 10, ['title']) or { panic(err) }
+	assert after_rows.len == 1
+	assert after_rows[0].primary_key.bytestr() == '003'
+	assert after_rows[0].data.get('title') or { panic(err) } == ColumnValue('c')
+	assert !after_rows[0].data.has('created_at')
+
+	before_reverse_rows := session.lookup_index_before_reverse_projected(mut db, 'events',
+		'created_at_idx', '2026-03-30T12:00:00.000000Z', 10, ['title']) or { panic(err) }
+	assert before_reverse_rows.len == 2
+	assert before_reverse_rows[0].primary_key.bytestr() == '002'
+	assert before_reverse_rows[1].primary_key.bytestr() == '001'
+
+	between_rows := session.lookup_index_between_projected(mut db, 'events', 'created_at_idx',
+		'2026-03-30T10:30:00.000000Z', '2026-03-30T12:00:00.000000Z', 10, ['title']) or {
+		panic(err)
+	}
+	assert between_rows.len == 2
+	assert between_rows[0].primary_key.bytestr() == '002'
+	assert between_rows[1].primary_key.bytestr() == '003'
 }
 
 fn test_persistent_database_json_path_indexes_lookup() {
@@ -1184,8 +1685,9 @@ fn test_persistent_database_nested_json_path_indexes_lookup() {
 		timestamp: 2
 	}) or { panic(err) }
 
-	exact_rows := session.lookup_index(mut db, 'items', 'kind_code_idx', 'alpha.one',
-		10) or { panic(err) }
+	exact_rows := session.lookup_index(mut db, 'items', 'kind_code_idx', 'alpha.one', 10) or {
+		panic(err)
+	}
 	assert exact_rows.len == 1
 	assert exact_rows[0].primary_key.bytestr() == '001'
 
@@ -1247,8 +1749,7 @@ fn test_database_session_set_json_path_updates_json_indexes() {
 
 	before := session.lookup_index(mut db, 'items', 'kind_idx', 'alpha', 10) or { panic(err) }
 	assert before.len == 1
-	_ = session.set_json_path(mut db, 'items', '001'.bytes(), 'meta', 'kind', 'beta',
-		cfg, CommitMeta{
+	_ = session.set_json_path(mut db, 'items', '001'.bytes(), 'meta', 'kind', 'beta', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'set json path'
 		timestamp: 2
@@ -1311,8 +1812,7 @@ fn test_database_session_patch_delete_and_null_json_paths() {
 		timestamp: 1
 	}) or { panic(err) }
 
-	_ = session.set_json_path_null(mut db, 'items', '001'.bytes(), 'meta', 'kind', cfg,
-		CommitMeta{
+	_ = session.set_json_path_null(mut db, 'items', '001'.bytes(), 'meta', 'kind', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'null kind'
 		timestamp: 2
@@ -1322,8 +1822,7 @@ fn test_database_session_patch_delete_and_null_json_paths() {
 	}
 	assert null_lookup.len == 1
 
-	_ = session.delete_json_path(mut db, 'items', '001'.bytes(), 'meta', 'legacy', cfg,
-		CommitMeta{
+	_ = session.delete_json_path(mut db, 'items', '001'.bytes(), 'meta', 'legacy', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'delete legacy'
 		timestamp: 3
@@ -1585,8 +2084,7 @@ fn test_persistent_database_markdown_ref_helpers_roundtrip() {
 		ast_version: 1
 		parse_flags: u32(3)
 	}
-	_ = session.put_markdown_ref(mut db, 'notes', 'note-1'.bytes(), 'body', updated, cfg,
-		CommitMeta{
+	_ = session.put_markdown_ref(mut db, 'notes', 'note-1'.bytes(), 'body', updated, cfg, CommitMeta{
 		author:    'gwg'
 		message:   'update markdown ref'
 		timestamp: 2
@@ -1649,10 +2147,148 @@ fn test_persistent_database_put_markdown_persists_source_and_ref() {
 	}) or { panic(err) }
 
 	ref := session.get_markdown_ref(mut db, 'notes', 'note-1'.bytes(), 'body') or { panic(err) }
-	assert ref.doc_root_id.starts_with('doc:')
+	assert ref.doc_root_id.starts_with('src:')
 	assert ref.source_len == raw.len
 	loaded := session.get_markdown(mut db, 'notes', 'note-1'.bytes(), 'body') or { panic(err) }
 	assert loaded == raw
+}
+
+fn test_persistent_database_source_only_markdown_can_rebuild_artifacts() {
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-markdown-source-only')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	left_raw := '# Hello\n\nSource-only markdown.\n'
+	right_raw := '# Hello\n\nSource-only markdown changed.\n'
+	left := db.ingest_markdown_source_only(left_raw) or { panic(err) }
+	right := db.ingest_markdown_source_only(right_raw) or { panic(err) }
+
+	assert left.doc_root_id.starts_with('src:')
+	assert right.doc_root_id.starts_with('src:')
+	assert left.doc_root_id != right.doc_root_id
+	assert db.load_markdown(left) or { panic(err) } == left_raw
+	assert !db.markdown_artifacts_ready(left)
+	assert !db.markdown_artifacts_ready(right)
+
+	db.rebuild_markdown_artifacts(left) or { panic(err) }
+	db.rebuild_markdown_artifacts(right) or { panic(err) }
+	assert db.markdown_artifacts_ready(left)
+	assert db.markdown_artifacts_ready(right)
+
+	diff := db.diff_markdown_refs(left, right) or { panic(err) }
+	assert diff.left_root_id == left.doc_root_id
+	assert diff.right_root_id == right.doc_root_id
+	assert diff.entries.len > 0
+}
+
+fn test_persistent_database_rebuilds_source_only_markdown_artifacts_for_table() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask:     0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-markdown-source-only-table')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	spec := database_notes_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	left := db.ingest_markdown_source_only('# Left\n\nSource-only table rebuild.\n') or {
+		panic(err)
+	}
+	right := db.ingest_markdown_source_only('# Right\n\nSource-only table rebuild changed.\n') or {
+		panic(err)
+	}
+	assert !db.markdown_artifacts_ready(left)
+	assert !db.markdown_artifacts_ready(right)
+
+	session := db.open_session('main') or { panic(err) }
+	mut rows := map[string]TypedRowData{}
+	mut row1 := TypedRowData.new()
+	row1.set('id', 'note-1')
+	row1.set('title', 'left')
+	row1.set('body', left)
+	rows['note-1'] = row1
+	mut row2 := TypedRowData.new()
+	row2.set('id', 'note-2')
+	row2.set('title', 'right')
+	row2.set('body', right)
+	rows['note-2'] = row2
+	_ = session.put_rows(mut db, 'notes', rows, cfg, CommitMeta{
+		author:    'gwg'
+		message:   'source-only markdown rows'
+		timestamp: 1
+	}) or { panic(err) }
+
+	first := db.rebuild_markdown_artifacts_for_table('main', 'notes', 'body', 0) or { panic(err) }
+	assert first.scanned == 2
+	assert first.markdown_refs == 2
+	assert first.pending == 2
+	assert first.rebuilt == 2
+	assert first.skipped_ready == 0
+	assert first.failed == 0
+	assert db.markdown_artifacts_ready(left)
+	assert db.markdown_artifacts_ready(right)
+
+	second := db.rebuild_markdown_artifacts_for_table('main', 'notes', 'body', 0) or { panic(err) }
+	assert second.scanned == 2
+	assert second.markdown_refs == 2
+	assert second.pending == 0
+	assert second.rebuilt == 0
+	assert second.skipped_ready == 2
+	assert second.failed == 0
+
+	diff := db.diff_markdown_refs(left, right) or { panic(err) }
+	assert diff.entries.len > 0
+}
+
+fn test_persistent_database_source_only_markdown_cache_evicts_by_bytes() {
+	old_source_limit := os.getenv('POLLYDB_MARKDOWN_SOURCE_CACHE_MB')
+	old_fts_limit := os.getenv('POLLYDB_MARKDOWN_FTS_CACHE_MB')
+	os.setenv('POLLYDB_MARKDOWN_SOURCE_CACHE_MB', '1', true)
+	os.setenv('POLLYDB_MARKDOWN_FTS_CACHE_MB', '1', true)
+	defer {
+		if old_source_limit.len == 0 {
+			os.unsetenv('POLLYDB_MARKDOWN_SOURCE_CACHE_MB')
+		} else {
+			os.setenv('POLLYDB_MARKDOWN_SOURCE_CACHE_MB', old_source_limit, true)
+		}
+		if old_fts_limit.len == 0 {
+			os.unsetenv('POLLYDB_MARKDOWN_FTS_CACHE_MB')
+		} else {
+			os.setenv('POLLYDB_MARKDOWN_FTS_CACHE_MB', old_fts_limit, true)
+		}
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-markdown-cache-evict')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	mut refs := []MarkdownRef{}
+	for idx in 0 .. 8 {
+		mut raw := '# Entry ${idx}\n\n'
+		for raw.len < 220_000 {
+			raw += 'visible searchable markdown cache eviction text ${idx}\n'
+		}
+		refs << (db.ingest_markdown_source_only(raw) or { panic(err) })
+	}
+	assert db.markdown_source_bytes <= 1024 * 1024
+	assert db.markdown_fts_bytes <= 1024 * 1024
+	assert db.markdown_sources.len < refs.len
+	assert db.markdown_fts_texts.len < refs.len * 3
+	loaded := db.load_markdown(refs[0]) or { panic(err) }
+	assert loaded.contains('Entry 0')
 }
 
 fn test_external_field_storage_helpers_roundtrip_markdown() {
@@ -1675,8 +2311,8 @@ fn test_external_field_storage_helpers_roundtrip_markdown() {
 }
 
 fn test_aggregate_projection_def_exposes_field_projection_metadata() {
-	def := AggregateProjectionDef.count_field_selector('count(notes.body.links)', 'notes',
-		'body', 'markdown', 'links') or { panic(err) }
+	def := AggregateProjectionDef.count_field_selector('count(notes.body.links)', 'notes', 'body',
+		'markdown', 'links') or { panic(err) }
 	assert def.is_field_projection_selector()
 	assert def.field_projection_plugin() == 'markdown'
 	assert def.field_projection_selector() == 'links'
@@ -1779,15 +2415,16 @@ fn test_persistent_database_markdown_selector_indexes_lookup_after_commit() {
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\n[docs](https://example.com)\n\n## Details\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\n[docs](https://example.com)\n\n## Details\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'insert markdown'
 		timestamp: 2
 	}) or { panic(err) }
 
-	link_rows := session.lookup_index(mut db, 'notes', 'body_link_count_idx', i64(1),
-		10) or { panic(err) }
+	link_rows := session.lookup_index(mut db, 'notes', 'body_link_count_idx', i64(1), 10) or {
+		panic(err)
+	}
 	assert link_rows.len == 1
 	assert link_rows[0].primary_key.bytestr() == 'note-1'
 
@@ -1842,8 +2479,8 @@ fn test_transaction_session_markdown_selector_indexes_are_live_before_commit() {
 
 	session := db.begin_default_session() or { panic(err) }
 	mut tx := session.begin_working_set(mut db) or { panic(err) }
-	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\n[docs](https://example.com)\n\n## Details\n',
-		cfg) or { panic(err) }
+	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\n[docs](https://example.com)\n\n## Details\n', cfg) or { panic(err) }
 
 	link_rows := tx.lookup_index('notes', 'body_link_count_idx', i64(1), 10) or { panic(err) }
 	assert link_rows.len == 1
@@ -1854,8 +2491,9 @@ fn test_transaction_session_markdown_selector_indexes_are_live_before_commit() {
 	}
 	assert before_rows.len == 1
 
-	between_rows := tx.lookup_index_between('notes', 'body_h2_count_cover', i64(1), i64(1),
-		10) or { panic(err) }
+	between_rows := tx.lookup_index_between('notes', 'body_h2_count_cover', i64(1), i64(1), 10) or {
+		panic(err)
+	}
 	assert between_rows.len == 1
 }
 
@@ -1949,8 +2587,8 @@ fn test_persistent_database_lookup_index_before_reverse() {
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	rows := session.lookup_index_before_reverse(mut db, 'events', 'created_at_idx', '2026-03-30T12:00:00.000000Z',
-		10) or { panic(err) }
+	rows := session.lookup_index_before_reverse(mut db, 'events', 'created_at_idx',
+		'2026-03-30T12:00:00.000000Z', 10) or { panic(err) }
 	assert rows.len == 2
 	assert rows[0].primary_key.bytestr() == '002'
 	assert rows[1].primary_key.bytestr() == '001'
@@ -2013,10 +2651,10 @@ fn test_transaction_session_markdown_selector_index_cursor_supports_iteration() 
 
 	session := db.begin_default_session() or { panic(err) }
 	mut tx := session.begin_working_set(mut db) or { panic(err) }
-	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\n[one](https://example.com/1)\n',
-		cfg) or { panic(err) }
-	_ = tx.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Intro\n\n[two](https://example.com/2)\n',
-		cfg) or { panic(err) }
+	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\n[one](https://example.com/1)\n', cfg) or { panic(err) }
+	_ = tx.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Intro\n\n[two](https://example.com/2)\n', cfg) or { panic(err) }
 
 	mut cursor := tx.index_cursor('notes', 'body_link_count_idx', i64(1), []u8{}, 10) or {
 		panic(err)
@@ -2037,8 +2675,9 @@ fn test_transaction_session_markdown_selector_index_cursor_supports_iteration() 
 	current := seeked.current() or { panic(err) }
 	assert current.primary_key.bytestr() == 'note-2'
 
-	mut collected_cursor := tx.index_cursor('notes', 'body_link_count_idx', i64(1), []u8{},
-		10) or { panic(err) }
+	mut collected_cursor := tx.index_cursor('notes', 'body_link_count_idx', i64(1), []u8{}, 10) or {
+		panic(err)
+	}
 	collected := collected_cursor.collect(10) or { panic(err) }
 	assert collected.len == 2
 }
@@ -2081,20 +2720,22 @@ fn test_persistent_database_markdown_value_indexes_lookup_and_prefix_after_commi
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '## Roadmap\n\n[docs](https://docs.example.com/a)\n\n```v\nprintln("ok")\n```\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'## Roadmap\n\n[docs](https://docs.example.com/a)\n\n```v\nprintln("ok")\n```\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'insert markdown'
 		timestamp: 2
 	}) or { panic(err) }
 
-	host_rows := session.lookup_index(mut db, 'notes', 'body_link_host_idx', 'docs.example.com',
-		10) or { panic(err) }
+	host_rows := session.lookup_index(mut db, 'notes', 'body_link_host_idx', 'docs.example.com', 10) or {
+		panic(err)
+	}
 	assert host_rows.len == 1
 	assert host_rows[0].primary_key.bytestr() == 'note-1'
 
-	heading_rows := session.lookup_index_prefix(mut db, 'notes', 'body_heading_text_idx',
-		'Road', 10) or { panic(err) }
+	heading_rows := session.lookup_index_prefix(mut db, 'notes', 'body_heading_text_idx', 'Road', 10) or {
+		panic(err)
+	}
 	assert heading_rows.len == 1
 
 	lang_rows := session.lookup_index(mut db, 'notes', 'body_code_lang_cover', 'v', 10) or {
@@ -2160,13 +2801,14 @@ fn test_transaction_session_markdown_value_index_cursor_supports_iteration() {
 
 	session := db.begin_default_session() or { panic(err) }
 	mut tx := session.begin_working_set(mut db) or { panic(err) }
-	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '[one](https://docs.example.com/1)\n',
-		cfg) or { panic(err) }
-	_ = tx.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '[two](https://docs.example.com/2)\n',
-		cfg) or { panic(err) }
+	_ = tx.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'[one](https://docs.example.com/1)\n', cfg) or { panic(err) }
+	_ = tx.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'[two](https://docs.example.com/2)\n', cfg) or { panic(err) }
 
-	mut cursor := tx.index_cursor('notes', 'body_link_host_idx', 'docs.example.com', []u8{},
-		10) or { panic(err) }
+	mut cursor := tx.index_cursor('notes', 'body_link_host_idx', 'docs.example.com', []u8{}, 10) or {
+		panic(err)
+	}
 	assert (cursor.peek() or { panic(err) }).primary_key.bytestr() == 'note-1'
 	assert (cursor.next() or { panic(err) }).primary_key.bytestr() == 'note-1'
 	assert (cursor.next() or { panic(err) }).primary_key.bytestr() == 'note-2'
@@ -2194,7 +2836,7 @@ fn test_persistent_database_preview_markdown_merge_refs_returns_merged_source() 
 	assert preview.mergeable
 	assert preview.base_to_ours.entries.len > 0
 	assert preview.base_to_theirs.entries.len > 0
-	assert preview.merged_ref.doc_root_id.starts_with('doc:')
+	assert preview.merged_ref.doc_root_id.starts_with('src:')
 	assert preview.merged_source.contains('One updated.')
 	assert preview.merged_source.contains('Two updated.')
 	_ = cfg
@@ -2219,7 +2861,7 @@ fn test_persistent_database_merge_markdown_refs_returns_new_ref() {
 	ours := db.ingest_markdown('# Title\n\nAlpha main.\n\nBeta.\n') or { panic(err) }
 	theirs := db.ingest_markdown('# Title\n\nAlpha.\n\nBeta feature.\n') or { panic(err) }
 	merged := db.merge_markdown_refs(base, ours, theirs) or { panic(err) }
-	assert merged.doc_root_id.starts_with('doc:')
+	assert merged.doc_root_id.starts_with('src:')
 	merged_raw := db.load_markdown(merged) or { panic(err) }
 	assert merged_raw.contains('Alpha main.')
 	assert merged_raw.contains('Beta feature.')
@@ -2274,8 +2916,8 @@ fn test_persistent_database_merge_auto_resolves_distinct_row_columns_with_markdo
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Seed\n\nFeature body update.\n',
-		cfg, CommitMeta{
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Seed\n\nFeature body update.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'feature body update'
 		timestamp: 3
@@ -2290,6 +2932,7 @@ fn test_persistent_database_merge_auto_resolves_distinct_row_columns_with_markdo
 		string { assert title == 'Main Title' }
 		else { panic('expected merged title string') }
 	}
+
 	merged_ref := merge_session.get_markdown_ref('notes', 'note-1'.bytes(), 'body') or {
 		panic(err)
 	}
@@ -2336,16 +2979,16 @@ fn test_persistent_database_merge_auto_resolves_markdown_field_disjoint_top_leve
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nFirst paragraph updated on main.\n\nSecond paragraph.\n',
-		cfg, CommitMeta{
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Title\n\nFirst paragraph updated on main.\n\nSecond paragraph.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'main markdown update'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nFirst paragraph.\n\nSecond paragraph updated on feature.\n',
-		cfg, CommitMeta{
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Title\n\nFirst paragraph.\n\nSecond paragraph updated on feature.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'feature markdown update'
 		timestamp: 3
@@ -2400,16 +3043,16 @@ fn test_persistent_database_merge_auto_resolves_markdown_nested_blockquote_list_
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '> intro updated on main\n>\n> - alpha\n> - beta\n',
-		cfg, CommitMeta{
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'> intro updated on main\n>\n> - alpha\n> - beta\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'main nested markdown update'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '> intro\n>\n> - alpha\n> - beta updated on feature\n',
-		cfg, CommitMeta{
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'> intro\n>\n> - alpha\n> - beta updated on feature\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'feature nested markdown update'
 		timestamp: 3
@@ -2463,16 +3106,16 @@ fn test_persistent_database_merge_auto_resolves_markdown_multiblock_list_item_ch
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- item intro updated on main\n\n  ```v\n  println("base")\n  ```\n',
-		cfg, CommitMeta{
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'- item intro updated on main\n\n  ```v\n  println("base")\n  ```\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'main list item paragraph update'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- item intro\n\n  ```v\n  println("feature")\n  ```\n',
-		cfg, CommitMeta{
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'- item intro\n\n  ```v\n  println("feature")\n  ```\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'feature list item code update'
 		timestamp: 3
@@ -2526,16 +3169,16 @@ fn test_persistent_database_merge_auto_resolves_markdown_reorder_plus_edit() {
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nBeta paragraph.\n\nAlpha paragraph.\n',
-		cfg, CommitMeta{
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Title\n\nBeta paragraph.\n\nAlpha paragraph.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'main reorder'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nAlpha paragraph updated on feature.\n\nBeta paragraph.\n',
-		cfg, CommitMeta{
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Title\n\nAlpha paragraph updated on feature.\n\nBeta paragraph.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'feature edit'
 		timestamp: 3
@@ -2600,8 +3243,8 @@ fn test_persistent_database_merge_auto_resolves_markdown_list_reorder_plus_edit(
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- alpha updated on feature\n- beta\n',
-		cfg, CommitMeta{
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'- alpha updated on feature\n- beta\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'feature list edit'
 		timestamp: 3
@@ -2658,16 +3301,16 @@ fn test_persistent_database_merge_auto_resolves_markdown_repeated_block_reorder_
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nRepeat.\n\nRepeat.\n',
-		cfg, CommitMeta{
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Title\n\nRepeat.\n\nRepeat.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'main noop normalize'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nRepeat updated on feature.\n\nRepeat.\n',
-		cfg, CommitMeta{
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Title\n\nRepeat updated on feature.\n\nRepeat.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'feature repeated edit'
 		timestamp: 3
@@ -2720,16 +3363,16 @@ fn test_persistent_database_merge_auto_resolves_markdown_repeated_list_item_reor
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- repeat\n- repeat\n',
-		cfg, CommitMeta{
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'- repeat\n- repeat\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'main noop normalize'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '- repeat updated on feature\n- repeat\n',
-		cfg, CommitMeta{
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'- repeat updated on feature\n- repeat\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'feature repeated list edit'
 		timestamp: 3
@@ -2782,16 +3425,16 @@ fn test_persistent_database_merge_auto_resolves_markdown_repeated_blocks_by_head
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# B\n\nRepeat.\n\n# A\n\nRepeat.\n',
-		cfg, CommitMeta{
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# B\n\nRepeat.\n\n# A\n\nRepeat.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'main section reorder'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# A\n\nRepeat.\n\n# B\n\nRepeat updated under B.\n',
-		cfg, CommitMeta{
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# A\n\nRepeat.\n\n# B\n\nRepeat updated under B.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'feature context edit'
 		timestamp: 3
@@ -2975,15 +3618,18 @@ fn test_group_commit_high_throughput_profile() {
 	assert profile.checkpoint_every == 8
 	assert profile.checkpoint_mode == .data_only
 	assert profile.auto_refresh_index_snapshots
+	assert profile.buffer_writes
 	tuned := profile.with_checkpoint_every(16)
 	assert tuned.checkpoint_every == 16
 	assert tuned.checkpoint_mode == .data_only
 	assert tuned.auto_refresh_index_snapshots
+	assert tuned.buffer_writes
 
 	durable := GroupCommitOptions.durable_default()
 	assert durable.checkpoint_every == 8
 	assert durable.checkpoint_mode == .full
 	assert !durable.auto_refresh_index_snapshots
+	assert !durable.buffer_writes
 }
 
 fn test_snapshot_read_scheduler_queries_multiple_commit_versions_in_parallel() {
@@ -3036,6 +3682,7 @@ fn test_snapshot_read_scheduler_queries_multiple_commit_versions_in_parallel() {
 		string { assert name1 == 'ada' }
 		else { panic('expected string name') }
 	}
+
 	match name2 {
 		string { assert name2 == 'grace' }
 		else { panic('expected string name') }
@@ -3151,8 +3798,7 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_async() {
 	head := db.branch('main') or { panic(err) }
 
 	scheduler := db.snapshot_read_scheduler()
-	mut h := scheduler.lookup_index_prefix_async(head.commit_cid, 'users', 'email', 'al',
-		10)
+	mut h := scheduler.lookup_index_prefix_async(head.commit_cid, 'users', 'email', 'al', 10)
 	result := h.wait() or { panic(err) }
 	assert result.rows.len == 1
 	assert result.rows[0].primary_key.bytestr() == '002'
@@ -3209,8 +3855,7 @@ fn test_snapshot_read_scheduler_scans_table_from_primary_key() {
 	head := db.branch('main') or { panic(err) }
 
 	scheduler := db.snapshot_read_scheduler()
-	mut h := scheduler.scan_table_from_async(head.commit_cid, 'users', '002'.bytes(),
-		10)
+	mut h := scheduler.scan_table_from_async(head.commit_cid, 'users', '002'.bytes(), 10)
 	result := h.wait() or { panic(err) }
 	assert result.rows.len == 2
 	assert result.rows[0].primary_key.bytestr() == '002'
@@ -3264,8 +3909,8 @@ fn test_snapshot_read_scheduler_prefix_index_lookup_from_primary_key() {
 	head := db.branch('main') or { panic(err) }
 
 	scheduler := db.snapshot_read_scheduler()
-	mut h := scheduler.lookup_index_prefix_from_async(head.commit_cid, 'users', 'email',
-		'al', '002'.bytes(), 10)
+	mut h := scheduler.lookup_index_prefix_from_async(head.commit_cid, 'users', 'email', 'al',
+		'002'.bytes(), 10)
 	result := h.wait() or { panic(err) }
 	assert result.rows.len == 1
 	assert result.rows[0].primary_key.bytestr() == '002'
@@ -3475,16 +4120,16 @@ fn test_database_merge_report_includes_markdown_diff_summary_for_conflicts() {
 	_ = db.create_branch('feature', seed_update.branch.commit_cid) or { panic(err) }
 
 	main_session := db.open_session('main') or { panic(err) }
-	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nMain paragraph.\n',
-		cfg, CommitMeta{
+	_ = main_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Title\n\nMain paragraph.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'main markdown conflict'
 		timestamp: 2
 	}) or { panic(err) }
 
 	feature_session := db.open_session('feature') or { panic(err) }
-	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Title\n\nFeature paragraph.\n',
-		cfg, CommitMeta{
+	_ = feature_session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Title\n\nFeature paragraph.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'feature markdown conflict'
 		timestamp: 3
@@ -3696,6 +4341,7 @@ fn test_database_session_table_reader_fast_path() {
 		string { assert name == 'ada' }
 		else { panic('expected string name') }
 	}
+
 	stats := reader.get_row_with_stats('001'.bytes()) or { panic(err) }
 	assert stats.stats.path_depth >= 1
 	assert stats.stats.nodes_read >= 1
@@ -3836,9 +4482,50 @@ fn test_database_session_lookup_index_prefix_projected() {
 	}) or { panic(err) }
 
 	session := db.begin_session(SessionOptions.for_branch('main')) or { panic(err) }
-	rows := session.lookup_index_prefix_projected(mut db, 'users', 'email', 'al', 10,
-		['email']) or { panic(err) }
+	rows := session.lookup_index_prefix_projected(mut db, 'users', 'email', 'al', 10, [
+		'email',
+	]) or { panic(err) }
 	assert rows.len > 0
+	assert rows[0].data.has('email')
+	assert !rows[0].data.has('name')
+	assert !rows[0].data.has('id')
+}
+
+fn test_database_session_lookup_plain_index_projected_falls_back_to_projected_rows() {
+	cfg := ChunkConfig{
+		min_size: 64
+		max_size: 128
+		mask:     0
+	}
+	dir := os.join_path(os.vtmp_dir(), 'pollydb-database-plain-index-projected')
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+
+	spec := database_users_spec() or { panic(err) }
+	mut db := PersistentDatabase.init(dir, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	db.register_table(spec) or { panic(err) }
+	mut writes := TypedWriteSet.new()
+	mut ada := TypedRowData.new()
+	ada.set('id', '001')
+	ada.set('name', 'ada')
+	ada.set('email', 'ada@example.com')
+	writes.put('users', '001'.bytes(), ada)
+	_ = db.apply_typed_write_set('main', writes, cfg, CommitMeta{
+		author:    'gwg'
+		message:   'seed users'
+		timestamp: 1
+	}) or { panic(err) }
+
+	session := db.begin_session(SessionOptions.for_branch('main')) or { panic(err) }
+	rows := session.lookup_index_projected(mut db, 'users', 'email', 'ada@example.com', 10, [
+		'email',
+	]) or { panic(err) }
+	assert rows.len == 1
+	assert rows[0].primary_key.bytestr() == '001'
 	assert rows[0].data.has('email')
 	assert !rows[0].data.has('name')
 	assert !rows[0].data.has('id')
@@ -4256,8 +4943,9 @@ fn test_database_session_lookup_index_prefix_reverse() {
 		timestamp: 1
 	}) or { panic(err) }
 
-	reverse_rows := session.lookup_index_prefix_reverse(mut db, 'users', 'email', 'a',
-		3) or { panic(err) }
+	reverse_rows := session.lookup_index_prefix_reverse(mut db, 'users', 'email', 'a', 3) or {
+		panic(err)
+	}
 
 	assert reverse_rows.len == 3
 	assert reverse_rows[0].primary_key.bytestr() == '001'
@@ -4377,14 +5065,14 @@ fn test_database_session_query_uses_markdown_selector_prefix_index() {
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '## Roadmap\n\n[docs](https://docs.example.com/a)\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'## Roadmap\n\n[docs](https://docs.example.com/a)\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write roadmap'
 		timestamp: 2
 	}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '## Changelog\n\nNothing yet.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'## Changelog\n\nNothing yet.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write changelog'
 		timestamp: 3
@@ -4443,20 +5131,22 @@ fn test_database_session_lookup_markdown_fts_value_indexes() {
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write body'
 		timestamp: 2
 	}) or { panic(err) }
 
-	heading_rows := session.lookup_index(mut db, 'notes', 'body_fts_heading_idx', 'roadmap',
-		10) or { panic(err) }
+	heading_rows := session.lookup_index(mut db, 'notes', 'body_fts_heading_idx', 'roadmap', 10) or {
+		panic(err)
+	}
 	assert heading_rows.len == 1
 	assert heading_rows[0].primary_key.bytestr() == 'note-1'
 
-	prefix_rows := session.lookup_index_prefix(mut db, 'notes', 'body_fts_any_idx', 'agen',
-		10) or { panic(err) }
+	prefix_rows := session.lookup_index_prefix(mut db, 'notes', 'body_fts_any_idx', 'agen', 10) or {
+		panic(err)
+	}
 	assert prefix_rows.len == 1
 	assert prefix_rows[0].primary_key.bytestr() == 'note-1'
 }
@@ -4512,14 +5202,14 @@ fn test_database_session_query_page_uses_markdown_fts_selector_index() {
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\nParagraph about PollyDB merge.\n\n## Roadmap\n\nShip agent sync.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write roadmap'
 		timestamp: 2
 	}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Notes\n\nDiscuss metrics only.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Notes\n\nDiscuss metrics only.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write notes'
 		timestamp: 3
@@ -4582,9 +5272,8 @@ fn test_database_session_put_row_rebuilds_markdown_selector_indexes() {
 
 	session := db.open_session('main') or { panic(err) }
 	body_column := spec.table.column('body') or { panic(err) }
-	stored := ingest_external_field_value(mut db, body_column, '# Intro\n\nInspect the patch.\n\n## Roadmap\n\nShip agent sync.\n') or {
-		panic(err)
-	}
+	stored := ingest_external_field_value(mut db, body_column,
+		'# Intro\n\nInspect the patch.\n\n## Roadmap\n\nShip agent sync.\n') or { panic(err) }
 	mut updated := TypedRowData.new()
 	updated.set('id', 'note-1')
 	updated.set('title', 'Roadmap')
@@ -4595,13 +5284,15 @@ fn test_database_session_put_row_rebuilds_markdown_selector_indexes() {
 		timestamp: 2
 	}) or { panic(err) }
 
-	prefix_rows := session.lookup_index_prefix(mut db, 'notes', 'body_fts_any_idx', 'insp',
-		10) or { panic(err) }
+	prefix_rows := session.lookup_index_prefix(mut db, 'notes', 'body_fts_any_idx', 'insp', 10) or {
+		panic(err)
+	}
 	assert prefix_rows.len == 1
 	assert prefix_rows[0].primary_key.bytestr() == 'note-1'
 
-	heading_rows := session.lookup_index(mut db, 'notes', 'body_fts_heading_idx', 'roadmap',
-		10) or { panic(err) }
+	heading_rows := session.lookup_index(mut db, 'notes', 'body_fts_heading_idx', 'roadmap', 10) or {
+		panic(err)
+	}
 	assert heading_rows.len == 1
 	assert heading_rows[0].primary_key.bytestr() == 'note-1'
 }
@@ -4651,20 +5342,20 @@ fn test_database_session_query_fts_all_intersects_exact_term_indexes() {
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nParagraph about PollyDB merge and agent sync.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\nParagraph about PollyDB merge and agent sync.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write note-1'
 		timestamp: 2
 	}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Intro\n\nParagraph about PollyDB only.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Intro\n\nParagraph about PollyDB only.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write note-2'
 		timestamp: 3
 	}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body', '# Intro\n\nParagraph about merge only.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body',
+		'# Intro\n\nParagraph about merge only.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write note-3'
 		timestamp: 4
@@ -4742,20 +5433,20 @@ fn test_database_session_query_fts_any_unions_exact_term_indexes() {
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Roadmap\n\nShip agent sync.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Roadmap\n\nShip agent sync.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write note-1'
 		timestamp: 2
 	}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Metrics\n\nTrack dashboard metrics.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Metrics\n\nTrack dashboard metrics.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write note-2'
 		timestamp: 3
 	}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body', '# Notes\n\nNothing relevant.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-3'.bytes(), 'body',
+		'# Notes\n\nNothing relevant.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write note-3'
 		timestamp: 4
@@ -4829,14 +5520,14 @@ fn test_database_session_query_fts_falls_back_to_scan_without_fts_index() {
 	}) or { panic(err) }
 
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Roadmap\n\nShip agent sync.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Roadmap\n\nShip agent sync.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write note-1'
 		timestamp: 2
 	}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Notes\n\nDiscuss metrics.\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Notes\n\nDiscuss metrics.\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'write note-2'
 		timestamp: 3
@@ -5186,7 +5877,8 @@ fn test_database_session_query_supports_between_on_datetime_index() {
 	result := session.query_rows(mut db, QueryRequest{
 		table_name: 'events'
 		filters:    [
-			QueryFilter.between('created_at', '2026-01-02T00:00:00.000000Z', '2026-01-03T00:00:00.000000Z'),
+			QueryFilter.between('created_at', '2026-01-02T00:00:00.000000Z',
+				'2026-01-03T00:00:00.000000Z'),
 		]
 		limit:      10
 	}) or { panic(err) }
@@ -5252,14 +5944,14 @@ fn test_database_session_query_supports_after_on_markdown_metric_index() {
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.open_session('main') or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\n[a](https://a.example)\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\n[a](https://a.example)\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'note 1 markdown'
 		timestamp: 2
 	}) or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body', '# Intro\n\n[a](https://a.example)\n\n[b](https://b.example)\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-2'.bytes(), 'body',
+		'# Intro\n\n[a](https://a.example)\n\n[b](https://b.example)\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'note 2 markdown'
 		timestamp: 3
@@ -5337,10 +6029,12 @@ fn test_database_session_query_rows_supports_primary_key_pagination() {
 		string { assert first_page.next_index_value == 'grace@example.com' }
 		else { panic('expected next_index_value string') }
 	}
+
 	match first_page.cursor.next_index_value {
 		string { assert first_page.cursor.next_index_value == 'grace@example.com' }
 		else { panic('expected cursor next_index_value string') }
 	}
+
 	assert first_page.cursor.next_continuation_token.len > 0
 	assert first_page.rows[0].primary_key.bytestr() == '001'
 	assert first_page.rows[1].primary_key.bytestr() == '002'
@@ -5571,6 +6265,7 @@ fn test_database_session_query_page_supports_primary_key_pagination() {
 		string { assert first_page.cursor.next_index_value == 'grace@example.com' }
 		else { panic('expected cursor next_index_value string') }
 	}
+
 	assert first_page.cursor.next_continuation_token.len > 0
 
 	second_page := session.query_page(mut db, QueryRequest{
@@ -6262,8 +6957,9 @@ fn test_normalized_query_predicate_maps_sql_like_comparisons() {
 	}
 	assert lt.op == .before
 
-	between := NormalizedQueryPredicate.field_between('body', 'markdown', 'links', i64(1),
-		i64(3)).to_query_predicate_spec() or { panic(err) }
+	between := NormalizedQueryPredicate.field_between('body', 'markdown', 'links', i64(1), i64(3)).to_query_predicate_spec() or {
+		panic(err)
+	}
 	assert between.target.column_name == 'body'
 	assert between.target.plugin_name == 'markdown'
 	assert between.target.selector == 'links'
@@ -6286,8 +6982,7 @@ fn test_database_lower_normalized_query_request_supports_field_selector_prefix()
 	request := db.lower_normalized_query_request(QueryNormalizedLoweringRequest{
 		table_name:     'notes'
 		predicates:     [
-			NormalizedQueryPredicate.field_prefix('body', 'markdown', 'heading_text:2',
-				'Road'),
+			NormalizedQueryPredicate.field_prefix('body', 'markdown', 'heading_text:2', 'Road'),
 			NormalizedQueryPredicate.column_eq('title', 'Doc'),
 		]
 		select_columns: ['title']
@@ -6304,8 +6999,9 @@ fn test_database_lower_normalized_query_request_supports_field_selector_prefix()
 }
 
 fn test_sql_filter_fragment_maps_sql_like_prefix_to_normalized_predicate() {
-	predicate := SqlFilterFragment.field_like_prefix('body', 'markdown', 'heading_text:2',
-		'Road').to_normalized_query_predicate() or { panic(err) }
+	predicate := SqlFilterFragment.field_like_prefix('body', 'markdown', 'heading_text:2', 'Road').to_normalized_query_predicate() or {
+		panic(err)
+	}
 	assert predicate.target.column_name == 'body'
 	assert predicate.target.plugin_name == 'markdown'
 	assert predicate.target.selector == 'heading_text:2'
@@ -6328,8 +7024,7 @@ fn test_database_lower_sql_filter_request_supports_sql_style_fragments() {
 	request := db.lower_sql_filter_request(SqlFilterLoweringRequest{
 		table_name:     'notes'
 		filters:        [
-			SqlFilterFragment.field_like_prefix('body', 'markdown', 'heading_text:2',
-				'Road'),
+			SqlFilterFragment.field_like_prefix('body', 'markdown', 'heading_text:2', 'Road'),
 			SqlFilterFragment.column_eq('title', 'Doc'),
 		]
 		select_columns: ['title']
@@ -6420,8 +7115,7 @@ fn test_database_session_lookup_json_path_index_prefix_projected() {
 		message:   'put second item'
 		timestamp: 2
 	}) or { panic(err) }
-	rows := session.lookup_index_prefix_projected(mut db, 'items', 'kind_cover', 'alpha.',
-		10, [
+	rows := session.lookup_index_prefix_projected(mut db, 'items', 'kind_cover', 'alpha.', 10, [
 		'status',
 	]) or { panic(err) }
 	assert rows.len == 2
@@ -6735,7 +7429,9 @@ fn test_persistent_database_checkpoint_info_and_recovery_status() {
 	assert report.catalog_exists
 	assert report.registered_tables == 1
 	assert report.branch_count == 1
+	assert report.branch_count_committed == 1
 	assert report.branches == ['main']
+	assert report.branches_committed == ['main']
 	assert report.node_index_snapshot_valid
 	assert report.commit_index_snapshot_valid
 	assert report.durable
@@ -6745,7 +7441,9 @@ fn test_persistent_database_checkpoint_info_and_recovery_status() {
 	assert inspected.catalog_exists
 	assert inspected.registered_tables == 1
 	assert inspected.branch_count == 1
+	assert inspected.branch_count_committed == 1
 	assert inspected.branches == ['main']
+	assert inspected.branches_committed == ['main']
 	assert inspected.node_index_entries > 0
 	assert inspected.commit_index_entries > 0
 	assert inspected.durable
@@ -6756,6 +7454,7 @@ fn test_persistent_database_checkpoint_info_and_recovery_status() {
 	assert lines.len >= 9
 	assert lines[0].contains('root_dir=')
 	assert lines.any(it.contains('branches=1 [main]'))
+	assert lines.any(it.contains('branches_committed=1 [main]'))
 	assert lines.any(it.contains('recommended_aggregate_projection_refresh_policy=stale_one'))
 	formatted := report.format()
 	assert formatted.contains('durable=true')
@@ -6806,8 +7505,9 @@ fn test_database_session_cursors() {
 	assert collected.len == 1
 	assert collected[0].primary_key.bytestr() == '002'
 
-	mut index_cursor := session.index_cursor(mut db, 'users', 'email', 'grace@example.com',
-		[]u8{}, 0) or { panic(err) }
+	mut index_cursor := session.index_cursor(mut db, 'users', 'email', 'grace@example.com', []u8{}, 0) or {
+		panic(err)
+	}
 	index_row := index_cursor.peek() or { panic(err) }
 	assert index_row.primary_key.bytestr() == '002'
 	email := index_row.row.data.get('email') or { panic(err) }
@@ -6829,7 +7529,9 @@ fn test_persistent_database_inspect_uninitialized_directory() {
 	assert !report.catalog_exists
 	assert report.registered_tables == 0
 	assert report.branch_count == 0
+	assert report.branch_count_committed == 0
 	assert report.branches.len == 0
+	assert report.branches_committed.len == 0
 	assert !report.node_index_snapshot_valid
 	assert !report.commit_index_snapshot_valid
 	assert !report.durable
@@ -6852,8 +7554,8 @@ fn test_register_aggregate_projection_binds_virtual_root_to_commit() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)',
-		'metrics', 'id') or { panic(err) }) or { panic(err) }
+	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)', 'metrics',
+		'id') or { panic(err) }) or { panic(err) }
 	assert db.projector_names() == ['sum(metrics.id)']
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_row := TypedRowData.new()
@@ -6926,8 +7628,8 @@ fn test_refresh_aggregate_projections_marks_virtual_root_fresh() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)',
-		'metrics', 'id') or { panic(err) }) or { panic(err) }
+	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)', 'metrics',
+		'id') or { panic(err) }) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_row := TypedRowData.new()
 	seed_row.set('id', i64(2))
@@ -6964,13 +7666,14 @@ fn test_refresh_aggregate_projections_marks_virtual_root_fresh() {
 	assert refreshed.virtual_roots[0].source_data_root_cid == refreshed.root_cid
 	assert refreshed.virtual_roots[0].root_cid.len > 0
 
-	item := Tree.lookup_in_byte_store(refreshed.virtual_roots[0].root_cid, 'aggregate:sum(metrics.id)'.bytes(), mut
-		db.engine.repository.node_store) or { panic(err) }
+	item := Tree.lookup_in_byte_store(refreshed.virtual_roots[0].root_cid,
+		'aggregate:sum(metrics.id)'.bytes(), mut db.engine.repository.node_store) or { panic(err) }
 	value := TypedValueEncoder.decode_value(item.value, .i64_) or { panic(err) }
 	match value {
 		i64 { assert value == i64(9) }
 		else { panic('expected i64 aggregate projection value') }
 	}
+
 	report := db.status_report() or { panic(err) }
 	assert report.registered_projectors == 1
 	assert report.stale_projectors == 0
@@ -7022,7 +7725,8 @@ fn test_refresh_aggregate_projections_counts_markdown_structures() {
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nSee [docs](https://example.com/docs).\n\n## Details\n\n```v\nprintln("ok")\n```\n',
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\nSee [docs](https://example.com/docs).\n\n## Details\n\n```v\nprintln("ok")\n```\n',
 		cfg, CommitMeta{
 		author:    'gwg'
 		message:   'seed note markdown'
@@ -7040,24 +7744,30 @@ fn test_refresh_aggregate_projections_counts_markdown_structures() {
 		roots[virtual_root.name] = virtual_root.root_cid
 	}
 
-	block_item := Tree.lookup_in_byte_store(roots['count(notes.body.blocks)'], 'aggregate:count(notes.body.blocks)'.bytes(), mut
-		db.engine.repository.node_store) or { panic(err) }
+	block_item := Tree.lookup_in_byte_store(roots['count(notes.body.blocks)'],
+		'aggregate:count(notes.body.blocks)'.bytes(), mut db.engine.repository.node_store) or {
+		panic(err)
+	}
 	block_value := TypedValueEncoder.decode_value(block_item.value, .i64_) or { panic(err) }
 	match block_value {
 		i64 { assert block_value == i64(4) }
 		else { panic('expected markdown block count') }
 	}
 
-	link_item := Tree.lookup_in_byte_store(roots['count(notes.body.h2)'], 'aggregate:count(notes.body.h2)'.bytes(), mut
-		db.engine.repository.node_store) or { panic(err) }
+	link_item := Tree.lookup_in_byte_store(roots['count(notes.body.h2)'],
+		'aggregate:count(notes.body.h2)'.bytes(), mut db.engine.repository.node_store) or {
+		panic(err)
+	}
 	link_value := TypedValueEncoder.decode_value(link_item.value, .i64_) or { panic(err) }
 	match link_value {
 		i64 { assert link_value == i64(1) }
 		else { panic('expected markdown heading count') }
 	}
 
-	heading_item := Tree.lookup_in_byte_store(roots['count(notes.body.links)'], 'aggregate:count(notes.body.links)'.bytes(), mut
-		db.engine.repository.node_store) or { panic(err) }
+	heading_item := Tree.lookup_in_byte_store(roots['count(notes.body.links)'],
+		'aggregate:count(notes.body.links)'.bytes(), mut db.engine.repository.node_store) or {
+		panic(err)
+	}
 	heading_value := TypedValueEncoder.decode_value(heading_item.value, .i64_) or { panic(err) }
 	match heading_value {
 		i64 { assert heading_value == i64(1) }
@@ -7162,8 +7872,8 @@ fn test_projection_value_at_branch_reads_markdown_projector_value() {
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '```v\nprintln("a")\n```\n\n```sql\nselect 1;\n```\n\n```v\nprintln("b")\n```\n',
-		cfg, CommitMeta{
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'```v\nprintln("a")\n```\n\n```sql\nselect 1;\n```\n\n```v\nprintln("b")\n```\n', cfg, CommitMeta{
 		author:    'gwg'
 		message:   'seed note markdown'
 		timestamp: 2
@@ -7221,7 +7931,8 @@ fn test_markdown_projection_i64_computes_ad_hoc_selector_counts() {
 		timestamp: 1
 	}) or { panic(err) }
 	session := db.begin_default_session() or { panic(err) }
-	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body', '# Intro\n\nPara with `x` and [docs](https://example.com).\n\n![alt](https://example.com/a.png)\n',
+	_ = session.put_markdown(mut db, 'notes', 'note-1'.bytes(), 'body',
+		'# Intro\n\nPara with `x` and [docs](https://example.com).\n\n![alt](https://example.com/a.png)\n',
 		cfg, CommitMeta{
 		author:    'gwg'
 		message:   'seed note markdown'
@@ -7251,8 +7962,8 @@ fn test_projector_stale_reason_new_data_root_after_refresh() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)',
-		'metrics', 'id') or { panic(err) }) or { panic(err) }
+	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)', 'metrics',
+		'id') or { panic(err) }) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_row := TypedRowData.new()
 	seed_row.set('id', i64(2))
@@ -7317,8 +8028,8 @@ fn test_refresh_aggregate_projections_async_for_marks_virtual_root_fresh() {
 		db.close() or {}
 	}
 	db.register_table(spec) or { panic(err) }
-	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)',
-		'metrics', 'id') or { panic(err) }) or { panic(err) }
+	db.register_aggregate_projection(AggregateProjectionDef.sum_i64('sum(metrics.id)', 'metrics',
+		'id') or { panic(err) }) or { panic(err) }
 	codec := TypedRowCodec.new(spec.table)
 	mut seed_row := TypedRowData.new()
 	seed_row.set('id', i64(3))

@@ -6,6 +6,8 @@ import vmarkdown
 
 const markdown_store_version = u8(1)
 const markdown_ast_version = u8(1)
+const default_markdown_source_cache_mb = 16
+const default_markdown_fts_cache_mb = 16
 
 pub enum MarkdownDiffOp {
 	added
@@ -48,14 +50,25 @@ pub:
 
 pub struct MarkdownMergePreview {
 pub:
-	base_ref      MarkdownRef
-	ours_ref      MarkdownRef
-	theirs_ref    MarkdownRef
-	base_to_ours  MarkdownDiff
+	base_ref       MarkdownRef
+	ours_ref       MarkdownRef
+	theirs_ref     MarkdownRef
+	base_to_ours   MarkdownDiff
 	base_to_theirs MarkdownDiff
-	mergeable     bool
-	merged_ref    MarkdownRef
-	merged_source string
+	mergeable      bool
+	merged_ref     MarkdownRef
+	merged_source  string
+}
+
+pub struct MarkdownArtifactRebuildResult {
+pub mut:
+	scanned       int
+	markdown_refs int
+	pending       int
+	rebuilt       int
+	skipped_ready int
+	failed        int
+	errors        []string
 }
 
 struct MarkdownOccurrenceLookup {
@@ -128,6 +141,104 @@ fn markdown_source_hash(raw string) string {
 	return sha256.sum(raw.bytes()).hex()
 }
 
+fn markdown_source_id(raw string) string {
+	return 'src:' + markdown_source_hash(raw)
+}
+
+fn markdown_cache_limit_bytes(env_name string, default_mb int) int {
+	raw := os.getenv(env_name).trim_space()
+	mb := if raw.len == 0 { default_mb } else { raw.int() }
+	if mb <= 0 {
+		return 0
+	}
+	return mb * 1024 * 1024
+}
+
+fn markdown_fts_cache_key(doc_root_id string, mode string) string {
+	return '${doc_root_id}|${mode}'
+}
+
+fn (mut database PersistentDatabase) evict_markdown_source_cache(limit int) {
+	for database.markdown_source_bytes > limit && database.markdown_source_order.len > 0 {
+		key := database.markdown_source_order[0]
+		database.markdown_source_order.delete(0)
+		value := database.markdown_sources[key] or { continue }
+		database.markdown_source_bytes -= key.len + value.len
+		database.markdown_sources.delete(key)
+	}
+	if database.markdown_source_bytes < 0 {
+		database.markdown_source_bytes = 0
+	}
+}
+
+fn (mut database PersistentDatabase) cache_markdown_source(doc_root_id string, raw string) {
+	limit := markdown_cache_limit_bytes('POLLYDB_MARKDOWN_SOURCE_CACHE_MB',
+		default_markdown_source_cache_mb)
+	if limit <= 0 || doc_root_id.len + raw.len > limit {
+		if old := database.markdown_sources[doc_root_id] {
+			database.markdown_source_bytes -= doc_root_id.len + old.len
+			database.markdown_sources.delete(doc_root_id)
+		}
+		return
+	}
+	mut existed := false
+	if old := database.markdown_sources[doc_root_id] {
+		existed = true
+		database.markdown_source_bytes -= doc_root_id.len + old.len
+	}
+	database.markdown_sources[doc_root_id] = raw
+	if !existed {
+		database.markdown_source_order << doc_root_id
+	}
+	database.markdown_source_bytes += doc_root_id.len + raw.len
+	database.evict_markdown_source_cache(limit)
+}
+
+fn (mut database PersistentDatabase) evict_markdown_fts_text_cache(limit int) {
+	for database.markdown_fts_bytes > limit && database.markdown_fts_order.len > 0 {
+		key := database.markdown_fts_order[0]
+		database.markdown_fts_order.delete(0)
+		value := database.markdown_fts_texts[key] or { continue }
+		database.markdown_fts_bytes -= key.len + value.len
+		database.markdown_fts_texts.delete(key)
+	}
+	if database.markdown_fts_bytes < 0 {
+		database.markdown_fts_bytes = 0
+	}
+}
+
+fn (mut database PersistentDatabase) cache_markdown_fts_text(doc_root_id string, mode string, text string) {
+	key := markdown_fts_cache_key(doc_root_id, mode)
+	limit := markdown_cache_limit_bytes('POLLYDB_MARKDOWN_FTS_CACHE_MB',
+		default_markdown_fts_cache_mb)
+	if limit <= 0 || key.len + text.len > limit {
+		if old := database.markdown_fts_texts[key] {
+			database.markdown_fts_bytes -= key.len + old.len
+			database.markdown_fts_texts.delete(key)
+		}
+		return
+	}
+	mut existed := false
+	if old := database.markdown_fts_texts[key] {
+		existed = true
+		database.markdown_fts_bytes -= key.len + old.len
+	}
+	database.markdown_fts_texts[key] = text
+	if !existed {
+		database.markdown_fts_order << key
+	}
+	database.markdown_fts_bytes += key.len + text.len
+	database.evict_markdown_fts_text_cache(limit)
+}
+
+fn (database &PersistentDatabase) cached_markdown_fts_text(doc_root_id string, mode string) ?string {
+	key := markdown_fts_cache_key(doc_root_id, mode)
+	if value := database.markdown_fts_texts[key] {
+		return value
+	}
+	return none
+}
+
 struct MarkdownFileStore {
 	root_dir string
 }
@@ -136,6 +247,16 @@ fn new_markdown_file_store(root_dir string) !MarkdownFileStore {
 	ensure_markdown_store_layout(root_dir)!
 	return MarkdownFileStore{
 		root_dir: root_dir
+	}
+}
+
+fn (mut database PersistentDatabase) markdown_file_store() !MarkdownFileStore {
+	if !database.markdown_store_ready {
+		ensure_markdown_store_layout(database.root_dir)!
+		database.markdown_store_ready = true
+	}
+	return MarkdownFileStore{
+		root_dir: database.root_dir
 	}
 }
 
@@ -148,9 +269,7 @@ fn (store MarkdownFileStore) root_refs(root_id string) ?[]string {
 	if !os.exists(path) {
 		return none
 	}
-	data := os.read_file(path) or {
-		return none
-	}
+	data := os.read_file(path) or { return none }
 	mut refs := []string{}
 	for line in data.split_into_lines() {
 		if line.len == 0 {
@@ -166,9 +285,7 @@ fn (store MarkdownFileStore) root_manifest(root_id string) ?[]vmarkdown.BlockMan
 	if !os.exists(path) {
 		return none
 	}
-	data := os.read_file(path) or {
-		return none
-	}
+	data := os.read_file(path) or { return none }
 	mut manifest := []vmarkdown.BlockManifestEntry{}
 	for line in data.split_into_lines() {
 		if line.len == 0 {
@@ -179,9 +296,9 @@ fn (store MarkdownFileStore) root_manifest(root_id string) ?[]vmarkdown.BlockMan
 			return none
 		}
 		manifest << vmarkdown.BlockManifestEntry{
-			id: fields[0]
-			kind: fields[1]
-			path: fields[2]
+			id:    fields[0]
+			kind:  fields[1]
+			path:  fields[2]
 			index: fields[3].int()
 		}
 	}
@@ -230,17 +347,48 @@ fn (mut store MarkdownFileStore) set_last_root_id(root_id string) ! {
 	_ = root_id
 }
 
+fn commit_markdown_artifacts(mut store MarkdownFileStore, artifact_id string, plan vmarkdown.IngestPlan) ! {
+	for chunk in plan.to_add {
+		store.put_chunk(chunk)!
+	}
+	store.put_root(artifact_id, plan.root_refs)!
+	store.put_root_manifest(artifact_id, plan.manifest)!
+	store.set_last_root_id(artifact_id)!
+}
+
+fn markdown_ref_for_source(raw string) MarkdownRef {
+	source_hash := markdown_source_hash(raw)
+	return MarkdownRef{
+		version:     markdown_store_version
+		doc_root_id: 'src:' + source_hash
+		source_hash: source_hash
+		source_len:  raw.len
+		ast_version: markdown_ast_version
+		parse_flags: u32(0)
+	}
+}
+
+fn markdown_artifacts_ready_at(root_dir string, artifact_id string) bool {
+	if artifact_id.len == 0 {
+		return false
+	}
+	return os.exists(markdown_doc_path(root_dir, artifact_id))
+		&& os.exists(markdown_manifest_path(root_dir, artifact_id))
+		&& os.exists(markdown_occurrence_path(root_dir, artifact_id))
+}
+
 fn persist_markdown_source(root_dir string, root_id string, raw string) ! {
-	ensure_markdown_store_layout(root_dir)!
 	os.write_file(markdown_source_path(root_dir, root_id), raw)!
 }
 
 pub fn load_markdown_source(root_dir string, root_id string) !string {
+	if root_id.len == 0 {
+		return ''
+	}
 	return os.read_file(markdown_source_path(root_dir, root_id))!
 }
 
 fn persist_markdown_occurrences(root_dir string, root_id string, occurrences []MarkdownOccurrence) ! {
-	ensure_markdown_store_layout(root_dir)!
 	path := markdown_occurrence_path(root_dir, root_id)
 	mut lines := []string{cap: occurrences.len}
 	for occurrence in occurrences {
@@ -271,12 +419,12 @@ fn load_markdown_occurrences(root_dir string, root_id string) ![]MarkdownOccurre
 		}
 		occurrences << MarkdownOccurrence{
 			occurrence_id: fields[0]
-			content_id: fields[1]
-			parent_id: fields[2]
-			kind: fields[3]
-			anchor: fields[4]
-			order: fields[5].int()
-			path_hint: fields[6]
+			content_id:    fields[1]
+			parent_id:     fields[2]
+			kind:          fields[3]
+			anchor:        fields[4]
+			order:         fields[5].int()
+			path_hint:     fields[6]
 		}
 	}
 	return occurrences
@@ -347,7 +495,7 @@ fn markdown_hash_id(parts []string) string {
 
 struct MarkdownOccurrenceCollector {
 mut:
-	occurrences []MarkdownOccurrence
+	occurrences   []MarkdownOccurrence
 	sibling_dupes map[string]int
 }
 
@@ -379,6 +527,7 @@ fn (mut collector MarkdownOccurrenceCollector) collect_block(block vmarkdown.Blo
 		}
 		else {}
 	}
+
 	occurrence_id := markdown_hash_id([parent_id, content_id, dup_ordinal.str(), anchor, path])
 	kind := match block {
 		vmarkdown.HeadingNode { 'heading' }
@@ -389,25 +538,28 @@ fn (mut collector MarkdownOccurrenceCollector) collect_block(block vmarkdown.Blo
 		vmarkdown.BlockquoteNode { 'blockquote' }
 		vmarkdown.ListNode { 'list' }
 	}
+
 	collector.occurrences << MarkdownOccurrence{
 		occurrence_id: occurrence_id
-		content_id: content_id
-		parent_id: parent_id
-		kind: kind
-		anchor: anchor
-		order: order
-		path_hint: path
+		content_id:    content_id
+		parent_id:     parent_id
+		kind:          kind
+		anchor:        anchor
+		order:         order
+		path_hint:     path
 	}
 	match block {
 		vmarkdown.BlockquoteNode {
 			for idx, child in block.children {
-				collector.collect_block(child, occurrence_id, anchor, mut anchor_stack, '${path}.children[${idx}]', idx)
+				collector.collect_block(child, occurrence_id, anchor, mut anchor_stack,
+					'${path}.children[${idx}]', idx)
 			}
 		}
 		vmarkdown.ListNode {
 			for item_idx, item in block.items {
 				for child_idx, child in item.children {
-					collector.collect_block(child, occurrence_id, anchor, mut anchor_stack, '${path}.items[${item_idx}].children[${child_idx}]', child_idx)
+					collector.collect_block(child, occurrence_id, anchor, mut anchor_stack,
+						'${path}.items[${item_idx}].children[${child_idx}]', child_idx)
 				}
 			}
 		}
@@ -443,27 +595,27 @@ fn markdown_diff_entries(previous []MarkdownOccurrence, current []MarkdownOccurr
 		if prior := prev_by_id[entry.occurrence_id] {
 			if prior.content_id == entry.content_id {
 				entries << MarkdownDiffEntry{
-					op: .reused
+					op:            .reused
 					occurrence_id: entry.occurrence_id
-					content_id: entry.content_id
-					kind: entry.kind
-					old_anchor: prior.anchor
-					new_anchor: entry.anchor
-					old_order: prior.order
-					new_order: entry.order
-					path_hint: entry.path_hint
+					content_id:    entry.content_id
+					kind:          entry.kind
+					old_anchor:    prior.anchor
+					new_anchor:    entry.anchor
+					old_order:     prior.order
+					new_order:     entry.order
+					path_hint:     entry.path_hint
 				}
 			} else {
 				entries << MarkdownDiffEntry{
-					op: .edited
+					op:            .edited
 					occurrence_id: entry.occurrence_id
-					content_id: entry.content_id
-					kind: entry.kind
-					old_anchor: prior.anchor
-					new_anchor: entry.anchor
-					old_order: prior.order
-					new_order: entry.order
-					path_hint: entry.path_hint
+					content_id:    entry.content_id
+					kind:          entry.kind
+					old_anchor:    prior.anchor
+					new_anchor:    entry.anchor
+					old_order:     prior.order
+					new_order:     entry.order
+					path_hint:     entry.path_hint
 				}
 			}
 			continue
@@ -482,39 +634,39 @@ fn markdown_diff_entries(previous []MarkdownOccurrence, current []MarkdownOccurr
 			left := removed[idx]
 			right := added[idx]
 			entries << MarkdownDiffEntry{
-				op: .moved
+				op:            .moved
 				occurrence_id: right.occurrence_id
-				content_id: content_id
-				kind: right.kind
-				old_anchor: left.anchor
-				new_anchor: right.anchor
-				old_order: left.order
-				new_order: right.order
-				path_hint: right.path_hint
+				content_id:    content_id
+				kind:          right.kind
+				old_anchor:    left.anchor
+				new_anchor:    right.anchor
+				old_order:     left.order
+				new_order:     right.order
+				path_hint:     right.path_hint
 			}
 		}
 		for idx in pair_count .. added.len {
 			entry := added[idx]
 			entries << MarkdownDiffEntry{
-				op: .added
+				op:            .added
 				occurrence_id: entry.occurrence_id
-				content_id: entry.content_id
-				kind: entry.kind
-				new_anchor: entry.anchor
-				new_order: entry.order
-				path_hint: entry.path_hint
+				content_id:    entry.content_id
+				kind:          entry.kind
+				new_anchor:    entry.anchor
+				new_order:     entry.order
+				path_hint:     entry.path_hint
 			}
 		}
 		for idx in pair_count .. removed.len {
 			entry := removed[idx]
 			entries << MarkdownDiffEntry{
-				op: .removed
+				op:            .removed
 				occurrence_id: entry.occurrence_id
-				content_id: entry.content_id
-				kind: entry.kind
-				old_anchor: entry.anchor
-				old_order: entry.order
-				path_hint: entry.path_hint
+				content_id:    entry.content_id
+				kind:          entry.kind
+				old_anchor:    entry.anchor
+				old_order:     entry.order
+				path_hint:     entry.path_hint
 			}
 		}
 		removed_by_content.delete(content_id)
@@ -522,38 +674,113 @@ fn markdown_diff_entries(previous []MarkdownOccurrence, current []MarkdownOccurr
 	for _, removed in removed_by_content {
 		for entry in removed {
 			entries << MarkdownDiffEntry{
-				op: .removed
+				op:            .removed
 				occurrence_id: entry.occurrence_id
-				content_id: entry.content_id
-				kind: entry.kind
-				old_anchor: entry.anchor
-				old_order: entry.order
-				path_hint: entry.path_hint
+				content_id:    entry.content_id
+				kind:          entry.kind
+				old_anchor:    entry.anchor
+				old_order:     entry.order
+				path_hint:     entry.path_hint
 			}
 		}
 	}
 	return entries
 }
 
-pub fn (database &PersistentDatabase) ingest_markdown(raw string) !MarkdownRef {
-	mut store := new_markdown_file_store(database.root_dir)!
-	plan := vmarkdown.plan_ingest(raw, store)!
-	_ = vmarkdown.commit_ingest_plan(mut store, plan)!
+pub fn (mut database PersistentDatabase) ingest_markdown(raw string) !MarkdownRef {
+	mut store := database.markdown_file_store()!
+	ref := markdown_ref_for_source(raw)
 	doc := vmarkdown.parse(raw)!
-	occurrences := build_markdown_occurrences(plan.root_id, doc)
-	persist_markdown_occurrences(database.root_dir, plan.root_id, occurrences)!
-	persist_markdown_source(database.root_dir, plan.root_id, raw)!
-	return MarkdownRef{
-		version: markdown_store_version
-		doc_root_id: plan.root_id
-		source_hash: markdown_source_hash(raw)
-		source_len: raw.len
-		ast_version: markdown_ast_version
-		parse_flags: u32(0)
+	plan := vmarkdown.plan_ingest_document(doc, store)
+	commit_markdown_artifacts(mut store, ref.doc_root_id, plan)!
+	occurrences := build_markdown_occurrences(ref.doc_root_id, doc)
+	persist_markdown_occurrences(database.root_dir, ref.doc_root_id, occurrences)!
+	persist_markdown_source(database.root_dir, ref.doc_root_id, raw)!
+	database.cache_markdown_source(ref.doc_root_id, raw)
+	return ref
+}
+
+pub fn (mut database PersistentDatabase) ingest_markdown_source_only(raw string) !MarkdownRef {
+	_ = database.markdown_file_store()!
+	ref := markdown_ref_for_source(raw)
+	persist_markdown_source(database.root_dir, ref.doc_root_id, raw)!
+	database.cache_markdown_source(ref.doc_root_id, raw)
+	database.cache_markdown_fts_text(ref.doc_root_id, FtsTextMode.raw_markdown.str(), raw)
+	database.cache_markdown_fts_text(ref.doc_root_id, 'visible_text', extract_markdown_visible_text_fast(raw,
+		false))
+	database.cache_markdown_fts_text(ref.doc_root_id, 'visible_text_with_code', extract_markdown_visible_text_fast(raw,
+		true))
+	return ref
+}
+
+pub fn (database &PersistentDatabase) markdown_artifacts_ready(ref MarkdownRef) bool {
+	if ref.is_zero() {
+		return true
 	}
+	return markdown_artifacts_ready_at(database.root_dir, ref.doc_root_id)
+}
+
+pub fn (mut database PersistentDatabase) rebuild_markdown_artifacts(ref MarkdownRef) ! {
+	if ref.is_zero() {
+		return
+	}
+	raw := database.load_markdown(ref)!
+	if markdown_source_hash(raw) != ref.source_hash {
+		return error('markdown source hash mismatch for ${ref.doc_root_id}')
+	}
+	mut store := database.markdown_file_store()!
+	doc := vmarkdown.parse(raw)!
+	plan := vmarkdown.plan_ingest_document(doc, store)
+	commit_markdown_artifacts(mut store, ref.doc_root_id, plan)!
+	occurrences := build_markdown_occurrences(ref.doc_root_id, doc)
+	persist_markdown_occurrences(database.root_dir, ref.doc_root_id, occurrences)!
+}
+
+pub fn (mut database PersistentDatabase) rebuild_markdown_artifacts_for_table(branch_name string, table_name string, column_name string, limit int) !MarkdownArtifactRebuildResult {
+	session := database.begin_session(SessionOptions.for_branch(branch_name))!
+	spec := session.table_spec(table_name)!
+	column := spec.table.column(column_name)!
+	if column.typ != .markdown_ {
+		return error('column is not markdown: ${column_name}')
+	}
+	rows := session.scan_table(mut database, table_name, 0)!
+	mut result := MarkdownArtifactRebuildResult{}
+	for row in rows {
+		if limit > 0 && result.rebuilt >= limit {
+			break
+		}
+		result.scanned++
+		ref := get_markdown_ref_from_row(row, column, column_name) or {
+			result.failed++
+			result.errors << '${row.primary_key.bytestr()}: ${err}'
+			continue
+		}
+		if ref.is_zero() {
+			continue
+		}
+		result.markdown_refs++
+		if database.markdown_artifacts_ready(ref) {
+			result.skipped_ready++
+			continue
+		}
+		result.pending++
+		database.rebuild_markdown_artifacts(ref) or {
+			result.failed++
+			result.errors << '${row.primary_key.bytestr()}: ${err}'
+			continue
+		}
+		result.rebuilt++
+	}
+	return result
 }
 
 pub fn (database &PersistentDatabase) load_markdown(ref MarkdownRef) !string {
+	if ref.is_zero() {
+		return ''
+	}
+	if raw := database.markdown_sources[ref.doc_root_id] {
+		return raw
+	}
 	return load_markdown_source(database.root_dir, ref.doc_root_id)
 }
 
@@ -561,13 +788,13 @@ pub fn (database &PersistentDatabase) diff_markdown_refs(left MarkdownRef, right
 	left_occurrences := load_markdown_occurrences(database.root_dir, left.doc_root_id)!
 	right_occurrences := load_markdown_occurrences(database.root_dir, right.doc_root_id)!
 	return MarkdownDiff{
-		left_root_id: left.doc_root_id
+		left_root_id:  left.doc_root_id
 		right_root_id: right.doc_root_id
-		entries: markdown_diff_entries(left_occurrences, right_occurrences)
+		entries:       markdown_diff_entries(left_occurrences, right_occurrences)
 	}
 }
 
-pub fn (database &PersistentDatabase) preview_markdown_merge_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) !MarkdownMergePreview {
+pub fn (mut database PersistentDatabase) preview_markdown_merge_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) !MarkdownMergePreview {
 	base_to_ours := database.diff_markdown_refs(base, ours)!
 	base_to_theirs := database.diff_markdown_refs(base, theirs)!
 	merged_ref := database.try_merge_markdown_refs(base, ours, theirs) or { MarkdownRef{} }
@@ -577,18 +804,18 @@ pub fn (database &PersistentDatabase) preview_markdown_merge_refs(base MarkdownR
 		''
 	}
 	return MarkdownMergePreview{
-		base_ref: base
-		ours_ref: ours
-		theirs_ref: theirs
-		base_to_ours: base_to_ours
+		base_ref:       base
+		ours_ref:       ours
+		theirs_ref:     theirs
+		base_to_ours:   base_to_ours
 		base_to_theirs: base_to_theirs
-		mergeable: merged_ref.doc_root_id.len > 0
-		merged_ref: merged_ref
-		merged_source: merged_source
+		mergeable:      merged_ref.doc_root_id.len > 0
+		merged_ref:     merged_ref
+		merged_source:  merged_source
 	}
 }
 
-pub fn (database &PersistentDatabase) merge_markdown_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) !MarkdownRef {
+pub fn (mut database PersistentDatabase) merge_markdown_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) !MarkdownRef {
 	return database.try_merge_markdown_refs(base, ours, theirs) or {
 		return error('markdown refs could not be merged automatically')
 	}
@@ -623,16 +850,15 @@ fn markdown_block_reorder_mapping(base []vmarkdown.BlockNode, candidate []vmarkd
 	mut used := map[int]bool{}
 	for idx, block in candidate {
 		id := block.stable_id()
-		base_positions := positions[id] or {
-			return none
-		}
+		base_positions := positions[id] or { return none }
 		mut best_idx := -1
 		mut best_score := 1 << 30
 		for base_idx in base_positions {
 			if used[base_idx] {
 				continue
 			}
-			score := markdown_block_mapping_score(base, candidate, base_hints, candidate_hints, base_idx, idx)
+			score := markdown_block_mapping_score(base, candidate, base_hints, candidate_hints,
+				base_idx, idx)
 			if score < best_score {
 				best_score = score
 				best_idx = base_idx
@@ -664,16 +890,15 @@ fn markdown_item_reorder_mapping(base []vmarkdown.ListItemNode, candidate []vmar
 	mut used := map[int]bool{}
 	for idx, item in candidate {
 		id := item.encode().hex()
-		base_positions := positions[id] or {
-			return none
-		}
+		base_positions := positions[id] or { return none }
 		mut best_idx := -1
 		mut best_score := 1 << 30
 		for base_idx in base_positions {
 			if used[base_idx] {
 				continue
 			}
-			score := markdown_item_mapping_score(base, candidate, base_hints, candidate_hints, base_idx, idx)
+			score := markdown_item_mapping_score(base, candidate, base_hints, candidate_hints,
+				base_idx, idx)
 			if score < best_score {
 				best_score = score
 				best_idx = base_idx
@@ -764,7 +989,11 @@ fn markdown_block_mapping_score(base []vmarkdown.BlockNode, candidate []vmarkdow
 	prev_base := if base_idx > 0 { base[base_idx - 1].stable_id() } else { '' }
 	prev_candidate := if candidate_idx > 0 { candidate[candidate_idx - 1].stable_id() } else { '' }
 	next_base := if base_idx + 1 < base.len { base[base_idx + 1].stable_id() } else { '' }
-	next_candidate := if candidate_idx + 1 < candidate.len { candidate[candidate_idx + 1].stable_id() } else { '' }
+	next_candidate := if candidate_idx + 1 < candidate.len {
+		candidate[candidate_idx + 1].stable_id()
+	} else {
+		''
+	}
 	score += markdown_neighbor_match_score(prev_base, prev_candidate)
 	score += markdown_neighbor_match_score(next_base, next_candidate)
 	return score
@@ -776,9 +1005,17 @@ fn markdown_item_mapping_score(base []vmarkdown.ListItemNode, candidate []vmarkd
 		score += 40
 	}
 	prev_base := if base_idx > 0 { base[base_idx - 1].encode().hex() } else { '' }
-	prev_candidate := if candidate_idx > 0 { candidate[candidate_idx - 1].encode().hex() } else { '' }
+	prev_candidate := if candidate_idx > 0 {
+		candidate[candidate_idx - 1].encode().hex()
+	} else {
+		''
+	}
 	next_base := if base_idx + 1 < base.len { base[base_idx + 1].encode().hex() } else { '' }
-	next_candidate := if candidate_idx + 1 < candidate.len { candidate[candidate_idx + 1].encode().hex() } else { '' }
+	next_candidate := if candidate_idx + 1 < candidate.len {
+		candidate[candidate_idx + 1].encode().hex()
+	} else {
+		''
+	}
 	score += markdown_neighbor_match_score(prev_base, prev_candidate)
 	score += markdown_neighbor_match_score(next_base, next_candidate)
 	return score
@@ -847,30 +1084,39 @@ fn resolve_markdown_bool(base bool, ours bool, theirs bool) ?bool {
 }
 
 fn merge_markdown_block_sequence(base []vmarkdown.BlockNode, ours []vmarkdown.BlockNode, theirs []vmarkdown.BlockNode, ctx MarkdownMergeContext, path_prefix string) ?[]vmarkdown.BlockNode {
-	if ours_reorder := markdown_block_reorder_mapping(base, ours, ctx.base_lookup, ctx.ours_lookup, path_prefix) {
-		if theirs_reorder := markdown_block_reorder_mapping(base, theirs, ctx.base_lookup, ctx.theirs_lookup, path_prefix) {
+	if ours_reorder := markdown_block_reorder_mapping(base, ours, ctx.base_lookup, ctx.ours_lookup,
+		path_prefix)
+	{
+		if theirs_reorder := markdown_block_reorder_mapping(base, theirs, ctx.base_lookup,
+			ctx.theirs_lookup, path_prefix)
+		{
 			if ours_reorder == theirs_reorder {
 				return ours
 			}
 		} else {
 			mut merged := []vmarkdown.BlockNode{cap: ours.len}
 			for idx, base_idx in ours_reorder {
-				merged << merge_markdown_block(base[base_idx], ours[idx], theirs[base_idx], ctx, markdown_block_path(path_prefix, idx))?
+				merged << merge_markdown_block(base[base_idx], ours[idx], theirs[base_idx], ctx,
+					markdown_block_path(path_prefix, idx))?
 			}
 			return merged
 		}
 	}
-	if theirs_reorder := markdown_block_reorder_mapping(base, theirs, ctx.base_lookup, ctx.theirs_lookup, path_prefix) {
+	if theirs_reorder := markdown_block_reorder_mapping(base, theirs, ctx.base_lookup,
+		ctx.theirs_lookup, path_prefix)
+	{
 		mut merged := []vmarkdown.BlockNode{cap: theirs.len}
 		for idx, base_idx in theirs_reorder {
-			merged << merge_markdown_block(base[base_idx], ours[base_idx], theirs[idx], ctx, markdown_block_path(path_prefix, idx))?
+			merged << merge_markdown_block(base[base_idx], ours[base_idx], theirs[idx], ctx,
+				markdown_block_path(path_prefix, idx))?
 		}
 		return merged
 	}
 	if ours.len == base.len && theirs.len == base.len {
 		mut merged := []vmarkdown.BlockNode{cap: base.len}
 		for idx in 0 .. base.len {
-			merged << merge_markdown_block(base[idx], ours[idx], theirs[idx], ctx, markdown_block_path(path_prefix, idx))?
+			merged << merge_markdown_block(base[idx], ours[idx], theirs[idx], ctx,
+				markdown_block_path(path_prefix, idx))?
 		}
 		return merged
 	}
@@ -899,30 +1145,39 @@ fn merge_markdown_block_sequence(base []vmarkdown.BlockNode, ours []vmarkdown.Bl
 }
 
 fn merge_markdown_item_sequence(base []vmarkdown.ListItemNode, ours []vmarkdown.ListItemNode, theirs []vmarkdown.ListItemNode, ctx MarkdownMergeContext, path_prefix string) ?[]vmarkdown.ListItemNode {
-	if ours_reorder := markdown_item_reorder_mapping(base, ours, ctx.base_lookup, ctx.ours_lookup, path_prefix) {
-		if theirs_reorder := markdown_item_reorder_mapping(base, theirs, ctx.base_lookup, ctx.theirs_lookup, path_prefix) {
+	if ours_reorder := markdown_item_reorder_mapping(base, ours, ctx.base_lookup, ctx.ours_lookup,
+		path_prefix)
+	{
+		if theirs_reorder := markdown_item_reorder_mapping(base, theirs, ctx.base_lookup,
+			ctx.theirs_lookup, path_prefix)
+		{
 			if ours_reorder == theirs_reorder {
 				return ours
 			}
 		} else {
 			mut merged := []vmarkdown.ListItemNode{cap: ours.len}
 			for idx, base_idx in ours_reorder {
-				merged << merge_markdown_list_item(base[base_idx], ours[idx], theirs[base_idx], ctx, markdown_item_path(path_prefix, idx))?
+				merged << merge_markdown_list_item(base[base_idx], ours[idx], theirs[base_idx],
+					ctx, markdown_item_path(path_prefix, idx))?
 			}
 			return merged
 		}
 	}
-	if theirs_reorder := markdown_item_reorder_mapping(base, theirs, ctx.base_lookup, ctx.theirs_lookup, path_prefix) {
+	if theirs_reorder := markdown_item_reorder_mapping(base, theirs, ctx.base_lookup,
+		ctx.theirs_lookup, path_prefix)
+	{
 		mut merged := []vmarkdown.ListItemNode{cap: theirs.len}
 		for idx, base_idx in theirs_reorder {
-			merged << merge_markdown_list_item(base[base_idx], ours[base_idx], theirs[idx], ctx, markdown_item_path(path_prefix, idx))?
+			merged << merge_markdown_list_item(base[base_idx], ours[base_idx], theirs[idx], ctx,
+				markdown_item_path(path_prefix, idx))?
 		}
 		return merged
 	}
 	if ours.len == base.len && theirs.len == base.len {
 		mut merged := []vmarkdown.ListItemNode{cap: base.len}
 		for idx in 0 .. base.len {
-			merged << merge_markdown_list_item(base[idx], ours[idx], theirs[idx], ctx, markdown_item_path(path_prefix, idx))?
+			merged << merge_markdown_list_item(base[idx], ours[idx], theirs[idx], ctx,
+				markdown_item_path(path_prefix, idx))?
 		}
 		return merged
 	}
@@ -962,10 +1217,11 @@ fn merge_markdown_list_item(base vmarkdown.ListItemNode, ours vmarkdown.ListItem
 	}
 	level := resolve_markdown_int(base.level, ours.level, theirs.level)?
 	number := resolve_markdown_int(base.number, ours.number, theirs.number)?
-	children := merge_markdown_block_sequence(base.children, ours.children, theirs.children, ctx, '${path}.children')?
+	children := merge_markdown_block_sequence(base.children, ours.children, theirs.children, ctx,
+		'${path}.children')?
 	return vmarkdown.ListItemNode{
-		level: level
-		number: number
+		level:    level
+		number:   number
 		children: children
 	}
 }
@@ -983,7 +1239,8 @@ fn merge_markdown_block(base vmarkdown.BlockNode, ours vmarkdown.BlockNode, thei
 	match base {
 		vmarkdown.BlockquoteNode {
 			if ours is vmarkdown.BlockquoteNode && theirs is vmarkdown.BlockquoteNode {
-				children := merge_markdown_block_sequence(base.children, ours.children, theirs.children, ctx, '${path}.children')?
+				children := merge_markdown_block_sequence(base.children, ours.children,
+					theirs.children, ctx, '${path}.children')?
 				return vmarkdown.BlockNode(vmarkdown.BlockquoteNode{
 					children: children
 				})
@@ -991,18 +1248,21 @@ fn merge_markdown_block(base vmarkdown.BlockNode, ours vmarkdown.BlockNode, thei
 		}
 		vmarkdown.ListNode {
 			if ours is vmarkdown.ListNode && theirs is vmarkdown.ListNode {
-				is_ordered := resolve_markdown_bool(base.is_ordered, ours.is_ordered, theirs.is_ordered)?
+				is_ordered := resolve_markdown_bool(base.is_ordered, ours.is_ordered,
+					theirs.is_ordered)?
 				start := resolve_markdown_int(base.start, ours.start, theirs.start)?
-					items := merge_markdown_item_sequence(base.items, ours.items, theirs.items, ctx, '${path}.items')?
+				items := merge_markdown_item_sequence(base.items, ours.items, theirs.items, ctx,
+					'${path}.items')?
 				return vmarkdown.BlockNode(vmarkdown.ListNode{
 					is_ordered: is_ordered
-					start: start
-					items: items
+					start:      start
+					items:      items
 				})
 			}
 		}
 		else {}
 	}
+
 	return none
 }
 
@@ -1012,12 +1272,13 @@ fn merge_markdown_same_length(base vmarkdown.Document, ours vmarkdown.Document, 
 	}
 	mut merged := []vmarkdown.BlockNode{cap: base.children.len}
 	ctx := MarkdownMergeContext{
-		base_lookup: occurrence_lookup(build_markdown_occurrences(base.stable_id(), base))
-		ours_lookup: occurrence_lookup(build_markdown_occurrences(ours.stable_id(), ours))
+		base_lookup:   occurrence_lookup(build_markdown_occurrences(base.stable_id(), base))
+		ours_lookup:   occurrence_lookup(build_markdown_occurrences(ours.stable_id(), ours))
 		theirs_lookup: occurrence_lookup(build_markdown_occurrences(theirs.stable_id(), theirs))
 	}
 	for idx in 0 .. base.children.len {
-		merged << merge_markdown_block(base.children[idx], ours.children[idx], theirs.children[idx], ctx, markdown_block_path('blocks', idx))?
+		merged << merge_markdown_block(base.children[idx], ours.children[idx],
+			theirs.children[idx], ctx, markdown_block_path('blocks', idx))?
 	}
 	return vmarkdown.Document{
 		children: merged
@@ -1064,11 +1325,13 @@ fn merge_markdown_documents(base vmarkdown.Document, ours vmarkdown.Document, th
 		return ours
 	}
 	ctx := MarkdownMergeContext{
-		base_lookup: occurrence_lookup(build_markdown_occurrences(base.stable_id(), base))
-		ours_lookup: occurrence_lookup(build_markdown_occurrences(ours.stable_id(), ours))
+		base_lookup:   occurrence_lookup(build_markdown_occurrences(base.stable_id(), base))
+		ours_lookup:   occurrence_lookup(build_markdown_occurrences(ours.stable_id(), ours))
 		theirs_lookup: occurrence_lookup(build_markdown_occurrences(theirs.stable_id(), theirs))
 	}
-	if merged_children := merge_markdown_block_sequence(base.children, ours.children, theirs.children, ctx, 'blocks') {
+	if merged_children := merge_markdown_block_sequence(base.children, ours.children,
+		theirs.children, ctx, 'blocks')
+	{
 		return vmarkdown.Document{
 			children: merged_children
 		}
@@ -1076,7 +1339,7 @@ fn merge_markdown_documents(base vmarkdown.Document, ours vmarkdown.Document, th
 	return none
 }
 
-pub fn (database &PersistentDatabase) try_merge_markdown_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) ?MarkdownRef {
+pub fn (mut database PersistentDatabase) try_merge_markdown_refs(base MarkdownRef, ours MarkdownRef, theirs MarkdownRef) ?MarkdownRef {
 	base_raw := database.load_markdown(base) or { return none }
 	ours_raw := database.load_markdown(ours) or { return none }
 	theirs_raw := database.load_markdown(theirs) or { return none }

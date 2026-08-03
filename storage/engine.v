@@ -17,20 +17,20 @@ pub:
 
 pub struct PersistentEngineOpenResult {
 pub:
-	engine   PersistentEngine
-	timings  PersistentEngineOpenTimings
+	engine  PersistentEngine
+	timings PersistentEngineOpenTimings
 }
 
 pub struct PersistentEngineTypedTransactionOpenResult {
 pub:
-	tx TypedTransaction
+	tx      TypedTransaction
 	timings TypedTransactionOpenTimings
 }
 
 pub struct PersistentEngineCheckpointInfo {
 pub:
-	root_dir    string
-	repository  PersistentRepositoryCheckpointInfo
+	root_dir   string
+	repository PersistentRepositoryCheckpointInfo
 }
 
 pub struct PersistentEngineCheckpointTimings {
@@ -41,8 +41,8 @@ pub:
 
 pub struct PersistentEngineRecoveryStatus {
 pub:
-	root_dir    string
-	repository  PersistentRepositoryRecoveryStatus
+	root_dir   string
+	repository PersistentRepositoryRecoveryStatus
 }
 
 pub fn PersistentEngine.open(root_dir string, default_branch string) !PersistentEngine {
@@ -50,7 +50,8 @@ pub fn PersistentEngine.open(root_dir string, default_branch string) !Persistent
 }
 
 pub fn PersistentEngine.init(root_dir string, default_branch string) !PersistentEngine {
-	return PersistentEngine.init_with_provider(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+	return PersistentEngine.init_with_provider(LocalDatabaseBackendProvider.new(root_dir,
+		default_branch))
 }
 
 pub fn PersistentEngine.open_with_provider(provider LocalDatabaseBackendProvider) !PersistentEngine {
@@ -58,27 +59,29 @@ pub fn PersistentEngine.open_with_provider(provider LocalDatabaseBackendProvider
 }
 
 pub fn PersistentEngine.open_profiled(root_dir string, default_branch string) !PersistentEngineOpenResult {
-	return PersistentEngine.open_with_provider_profiled(LocalDatabaseBackendProvider.new(root_dir, default_branch))
+	return PersistentEngine.open_with_provider_profiled(LocalDatabaseBackendProvider.new(root_dir,
+		default_branch))
 }
 
 pub fn PersistentEngine.open_with_provider_profiled(provider LocalDatabaseBackendProvider) !PersistentEngineOpenResult {
 	mut total_sw := time.new_stopwatch()
-	repository_result := PersistentRepository.open_default_profiled(provider.root_dir, provider.default_branch())!
+	repository_result := PersistentRepository.open_default_profiled(provider.root_dir,
+		provider.default_branch())!
 	return PersistentEngineOpenResult{
-		engine: PersistentEngine{
-			root_dir: provider.root_dir
+		engine:  PersistentEngine{
+			root_dir:   provider.root_dir
 			repository: repository_result.repository
 		}
 		timings: PersistentEngineOpenTimings{
 			repository: repository_result.timings
-			total_ms: total_sw.elapsed().milliseconds()
+			total_ms:   total_sw.elapsed().milliseconds()
 		}
 	}
 }
 
 pub fn PersistentEngine.init_with_provider(provider LocalDatabaseBackendProvider) !PersistentEngine {
 	return PersistentEngine{
-		root_dir: provider.root_dir
+		root_dir:   provider.root_dir
 		repository: PersistentRepository.init(provider.root_dir, provider.default_branch())!
 	}
 }
@@ -117,7 +120,7 @@ pub fn (mut engine PersistentEngine) checkpoint_timed() !PersistentEngineCheckpo
 	repository := engine.repository.checkpoint_timed()!
 	return PersistentEngineCheckpointTimings{
 		repository: repository
-		total_us: sw.elapsed().microseconds()
+		total_us:   sw.elapsed().microseconds()
 	}
 }
 
@@ -130,24 +133,25 @@ pub fn (mut engine PersistentEngine) checkpoint_timed_mode(mode CheckpointMode) 
 	repository := engine.repository.checkpoint_timed_mode(mode)!
 	return PersistentEngineCheckpointTimings{
 		repository: repository
-		total_us: sw.elapsed().microseconds()
+		total_us:   sw.elapsed().microseconds()
 	}
 }
 
 pub fn (engine PersistentEngine) checkpoint_info() PersistentEngineCheckpointInfo {
 	return PersistentEngineCheckpointInfo{
-		root_dir: engine.root_dir
+		root_dir:   engine.root_dir
 		repository: engine.repository.checkpoint_info()
 	}
 }
 
 pub fn PersistentEngine.recovery_status(root_dir string) !PersistentEngineRecoveryStatus {
-	return PersistentEngine.recovery_status_with_provider(LocalDatabaseBackendProvider.new(root_dir, 'main'))
+	return PersistentEngine.recovery_status_with_provider(LocalDatabaseBackendProvider.new(root_dir,
+		'main'))
 }
 
 pub fn PersistentEngine.recovery_status_with_provider(provider LocalDatabaseBackendProvider) !PersistentEngineRecoveryStatus {
 	return PersistentEngineRecoveryStatus{
-		root_dir: provider.root_dir
+		root_dir:   provider.root_dir
 		repository: PersistentRepository.recovery_status(provider.root_dir)!
 	}
 }
@@ -164,8 +168,16 @@ pub fn (mut engine PersistentEngine) branch(name string) !Branch {
 	return engine.repository.branch(name)
 }
 
+pub fn (mut engine PersistentEngine) has_branch(name string) bool {
+	return engine.repository.has_branch(name)
+}
+
 pub fn (mut engine PersistentEngine) branch_names() []string {
 	return engine.repository.branch_names()
+}
+
+pub fn (mut engine PersistentEngine) branch_names_committed() []string {
+	return engine.repository.branch_names_committed()
 }
 
 pub fn (mut engine PersistentEngine) create_branch(name string, from_commit_cid string) !Branch {
@@ -173,27 +185,18 @@ pub fn (mut engine PersistentEngine) create_branch(name string, from_commit_cid 
 }
 
 pub fn (mut engine PersistentEngine) merge_base_branch(left_branch string, right_branch string) !Commit {
-	return engine.repository.repo.merge_base_branch(left_branch, right_branch, mut engine.repository.commit_store)
+	return engine.repository.repo.merge_base_branch(left_branch, right_branch, mut
+		engine.repository.commit_store)
 }
 
 pub fn (mut engine PersistentEngine) merge_branches(ours_branch string, theirs_branch string, cfg ChunkConfig) !MergeResult {
-	return engine.repository.repo.merge_branches(
-		ours_branch,
-		theirs_branch,
-		cfg,
-		mut engine.repository.node_store,
-		mut engine.repository.commit_store,
-	)
+	return engine.repository.repo.merge_branches(ours_branch, theirs_branch, cfg, mut
+		engine.repository.node_store, mut engine.repository.commit_store)
 }
 
 pub fn (mut engine PersistentEngine) merge_branch_into(ours_branch string, theirs_branch string, resolutions []ConflictResolution, cfg ChunkConfig, meta CommitMeta) !BranchUpdate {
-	result := engine.repository.repo.merge_branches(
-		ours_branch,
-		theirs_branch,
-		cfg,
-		mut engine.repository.node_store,
-		mut engine.repository.commit_store,
-	)!
+	result := engine.repository.repo.merge_branches(ours_branch, theirs_branch, cfg, mut
+		engine.repository.node_store, mut engine.repository.commit_store)!
 	resolution := result.resolve_conflicts(resolutions, cfg)!
 	update := engine.commit_to_branch(ours_branch, resolution.tree, meta)!
 	return update
@@ -203,22 +206,48 @@ pub fn (mut engine PersistentEngine) commit_to_branch(branch_name string, tree T
 	return engine.commit_to_branch_with_virtual_roots(branch_name, tree, meta, [])
 }
 
+pub fn (mut engine PersistentEngine) commit_to_branch_with_virtual_roots_profiled(branch_name string, tree Tree, meta CommitMeta, virtual_roots []VirtualRootRef) !BranchTypedTransactionResult {
+	parent_cids := engine.repository.repo.parent_cids_for_branch(branch_name)
+	snapshot := Snapshot.new_with_virtual_roots(tree, parent_cids, meta, virtual_roots)
+	mut sw := time.new_stopwatch()
+	snapshot.persist_to_persistent(mut engine.repository.node_store, mut
+		engine.repository.commit_store)!
+	snapshot_persist_us := sw.elapsed().microseconds()
+	sw.restart()
+	branch := engine.advance_branch_head_with_backend(branch_name, snapshot.commit.cid)!
+	branch_head_us := sw.elapsed().microseconds()
+	return BranchTypedTransactionResult{
+		update:             BranchUpdate{
+			branch:   branch
+			snapshot: snapshot
+		}
+		transaction_update: TypedTransactionResult{}
+		timings:            BranchTypedTransactionTimings{
+			snapshot_persist_us:  snapshot_persist_us
+			branch_head_us:       branch_head_us
+			repo_meta_persist_us: branch_head_us
+		}
+	}
+}
+
 fn (mut engine PersistentEngine) advance_branch_head_with_backend(branch_name string, new_commit_cid string) !Branch {
 	old_commit_cid := if engine.repository.repo.has_branch(branch_name) {
 		(engine.repository.repo.branch(branch_name)!).commit_cid
 	} else {
 		''
 	}
-	return engine.repository.compare_and_swap_branch_head(branch_name, old_commit_cid, new_commit_cid)
+	return engine.repository.compare_and_swap_branch_head(branch_name, old_commit_cid,
+		new_commit_cid)
 }
 
 pub fn (mut engine PersistentEngine) commit_to_branch_with_virtual_roots(branch_name string, tree Tree, meta CommitMeta, virtual_roots []VirtualRootRef) !BranchUpdate {
 	parent_cids := engine.repository.repo.parent_cids_for_branch(branch_name)
 	snapshot := Snapshot.new_with_virtual_roots(tree, parent_cids, meta, virtual_roots)
-	snapshot.persist_to_persistent(mut engine.repository.node_store, mut engine.repository.commit_store)!
+	snapshot.persist_to_persistent(mut engine.repository.node_store, mut
+		engine.repository.commit_store)!
 	branch := engine.advance_branch_head_with_backend(branch_name, snapshot.commit.cid)!
 	return BranchUpdate{
-		branch: branch
+		branch:   branch
 		snapshot: snapshot
 	}
 }
@@ -259,79 +288,90 @@ pub fn (mut engine PersistentEngine) typed_transaction_at_branch(branch_name str
 }
 
 pub fn (mut engine PersistentEngine) typed_transaction_at_branch_profiled(branch_name string, specs []TypedTableSpec) !PersistentEngineTypedTransactionOpenResult {
-	result := engine.repository.repo.typed_transaction_at_branch_profiled(branch_name, specs, mut engine.repository.node_store, mut engine.repository.commit_store)!
+	result := engine.repository.repo.typed_transaction_at_branch_profiled(branch_name, specs, mut
+		engine.repository.node_store, mut engine.repository.commit_store)!
 	return PersistentEngineTypedTransactionOpenResult{
-		tx: result.tx
+		tx:      result.tx
 		timings: result.timings
 	}
 }
 
 pub fn (mut engine PersistentEngine) typed_working_set_at_branch(branch_name string, specs []TypedTableSpec) !TypedWorkingSet {
-	return engine.repository.repo.typed_working_set_at_branch(branch_name, specs, mut engine.repository.node_store, mut engine.repository.commit_store)
+	return engine.repository.repo.typed_working_set_at_branch(branch_name, specs, mut
+		engine.repository.node_store, mut engine.repository.commit_store)
 }
 
 pub fn (mut engine PersistentEngine) typed_split_working_set_at_branch(branch_name string, specs []TypedTableSpec, cfg ChunkConfig) !TypedSplitWorkingSet {
-	return engine.repository.repo.typed_split_working_set_at_branch(branch_name, specs, cfg, mut engine.repository.node_store, mut engine.repository.commit_store)
+	return engine.repository.repo.typed_split_working_set_at_branch(branch_name, specs, cfg, mut
+		engine.repository.node_store, mut engine.repository.commit_store)
 }
 
 pub fn (mut engine PersistentEngine) apply_typed_write_set_to_branch(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
-	return engine.apply_typed_write_set_to_branch_with_virtual_roots(branch_name, specs, write_set, cfg, meta, [])
+	return engine.apply_typed_write_set_to_branch_with_virtual_roots(branch_name, specs, write_set,
+		cfg, meta, [])
 }
 
 pub fn (mut engine PersistentEngine) apply_typed_write_set_to_branch_with_virtual_roots(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta, virtual_roots []VirtualRootRef) !BranchTypedTransactionResult {
-	tx := engine.repository.repo.typed_transaction_at_branch(branch_name, specs, mut engine.repository.node_store, mut engine.repository.commit_store)!
+	tx := engine.repository.repo.typed_transaction_at_branch(branch_name, specs, mut
+		engine.repository.node_store, mut engine.repository.commit_store)!
 	mut sw := time.new_stopwatch()
 	transaction_update := tx.apply_write_set(write_set, cfg)!
 	tx_apply_us := sw.elapsed().microseconds()
-	snapshot := Snapshot.new_with_virtual_roots(transaction_update.tx.current_tree(), engine.repository.repo.parent_cids_for_branch(branch_name), meta, virtual_roots)
+	snapshot := Snapshot.new_with_virtual_roots(transaction_update.tx.current_tree(),
+		engine.repository.repo.parent_cids_for_branch(branch_name), meta, virtual_roots)
 	sw.restart()
-	snapshot.persist_to_persistent(mut engine.repository.node_store, mut engine.repository.commit_store)!
+	snapshot.persist_to_persistent(mut engine.repository.node_store, mut
+		engine.repository.commit_store)!
 	snapshot_persist_us := sw.elapsed().microseconds()
 	sw.restart()
 	branch := engine.advance_branch_head_with_backend(branch_name, snapshot.commit.cid)!
 	branch_head_us := sw.elapsed().microseconds()
 	repo_meta_persist_us := branch_head_us
 	return BranchTypedTransactionResult{
-		update: BranchUpdate{
-			branch: branch
+		update:             BranchUpdate{
+			branch:   branch
 			snapshot: snapshot
 		}
 		transaction_update: transaction_update
-		timings: BranchTypedTransactionTimings{
-			tx_apply_us: tx_apply_us
-			snapshot_persist_us: snapshot_persist_us
-			branch_head_us: branch_head_us
+		timings:            BranchTypedTransactionTimings{
+			tx_apply_us:          tx_apply_us
+			snapshot_persist_us:  snapshot_persist_us
+			branch_head_us:       branch_head_us
 			repo_meta_persist_us: repo_meta_persist_us
 		}
 	}
 }
 
 pub fn (mut engine PersistentEngine) apply_typed_write_set_to_branch_buffered(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta) !BranchTypedTransactionResult {
-	return engine.apply_typed_write_set_to_branch_buffered_with_virtual_roots(branch_name, specs, write_set, cfg, meta, [])
+	return engine.apply_typed_write_set_to_branch_buffered_with_virtual_roots(branch_name, specs,
+		write_set, cfg, meta, [])
 }
 
 pub fn (mut engine PersistentEngine) apply_typed_write_set_to_branch_buffered_with_virtual_roots(branch_name string, specs []TypedTableSpec, write_set TypedWriteSet, cfg ChunkConfig, meta CommitMeta, virtual_roots []VirtualRootRef) !BranchTypedTransactionResult {
-	tx := engine.repository.repo.typed_transaction_at_branch(branch_name, specs, mut engine.repository.node_store, mut engine.repository.commit_store)!
+	tx := engine.repository.repo.typed_transaction_at_branch(branch_name, specs, mut
+		engine.repository.node_store, mut engine.repository.commit_store)!
 	mut sw := time.new_stopwatch()
 	transaction_update := tx.apply_write_set(write_set, cfg)!
 	tx_apply_us := sw.elapsed().microseconds()
-	snapshot := Snapshot.new_with_virtual_roots(transaction_update.tx.current_tree(), engine.repository.repo.parent_cids_for_branch(branch_name), meta, virtual_roots)
+	snapshot := Snapshot.new_with_virtual_roots(transaction_update.tx.current_tree(),
+		engine.repository.repo.parent_cids_for_branch(branch_name), meta, virtual_roots)
 	sw.restart()
-	snapshot.persist_to_persistent(mut engine.repository.node_store, mut engine.repository.commit_store)!
+	snapshot.persist_to_persistent(mut engine.repository.node_store, mut
+		engine.repository.commit_store)!
 	snapshot_persist_us := sw.elapsed().microseconds()
 	sw.restart()
 	branch := engine.advance_branch_head_with_backend(branch_name, snapshot.commit.cid)!
 	branch_head_us := sw.elapsed().microseconds()
 	return BranchTypedTransactionResult{
-		update: BranchUpdate{
-			branch: branch
+		update:             BranchUpdate{
+			branch:   branch
 			snapshot: snapshot
 		}
 		transaction_update: transaction_update
-		timings: BranchTypedTransactionTimings{
-			tx_apply_us: tx_apply_us
-			snapshot_persist_us: snapshot_persist_us
-			branch_head_us: branch_head_us
+		timings:            BranchTypedTransactionTimings{
+			tx_apply_us:          tx_apply_us
+			snapshot_persist_us:  snapshot_persist_us
+			branch_head_us:       branch_head_us
 			repo_meta_persist_us: 0
 		}
 	}
@@ -342,22 +382,25 @@ pub fn (mut engine PersistentEngine) commit_typed_working_set(mut set TypedWorki
 }
 
 pub fn (mut engine PersistentEngine) commit_typed_split_working_set(mut set TypedSplitWorkingSet, meta CommitMeta, cfg ChunkConfig) !BranchTypedWorkingSetResult {
-	return engine.repository.repo.commit_typed_split_working_set(mut set, meta, cfg, mut engine.repository.node_store, mut engine.repository.commit_store)
+	return engine.repository.repo.commit_typed_split_working_set(mut set, meta, cfg, mut
+		engine.repository.node_store, mut engine.repository.commit_store)
 }
 
 pub fn (mut engine PersistentEngine) commit_typed_working_set_with_virtual_roots(mut set TypedWorkingSet, meta CommitMeta, virtual_roots []VirtualRootRef) !BranchTypedWorkingSetResult {
-	snapshot := Snapshot.new_with_virtual_roots(set.transaction().current_tree(), engine.repository.repo.parent_cids_for_branch(set.branch_name), meta, virtual_roots)
-	snapshot.persist_to_persistent(mut engine.repository.node_store, mut engine.repository.commit_store)!
+	snapshot := Snapshot.new_with_virtual_roots(set.transaction().current_tree(),
+		engine.repository.repo.parent_cids_for_branch(set.branch_name), meta, virtual_roots)
+	snapshot.persist_to_persistent(mut engine.repository.node_store, mut
+		engine.repository.commit_store)!
 	branch := engine.advance_branch_head_with_backend(set.branch_name, snapshot.commit.cid)!
 	update := BranchUpdate{
-		branch: branch
+		branch:   branch
 		snapshot: snapshot
 	}
 	set.sync_to_tree(update.snapshot.tree, update.snapshot.commit.cid)!
 	return BranchTypedWorkingSetResult{
-		update: update
+		update:             update
 		transaction_update: TypedTransactionResult{
-			tx: set.transaction()
+			tx:   set.transaction()
 			diff: set.staged_diff()
 		}
 	}
@@ -370,18 +413,20 @@ pub fn (mut engine PersistentEngine) commit_typed_working_set_buffered(mut set T
 pub fn (mut engine PersistentEngine) commit_typed_working_set_buffered_with_virtual_roots(mut set TypedWorkingSet, meta CommitMeta, virtual_roots []VirtualRootRef) !BranchTypedWorkingSetResult {
 	diff := set.staged_diff()
 	tx := set.transaction()
-	snapshot := Snapshot.new_with_virtual_roots(tx.current_tree(), engine.repository.repo.parent_cids_for_branch(set.branch_name), meta, virtual_roots)
-	snapshot.persist_to_persistent(mut engine.repository.node_store, mut engine.repository.commit_store)!
+	snapshot := Snapshot.new_with_virtual_roots(tx.current_tree(),
+		engine.repository.repo.parent_cids_for_branch(set.branch_name), meta, virtual_roots)
+	snapshot.persist_to_persistent(mut engine.repository.node_store, mut
+		engine.repository.commit_store)!
 	branch := engine.advance_branch_head_with_backend(set.branch_name, snapshot.commit.cid)!
 	update := BranchUpdate{
-		branch: branch
+		branch:   branch
 		snapshot: snapshot
 	}
 	set.sync_to_tree(update.snapshot.tree, update.snapshot.commit.cid)!
 	return BranchTypedWorkingSetResult{
-		update: update
+		update:             update
 		transaction_update: TypedTransactionResult{
-			tx: set.transaction()
+			tx:   set.transaction()
 			diff: diff
 		}
 	}

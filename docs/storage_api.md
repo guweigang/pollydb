@@ -105,6 +105,7 @@ CLI write paths also accept `CURRENT_TIMESTAMP` as a datetime value literal.
 
 `TypedTableSpec` is the unit of registration for typed transactions and working sets. It combines one `TableDef` with zero or more secondary indexes.
 `SchemaIndexDef.new(...)` creates a normal secondary index, while `SchemaIndexDef.covering(...)` creates a covering index that stores the encoded row payload inside the index value so index reads can avoid a table lookup.
+`SchemaIndexDef.covering_projected(...)` creates a projected covering index that stores only selected columns; reads are index-only only when the requested projection is fully covered, otherwise PollyDB falls back to the base row.
 For typed tables, `SchemaIndexDef.json_path(...)` and `SchemaIndexDef.json_path_covering(...)` declare JSON-object path indexes such as `meta.kind:string`, `meta.kind.code:string`, or `meta.enabled:bool:covering`.
 For lexical retrieval, `SchemaIndexDef.fts(...)`, `SchemaIndexDef.fts_with_options(...)`, and `SchemaIndexDef.fts_markdown(...)` declare general FTS indexes that PollyDB maintains through a SQLite FTS5 sidecar.
 
@@ -329,6 +330,7 @@ These readers bind a branch head `root_cid`, one `TypedTableSpec`, and one `Node
 - `BranchTableReader` is the preferred point-read path for primary-key lookups.
 - `BranchIndexReader` is the preferred low-latency path for exact secondary-index reads and prefix scans.
 - Covering indexes (`SchemaIndexDef.covering(...)`) let `BranchIndexReader` decode rows directly from index values and avoid an extra table lookup.
+- Projected covering indexes (`SchemaIndexDef.covering_projected(...)`) store only selected columns so large fields do not get duplicated into secondary indexes.
 - `TypedRowCodec.decode_projected(...)` is the lightweight projection decode helper for covering-index reads that only need a subset of columns.
 - `SnapshotTableReader` and `SnapshotIndexReader` are the equivalent read-only contracts bound to a durable commit/root snapshot rather than a live branch head.
 - `SnapshotReadScheduler` is the current minimal multi-version parallel lookup coordinator. It reopens the durable on-disk database state for each worker so reads against `v1`, `v2`, or different branch heads do not interfere with each other. It is intended for durable snapshots, not for uncheckpointed live overlays.
