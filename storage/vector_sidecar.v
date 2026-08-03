@@ -663,7 +663,7 @@ $if usearch ? {
 		_ = database
 		backend.upsert(vector_rows_to_index_records(rows))!
 		backend.save(index_path)!
-		os.write_file(meta_path, meta)!
+		atomic_write_bytes(meta_path, meta.bytes())!
 	}
 }
 

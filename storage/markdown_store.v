@@ -326,12 +326,12 @@ fn (mut store MarkdownFileStore) put_chunk(chunk vmarkdown.Chunk) ! {
 	}
 	out.write_u32(u32(chunk.data.len))
 	out.write_bytes(chunk.data)
-	os.write_file(path, out.bytes().bytestr())!
+	atomic_write_bytes(path, out.bytes())!
 }
 
 fn (mut store MarkdownFileStore) put_root(root_id string, refs []string) ! {
 	path := markdown_doc_path(store.root_dir, root_id)
-	os.write_file(path, refs.join('\n'))!
+	atomic_write_bytes(path, refs.join('\n').bytes())!
 }
 
 fn (mut store MarkdownFileStore) put_root_manifest(root_id string, manifest []vmarkdown.BlockManifestEntry) ! {
@@ -340,7 +340,7 @@ fn (mut store MarkdownFileStore) put_root_manifest(root_id string, manifest []vm
 	for entry in manifest {
 		lines << '${entry.id}\t${entry.kind}\t${entry.path}\t${entry.index}'
 	}
-	os.write_file(path, lines.join('\n'))!
+	atomic_write_bytes(path, lines.join('\n').bytes())!
 }
 
 fn (mut store MarkdownFileStore) set_last_root_id(root_id string) ! {
@@ -378,7 +378,7 @@ fn markdown_artifacts_ready_at(root_dir string, artifact_id string) bool {
 }
 
 fn persist_markdown_source(root_dir string, root_id string, raw string) ! {
-	os.write_file(markdown_source_path(root_dir, root_id), raw)!
+	atomic_write_bytes(markdown_source_path(root_dir, root_id), raw.bytes())!
 }
 
 pub fn load_markdown_source(root_dir string, root_id string) !string {
@@ -402,7 +402,7 @@ fn persist_markdown_occurrences(root_dir string, root_id string, occurrences []M
 			occurrence.path_hint,
 		].join('\t')
 	}
-	os.write_file(path, lines.join('\n'))!
+	atomic_write_bytes(path, lines.join('\n').bytes())!
 }
 
 fn load_markdown_occurrences(root_dir string, root_id string) ![]MarkdownOccurrence {
