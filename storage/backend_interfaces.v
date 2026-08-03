@@ -176,7 +176,7 @@ pub fn (mut backend LocalCatalogBackend) load_catalog() !(map[string]TypedTableS
 pub fn (mut backend LocalCatalogBackend) save_catalog(catalog map[string]TypedTableSpec, projectors map[string]AggregateProjectionDef, memory_capabilities map[string]MemoryCapabilityDef) ! {
 	catalog_path := database_catalog_path(backend.root_dir)
 	os.mkdir_all(os.dir(catalog_path))!
-	os.write_file(catalog_path, catalog_data(catalog, projectors, memory_capabilities).bytestr())!
+	atomic_write_bytes(catalog_path, catalog_data(catalog, projectors, memory_capabilities))!
 }
 
 pub struct LocalBackendPaths {

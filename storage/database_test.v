@@ -3464,7 +3464,7 @@ fn test_persistent_database_open_local_backends() {
 		database.close() or {}
 	}
 	paths := database.backend_paths()
-	assert paths.catalog_meta.ends_with('.pollydb/catalog.meta')
+	assert paths.catalog_meta.ends_with(os.join_path('.pollydb', 'catalog.meta'))
 	mut backends := database.open_local_backends() or { panic(err) }
 	defer {
 		backends.close()
@@ -3491,7 +3491,7 @@ fn test_persistent_database_backend_provider() {
 	}
 	provider := database.backend_provider()
 	assert provider.default_branch() == 'main'
-	assert provider.paths().catalog_meta.ends_with('.pollydb/catalog.meta')
+	assert provider.paths().catalog_meta.ends_with(os.join_path('.pollydb', 'catalog.meta'))
 	mut backends := provider.open_backends() or { panic(err) }
 	defer {
 		backends.close()

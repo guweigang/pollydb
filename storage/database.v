@@ -2451,8 +2451,8 @@ pub fn (mut database PersistentDatabase) persist_catalog() ! {
 		return
 	}
 	os.mkdir_all(repository_layout_dir(database.root_dir))!
-	os.write_file(database_catalog_path(database.root_dir), catalog_data(database.catalog,
-		database.projectors, database.memory_capabilities).bytestr())!
+	atomic_write_bytes(database_catalog_path(database.root_dir), catalog_data(database.catalog,
+		database.projectors, database.memory_capabilities))!
 	database.catalog_dirty = false
 }
 
