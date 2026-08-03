@@ -1,0 +1,15 @@
+.DS_Store
+.omo/
+.pollydb/
+.qoder/
+
+# Local build outputs and copied binaries.
+bin/agentview
+bin/agentview_cli
+cmd/agentview_cli/agentview_cli
+cmd/pollydb/main
+
+# Local preview/debug artifacts.
+llm_preview_result.txt
+preview_result.txt
+screenshot_*.png
