@@ -345,9 +345,9 @@ pub fn (mut store ChunkStore) put(cid []u8, data []u8) !ChunkStoreEntry {
 	offset := store.write_offset
 	mut header := []u8{cap: 8}
 	chunk_store_append_header(mut header, cid.len, data.len)
-	_ = store.file.write(header)!
-	_ = store.file.write(cid)!
-	_ = store.file.write(data)!
+	_ = storage_file_write(mut store.file, header)!
+	_ = storage_file_write(mut store.file, cid)!
+	_ = storage_file_write(mut store.file, data)!
 	store.write_offset += u64(header.len + cid.len + data.len)
 	store.data_dirty = true
 	entry := ChunkStoreEntry{
@@ -386,7 +386,7 @@ pub fn (mut store ChunkStore) put_many(payloads []ChunkPayload) ![]ChunkStoreEnt
 		}
 		offset += u64(8 + payload.cid.len + payload.data.len)
 	}
-	_ = store.file.write(buf)!
+	_ = storage_file_write(mut store.file, buf)!
 	store.write_offset = offset
 	store.data_dirty = true
 	if store.maintain_index {
@@ -405,9 +405,9 @@ pub fn (mut store ChunkStore) put_many_streaming(payloads []ChunkPayload) ![]Chu
 	for payload in payloads {
 		header.clear()
 		chunk_store_append_header(mut header, payload.cid.len, payload.data.len)
-		_ = store.file.write(header)!
-		_ = store.file.write(payload.cid)!
-		_ = store.file.write(payload.data)!
+		_ = storage_file_write(mut store.file, header)!
+		_ = storage_file_write(mut store.file, payload.cid)!
+		_ = storage_file_write(mut store.file, payload.data)!
 		entry := ChunkStoreEntry{
 			offset: offset
 			length: payload.data.len
@@ -443,7 +443,7 @@ pub fn (mut store ChunkStore) put_encoded_batch(records []u8, metas []ChunkRecor
 		}
 		offset += u64(8 + meta.cid.len + meta.length)
 	}
-	_ = store.file.write(records)!
+	_ = storage_file_write(mut store.file, records)!
 	store.write_offset = offset
 	store.data_dirty = true
 	if store.maintain_index {
@@ -494,6 +494,7 @@ pub fn (mut store ChunkStore) finalize_deferred_index_build() ! {
 }
 
 fn (store ChunkStore) persist_index_snapshot(sync_snapshot bool) ! {
+	_ = sync_snapshot
 	if store.path.len == 0 {
 		return
 	}
@@ -510,23 +511,7 @@ fn (store ChunkStore) persist_index_snapshot(sync_snapshot bool) ! {
 	checksum := crc32.sum(payload)
 	chunk_store_write_u32_le(mut out, 16, checksum)
 	out << payload
-	mut tmp_file := os.open_file(tmp_path, 'wb', 0o666)!
-	mut tmp_file_open := true
-	defer {
-		if tmp_file_open {
-			tmp_file.close()
-		}
-	}
-	_ = tmp_file.write(out)!
-	tmp_file.flush()
-	if sync_snapshot {
-		$if darwin || linux || windows {
-			chunk_store_fsync_fd(tmp_file.fd)!
-		}
-	}
-	// Windows does not allow replacing a file while the source handle is open.
-	tmp_file.close()
-	tmp_file_open = false
+	write_atomic_stage(tmp_path, out)!
 	atomic_replace_file(tmp_path, index_path) or {
 		os.rm(tmp_path) or {}
 		return err

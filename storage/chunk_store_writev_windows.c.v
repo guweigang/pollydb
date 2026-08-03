@@ -59,7 +59,7 @@ fn (mut store ChunkStore) put_chunk_cids_writev(data []u8, chunk_cids []ChunkCid
 			}
 			offset += u64(8 + chunk_cid.cid.len + chunk_cid.chunk.length)
 		}
-		written := store.file.write(records)!
+		written := storage_file_write(mut store.file, records)!
 		if written != records.len {
 			return error('batch write wrote ${written} bytes, expected ${records.len}')
 		}

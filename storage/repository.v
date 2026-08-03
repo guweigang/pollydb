@@ -234,9 +234,9 @@ fn repository_append_field(mut out []u8, data []u8) {
 fn write_repository_field(mut file os.File, data []u8) ! {
 	mut header := []u8{cap: 4}
 	repository_append_u32(mut header, u32(data.len))
-	_ = file.write(header)!
+	_ = storage_file_write(mut file, header)!
 	if data.len > 0 {
-		_ = file.write(data)!
+		_ = storage_file_write(mut file, data)!
 	}
 }
 
@@ -271,12 +271,12 @@ fn write_checkpoint_journal_with_branch(root_dir string, node_records []u8, comm
 	repository_append_u32(mut header, u32(commit_records.len))
 	repository_append_u32(mut header, if has_branch { u32(1) } else { u32(0) })
 	mut file := open_repository_append_file(path)!
-	_ = file.write(header)!
+	_ = storage_file_write(mut file, header)!
 	if node_records.len > 0 {
-		_ = file.write(node_records)!
+		_ = storage_file_write(mut file, node_records)!
 	}
 	if commit_records.len > 0 {
-		_ = file.write(commit_records)!
+		_ = storage_file_write(mut file, commit_records)!
 	}
 	if has_branch {
 		write_repository_field(mut file, branch_name.bytes())!
@@ -379,7 +379,7 @@ fn write_branch_head_journal(root_dir string, branch_name string, old_commit_cid
 	repository_append_u32(mut data, repository_branch_head_journal_version)
 	data << payload
 	mut file := open_repository_append_file(path)!
-	_ = file.write(data)!
+	_ = storage_file_write(mut file, data)!
 	file.flush()
 	$if darwin || linux || windows {
 		chunk_store_fsync_fd(file.fd)!
@@ -458,7 +458,7 @@ fn replay_checkpoint_journal_records(mut store ChunkStore, records []u8) ! {
 		}
 		cid := records[cursor + 8..cursor + 8 + cid_len]
 		if !store.has(cid) {
-			_ = store.file.write(records[cursor..cursor + record_len])!
+			_ = storage_file_write(mut store.file, records[cursor..cursor + record_len])!
 			entry := ChunkStoreEntry{
 				offset: store.write_offset
 				length: data_len
@@ -643,22 +643,8 @@ fn repository_read_bytes(path string) ![]u8 {
 
 pub fn (repo Repository) persist(path string) ! {
 	tmp_path := '${path}.tmp.${os.getpid()}.${time.now().unix_micro()}.${rand.uuid_v4()}'
-	mut tmp_file := os.open_file(tmp_path, 'wb', 0o666)!
-	mut tmp_file_open := true
-	defer {
-		if tmp_file_open {
-			tmp_file.close()
-		}
-	}
 	data := repo.data()
-	tmp_file.write(data)!
-	tmp_file.flush()
-	$if darwin || linux || windows {
-		chunk_store_fsync_fd(tmp_file.fd)!
-	}
-	// Windows does not allow replacing a file while the source handle is open.
-	tmp_file.close()
-	tmp_file_open = false
+	write_atomic_stage(tmp_path, data)!
 	atomic_replace_file(tmp_path, path) or {
 		os.rm(tmp_path) or {}
 		return err

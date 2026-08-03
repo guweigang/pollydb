@@ -8,6 +8,7 @@ import time
 // Besides avoiding torn metadata, the Windows staging implementation bypasses
 // the CRT write path, which can report zero-byte writes on hosted runners.
 fn atomic_write_bytes(path string, data []u8) ! {
+	os.mkdir_all(os.dir(path))!
 	tmp_path := '${path}.tmp.${os.getpid()}.${time.now().unix_micro()}.${rand.uuid_v4()}'
 	write_atomic_stage(tmp_path, data)!
 	atomic_replace_file(tmp_path, path) or {
