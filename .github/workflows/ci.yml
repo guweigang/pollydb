@@ -21,8 +21,6 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    env:
-      VMODULES: ${{ runner.temp }}/pollytree-vmarkdown
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +38,10 @@ jobs:
     steps:
       - name: Check out PollyTree
         uses: actions/checkout@v7
+
+      - name: Configure V module path
+        shell: bash
+        run: echo "VMODULES=${RUNNER_TEMP}/pollytree-vmarkdown" >> "${GITHUB_ENV}"
 
       - name: Set up V (Linux and macOS)
         if: runner.os != 'Windows'
