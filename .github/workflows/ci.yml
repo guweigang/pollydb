@@ -131,7 +131,7 @@ jobs:
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install sqlite3:x64-windows xxhash:x64-windows
           New-Item -ItemType Directory -Force thirdparty/native/include, thirdparty/native/lib, thirdparty/native/bin | Out-Null
-          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include\sqlite3.h" thirdparty/native/include/
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include\sqlite3*.h" thirdparty/native/include/
           Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include\xxhash.h" thirdparty/native/include/
           Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib\sqlite3.lib" thirdparty/native/lib/
           Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib\xxhash.lib" thirdparty/native/lib/
