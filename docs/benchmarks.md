@@ -33,6 +33,27 @@
 - `typed_branch_merge`
   Measures a non-conflicting typed branch merge into a working set.
 
+- `codex_entries_write_rows_only`
+  Measures synthetic Codex `entries` writes with no secondary indexes and no FTS.
+
+- `codex_entries_write_secondary_indexes`
+  Measures the same synthetic Codex `entries` writes with the default non-FTS index set.
+
+- `codex_entries_write_fts`
+  Measures the same synthetic Codex `entries` writes with the default non-FTS index set plus `content_text` FTS.
+
+- `codex_entries_update_rows_only` / `codex_entries_update_secondary_indexes` / `codex_entries_update_fts`
+  Measure update cost for synthetic Codex `entries` rows under the three schema profiles.
+
+- `codex_entries_delete_rows_only` / `codex_entries_delete_secondary_indexes` / `codex_entries_delete_fts`
+  Measure delete cost for synthetic Codex `entries` rows under the three schema profiles.
+
+- `codex_entries_secondary_lookup_secondary_indexes` / `codex_entries_secondary_lookup_fts`
+  Measure `session_id` secondary-index lookup latency on the indexed `entries` schema profiles.
+
+- `codex_entries_fts_query_fts`
+  Measures direct `content_text` FTS query latency on the FTS-enabled `entries` schema profile.
+
 ## Run
 
 Default run:
@@ -77,7 +98,7 @@ v run ./cmd/bench --rows 1000000 --batch-size 5000 --lookups 50000 --range-size 
   Worker count for parallel CDC hashing and ingest scenarios.
 
 - `--mode`
-  `all`, `cdc`, or `typed`.
+  `all`, `cdc`, `typed`, `aggregate`, `sync`, or `schema`.
 
 ## Output
 
@@ -123,3 +144,38 @@ That progression will help distinguish:
 - memory pressure
 - merge/index-maintenance cost
 - chunk reuse behavior under large payloads
+
+For Codex schema-cost benchmarking specifically:
+
+```sh
+v run ./cmd/bench/main.v --mode schema --rows 10000 --batch-size 1000
+```
+
+That mode keeps the workload fixed and only changes the `entries` schema profile:
+
+- rows only
+- rows + secondary indexes
+- rows + secondary indexes + FTS
+
+It now exercises five operation families against those profiles:
+
+- write
+- update
+- delete
+- secondary-index lookup
+- FTS query
+
+## Layering Rule
+
+This harness is for generic storage-engine benchmarking. It should not be used to
+answer workload-adapter questions such as "why is Codex import slow?" by itself.
+
+For workload-specific benchmarking, keep the layers separate:
+
+- storage engine microbenchmarks in `cmd/bench`
+- schema-cost benchmarks for a declared table/index profile
+- adapter benchmarks for source parsing/materialization
+- end-to-end import benchmarks for the full product path
+
+For the Codex import workload specifically, see
+[docs/codex_import_benchmarking.md](/Users/guweigang/Source/pollytree/docs/codex_import_benchmarking.md:1).

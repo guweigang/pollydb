@@ -5,6 +5,9 @@ import agentview
 import memory
 import storage
 import time
+import strings
+import json
+import rand
 
 fn main() {
 	args := normalized_args(os.args[1..])
@@ -95,7 +98,8 @@ fn main() {
 	}
 	match command {
 		'sync-codex' {
-			cfg := storage.ChunkConfig.default().with_split_backed_working_set(has_flag(args, '--split-backed'))
+			cfg := agentview.codex_sync_chunk_config().with_split_backed_working_set(has_flag(args,
+				'--split-backed'))
 			options := agentview.SyncOptions{
 				batch_sessions: parse_flag_int(args, '--batch-sessions', 8)
 			}
@@ -111,7 +115,8 @@ fn main() {
 			}
 		}
 		'index-search' {
-			cfg := storage.ChunkConfig.default().with_split_backed_working_set(has_flag(args, '--split-backed'))
+			cfg := storage.ChunkConfig.default().with_split_backed_working_set(has_flag(args,
+				'--split-backed'))
 			stats := store.ensure_search_indexes_with_progress_and_config(search_index_progress_to_stderr, cfg) or {
 				eprintln(err.msg())
 				exit(1)
@@ -128,11 +133,11 @@ fn main() {
 		}
 		'sessions' {
 			request := agentview.SessionListRequest{
-				limit: parse_limit(args, 20)
-				offset: parse_flag_int(args, '--offset', 0)
-				query: parse_flag_value(args, '--query')
-				cwd_prefix: parse_flag_value(args, '--cwd-prefix')
-				source: parse_flag_value(args, '--source')
+				limit:            parse_limit(args, 20)
+				offset:           parse_flag_int(args, '--offset', 0)
+				query:            parse_flag_value(args, '--query')
+				cwd_prefix:       parse_flag_value(args, '--cwd-prefix')
+				source:           parse_flag_value(args, '--source')
 				include_archived: !has_flag(args, '--no-archived')
 			}
 			result := store.list_sessions_page(request) or {
@@ -151,8 +156,8 @@ fn main() {
 			}
 			request := agentview.TranscriptRequest{
 				session_id: args[1]
-				offset: parse_flag_int(args, '--offset', 0)
-				limit: parse_flag_int(args, '--limit', 200)
+				offset:     parse_flag_int(args, '--offset', 0)
+				limit:      parse_flag_int(args, '--limit', 200)
 			}
 			transcript := store.load_transcript_page(request) or {
 				eprintln(err.msg())
@@ -187,13 +192,13 @@ fn main() {
 				exit(1)
 			}
 			request := agentview.SearchRequest{
-				query: args[1]
+				query:      args[1]
 				session_id: parse_flag_value(args, '--session-id')
 				cwd_prefix: parse_flag_value(args, '--cwd-prefix')
-				source: parse_flag_value(args, '--source')
-				kind: parse_flag_value(args, '--kind')
-				limit: parse_limit(args, 20)
-				offset: parse_flag_int(args, '--offset', 0)
+				source:     parse_flag_value(args, '--source')
+				kind:       parse_flag_value(args, '--kind')
+				limit:      parse_limit(args, 20)
+				offset:     parse_flag_int(args, '--offset', 0)
 			}
 			result := store.search_entries(request) or {
 				eprintln(err.msg())
@@ -240,13 +245,19 @@ fn main() {
 				exit(1)
 			}
 		}
+		'demo-export' {
+			run_demo_export(args, store, store_root, codex_root) or {
+				eprintln(err.msg())
+				exit(1)
+			}
+		}
 		'browse' {
 			agentview.browse_store(store, agentview.BrowserOptions{
-				query: parse_flag_value(args, '--query')
-				cwd_prefix: parse_flag_value(args, '--cwd-prefix')
-				source: parse_flag_value(args, '--source')
+				query:            parse_flag_value(args, '--query')
+				cwd_prefix:       parse_flag_value(args, '--cwd-prefix')
+				source:           parse_flag_value(args, '--source')
 				include_archived: !has_flag(args, '--no-archived')
-				list_limit: parse_flag_int(args, '--list-limit', 100)
+				list_limit:       parse_flag_int(args, '--list-limit', 100)
 				transcript_limit: parse_flag_int(args, '--transcript-limit', 40)
 			}) or {
 				eprintln(err.msg())
@@ -262,67 +273,75 @@ fn main() {
 }
 
 fn usage() string {
-	return 'agentview sync-codex [--codex-root <path>] [--store-root <path>] [--split-backed] [--batch-sessions N]\n'
-		+ 'agentview index-search [--store-root <path>] [--split-backed]\n'
-		+ 'agentview bench-codex [--codex-root <path>] [--store-root <path>] [--split-backed]\n'
-		+ 'agentview bench-codex-delta [--codex-root <path>] [--store-root <path>] [--split-backed] [--sessions N] [--mutate N]\n'
-		+ 'agentview bench-codex-index-delta [--codex-root <path>] [--store-root <path>] [--split-backed] [--sessions N] [--mutate N]\n'
-		+ 'agentview bench-write-path [--existing N] [--ops N] [--rounds N] [--mode insert|update|delete|mixed] [--indexes N] [--partition auto|off|force]\n'
-		+ 'agentview bench-write-layout [--existing N] [--ops N] [--rounds N] [--mode insert|update|delete|mixed] [--indexes N] [--partition auto|off|force]\n'
-		+ 'agentview bench-tree-build [--items N] [--rounds N]\n'
-		+ 'agentview bench-split-materialize [--existing N] [--indexes N] [--rounds N]\n'
-		+ 'agentview bench-write-matrix [--existing N] [--ops N] [--rounds N] [--partition auto|off|force]\n'
-		+ 'agentview explain-browser [--query TEXT] [--cwd-prefix PATH] [--source NAME] [--no-archived] [--session-id ID] [--search TEXT] [--kind KIND] [--store-root <path>]\n'
-		+ 'agentview bench-browser [--query TEXT] [--cwd-prefix PATH] [--source NAME] [--no-archived] [--session-id ID] [--search TEXT] [--kind KIND] [--rounds N] [--store-root <path>]\n'
-		+ 'agentview sessions [limit] [--offset N] [--query TEXT] [--cwd-prefix PATH] [--source NAME] [--no-archived] [--store-root <path>]\n'
-		+ 'agentview show <session_id> [--offset N] [--limit N] [--store-root <path>]\n'
-		+ 'agentview search <query> [limit] [--offset N] [--session-id ID] [--cwd-prefix PATH] [--source NAME] [--kind KIND] [--store-root <path>]\n'
-		+ 'agentview browse [--query TEXT] [--cwd-prefix PATH] [--source NAME] [--no-archived] [--list-limit N] [--transcript-limit N] [--store-root <path>]\n'
-		+ 'agentview memory list [--query TEXT] [--limit N] [--offset N] [--include-superseded] [--store-root <path>]\n'
-		+ 'agentview memory search <query> [--limit N] [--offset N] [--include-superseded] [--store-root <path>]\n'
-		+ 'agentview memory context <query> [--limit N] [--sources] [--cwd <path>] [--repo <name>] [--store-root <path>]\n'
-		+ 'agentview memory preview [--recent-sessions N] [--max-jobs N] [--neighbor-limit N] [--candidate-limit N] [--candidate-offset N] [--store-root <path>]\n'
-		+ 'agentview memory distill [--recent-sessions N] [--max-jobs N] [--neighbor-limit N] [--candidate-limit N] [--candidate-offset N] [--store-root <path>]\n'
-		+ 'agentview memory delete <reflection_id...> [--store-root <path>]\n'
-		+ 'agentview context <query> [--limit N] [--sources] [--cwd <path>] [--repo <name>] [--store-root <path>]\n'
-		+ 'agentview scenes [--store-root <path>]\n'
-		+ 'agentview persona [list] [--store-root <path>]\n'
-		+ 'agentview persona add <content> [--store-root <path>]\n'
-		+ 'agentview persona delete <persona_id> [--store-root <path>]\n'
-		+ 'default codex root: ~/.codex\n'
-		+ 'default store root: ~/.agentview/pollydb\n'
-		+ 'note: sessions/show/search/browse will auto-sync from ~/.codex when the store is empty\n'
-		+ 'note: sync-codex now checkpoints in small batches by default; use --batch-sessions to tune resume-safe imports\n'
-		+ 'note: sync-codex builds base indexes first; run index-search to add general FTS search indexes\n'
-		+ 'note: bench-write-path measures synthetic typed fallback writes without reading ~/.codex\n'
-		+ 'note: bench-write-layout compares mixed apply against apply+split-materialize for the same synthetic workload\n'
-		+ 'note: bench-tree-build measures tree construction without typed schema/index maintenance\n'
-		+ 'note: bench-split-materialize measures converting one mixed typed tree into split row/index trees\n'
-		+ 'note: bench-write-matrix runs insert/update/delete/mixed across index-count presets\n'
-		+ 'note: explain-browser shows whether browser list/transcript/search use indexes or scans\n'
-		+ 'note: bench-browser measures the real browser-facing list/transcript/search calls against your store\n'
-		+ 'note: memory preview/distill require -d llama_cpp and POLLYDB_MEMORY_EMBEDDING_MODEL; set POLLYDB_MEMORY_FAST_DISTILL=1 for heuristic text generation'
+	return [
+		'agentview sync-codex [--codex-root <path>] [--store-root <path>] [--split-backed] [--batch-sessions N]\n',
+		'agentview index-search [--store-root <path>] [--split-backed]\n',
+		'agentview bench-codex [--codex-root <path>] [--store-root <path>] [--split-backed]\n',
+		'agentview bench-codex-delta [--codex-root <path>] [--store-root <path>] [--split-backed] [--sessions N] [--mutate N]\n',
+		'agentview bench-codex-index-delta [--codex-root <path>] [--store-root <path>] [--split-backed] [--sessions N] [--mutate N]\n',
+		'agentview bench-write-path [--existing N] [--ops N] [--rounds N] [--mode insert|update|delete|mixed] [--indexes N] [--partition auto|off|force]\n',
+		'agentview bench-write-layout [--existing N] [--ops N] [--rounds N] [--mode insert|update|delete|mixed] [--indexes N] [--partition auto|off|force]\n',
+		'agentview bench-tree-build [--items N] [--rounds N]\n',
+		'agentview bench-split-materialize [--existing N] [--indexes N] [--rounds N]\n',
+		'agentview bench-write-matrix [--existing N] [--ops N] [--rounds N] [--partition auto|off|force]\n',
+		'agentview explain-browser [--query TEXT] [--cwd-prefix PATH] [--source NAME] [--no-archived] [--session-id ID] [--search TEXT] [--kind KIND] [--store-root <path>]\n',
+		'agentview bench-browser [--query TEXT] [--cwd-prefix PATH] [--source NAME] [--no-archived] [--session-id ID] [--search TEXT] [--kind KIND] [--rounds N] [--store-root <path>]\n',
+		'agentview sessions [limit] [--offset N] [--query TEXT] [--cwd-prefix PATH] [--source NAME] [--no-archived] [--store-root <path>]\n',
+		'agentview show <session_id> [--offset N] [--limit N] [--store-root <path>]\n',
+		'agentview search <query> [limit] [--offset N] [--session-id ID] [--cwd-prefix PATH] [--source NAME] [--kind KIND] [--store-root <path>]\n',
+		'agentview browse [--query TEXT] [--cwd-prefix PATH] [--source NAME] [--no-archived] [--list-limit N] [--transcript-limit N] [--store-root <path>]\n',
+		'agentview memory list [--query TEXT] [--limit N] [--offset N] [--include-superseded] [--as-of-commit CID] [--store-root <path>]\n',
+		'agentview memory search <query> [--limit N] [--offset N] [--include-superseded] [--as-of-commit CID] [--store-root <path>]\n',
+		'agentview memory context <query> [--limit N] [--sources] [--cwd <path>] [--repo <name>] [--store-root <path>]\n',
+		'agentview memory audit [--limit N] [--offset N] [--include-superseded] [--as-of-commit CID] [--store-root <path>]\n',
+		'agentview memory preview [--recent-sessions N] [--max-jobs N] [--neighbor-limit N] [--candidate-limit N] [--candidate-offset N] [--all-sessions] [--max-cards N] [--style recap] [--store-root <path>]\n',
+		'agentview memory distill [--recent-sessions N] [--max-jobs N] [--neighbor-limit N] [--candidate-limit N] [--candidate-offset N] [--all-sessions] [--max-cards N] [--style recap] [--store-root <path>]\n',
+		'agentview memory delete <reflection_id...>|chain <reflection_id>|supersede <reflection_id> [--store-root <path>]\n',
+		'agentview context <query> [--limit N] [--sources] [--cwd <path>] [--repo <name>] [--store-root <path>]\n',
+		'agentview demo-export [--session-id <id>] [--out demo/agent-history/demo-data.json] [--store-root <path>] [--codex-root <path>]\n',
+		'agentview scenes [list]|timeline <scene_id> [--max-commits N] [--store-root <path>]\n',
+		'agentview persona [list] [--store-root <path>]\n',
+		'agentview persona add <content> [--store-root <path>]\n',
+		'agentview persona delete <persona_id> [--store-root <path>]\n',
+		'default codex root: ~/.codex\n',
+		'default store root: ~/.agentview/pollydb\n',
+		'note: sessions/show/search/browse will auto-sync from ~/.codex when the store is empty\n',
+		'note: sync-codex now checkpoints in small batches by default; use --batch-sessions to tune resume-safe imports\n',
+		'note: sync-codex builds base indexes first; run index-search to add general FTS search indexes\n',
+		'note: bench-write-path measures synthetic typed fallback writes without reading ~/.codex\n',
+		'note: bench-write-layout compares mixed apply against apply+split-materialize for the same synthetic workload\n',
+		'note: bench-tree-build measures tree construction without typed schema/index maintenance\n',
+		'note: bench-split-materialize measures converting one mixed typed tree into split row/index trees\n',
+		'note: bench-write-matrix runs insert/update/delete/mixed across index-count presets\n',
+		'note: explain-browser shows whether browser list/transcript/search use indexes or scans\n',
+		'note: bench-browser measures the real browser-facing list/transcript/search calls against your store\n',
+		'note: memory preview/distill require -d llama_cpp and POLLYDB_MEMORY_EMBEDDING_MODEL; set POLLYDB_MEMORY_FAST_DISTILL=1 for heuristic text generation',
+	].join('')
 }
 
 fn run_memory_command(args []string, store agentview.PollyDbStore) ! {
 	subcommand := if args.len > 1 { args[1] } else { 'list' }
 	match subcommand {
 		'list' {
+			as_of_commit := parse_flag_value(args, '--as-of-commit')
 			result := store.list_memory(agentview.MemoryListRequest{
-				query: parse_flag_value(args, '--query')
-				limit: parse_limit(args, 20)
-				offset: parse_flag_int(args, '--offset', 0)
+				query:              parse_flag_value(args, '--query')
+				limit:              parse_limit(args, 20)
+				offset:             parse_flag_int(args, '--offset', 0)
 				include_superseded: has_flag(args, '--include-superseded')
+				as_of_commit_cid:   as_of_commit
 			})!
 			print_memory_list(result)
 		}
 		'search' {
+			as_of_commit := parse_flag_value(args, '--as-of-commit')
 			query := memory_query_arg(args)!
 			result := store.list_memory(agentview.MemoryListRequest{
-				query: query
-				limit: parse_limit(args, 20)
-				offset: parse_flag_int(args, '--offset', 0)
+				query:              query
+				limit:              parse_limit(args, 20)
+				offset:             parse_flag_int(args, '--offset', 0)
 				include_superseded: has_flag(args, '--include-superseded')
+				as_of_commit_cid:   as_of_commit
 			})!
 			print_memory_list(result)
 		}
@@ -330,14 +349,26 @@ fn run_memory_command(args []string, store agentview.PollyDbStore) ! {
 			query := memory_query_arg(args)!
 			cwd := parse_flag_value(args, '--cwd')
 			repo := parse_flag_value(args, '--repo')
+			as_of_commit := parse_flag_value(args, '--as-of-commit')
 			context := store.memory_context(agentview.MemoryContextRequest{
-				query:           query
-				limit:           parse_limit(args, 6)
-				include_sources: has_flag(args, '--sources')
-				cwd:             cwd
-				repo:            repo
+				query:            query
+				limit:            parse_limit(args, 6)
+				include_sources:  has_flag(args, '--sources')
+				cwd:              cwd
+				repo:             repo
+				as_of_commit_cid: as_of_commit
 			})!
 			print(context.markdown)
+		}
+		'audit' {
+			as_of_commit := parse_flag_value(args, '--as-of-commit')
+			report := store.audit_memory(agentview.MemoryAuditRequest{
+				limit:              parse_limit(args, 20)
+				offset:             parse_flag_int(args, '--offset', 0)
+				include_superseded: has_flag(args, '--include-superseded')
+				as_of_commit_cid:   as_of_commit
+			})!
+			print_memory_audit_report(report)
 		}
 		'preview' {
 			run_memory_preview(args, store)!
@@ -349,8 +380,26 @@ fn run_memory_command(args []string, store agentview.PollyDbStore) ! {
 			result := store.delete_memory(positional_args_after(args, 2))!
 			print_memory_delete_result(result)
 		}
+		'chain' {
+			reflection_id := if args.len > 2 {
+				args[2]
+			} else {
+				return error('memory chain requires <reflection_id>')
+			}
+			chain := store.memory_evolution_chain(reflection_id)!
+			print_memory_evolution_chain(chain)
+		}
+		'supersede' {
+			reflection_id := if args.len > 2 {
+				args[2]
+			} else {
+				return error('memory supersede requires <reflection_id>')
+			}
+			graph := store.memory_supersede_graph(reflection_id)!
+			print_memory_supersede_graph(graph)
+		}
 		else {
-			return error('unknown memory command: ${subcommand}; expected list|search|context|preview|distill|delete')
+			return error('unknown memory command: ${subcommand}; expected list|search|context|audit|preview|distill|delete|chain|supersede')
 		}
 	}
 }
@@ -365,11 +414,12 @@ fn run_memory_preview(args []string, store agentview.PollyDbStore) ! {
 			return
 		}
 		embedding_model_path := memory_embedding_model_path()!
+		gpu_layers := memory_embedding_gpu_layers()
 		mut embedding_engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
 			model_path:   embedding_model_path
 			n_ctx:        512
 			n_batch:      512
-			n_gpu_layers: 0
+			n_gpu_layers: gpu_layers
 		})!
 		defer {
 			embedding_engine.close()
@@ -377,6 +427,10 @@ fn run_memory_preview(args []string, store agentview.PollyDbStore) ! {
 		mut previews := []agentview.MemoryDistillPreviewCard{}
 		if memory_use_heuristic_distill() {
 			previews = store.preview_recent_memory_heuristic(mut embedding_engine, options)!
+		} else if os.getenv('BAILIAN_CODING_API_KEY').len > 0 {
+			mut api_gen := memory.new_openai_generator(memory.OpenAIGeneratorConfig{})!
+			defer {}
+			previews = store.preview_recent_memory(mut embedding_engine, mut api_gen, options)!
 		} else {
 			generation_model_path := memory_generation_model_path()!
 			mut generator := memory.new_llama_generation_engine(memory.LlamaGenerationConfig{
@@ -398,21 +452,24 @@ fn run_memory_preview(args []string, store agentview.PollyDbStore) ! {
 	}
 }
 
-fn print_memory_salience_report(report agentview.MemorySalienceReport) {
-	println('memory_salience raw=${report.raw_entries} candidates=${report.candidate_entries} embedding_candidates=${report.embedding_candidate_entries}')
-	println('memory_salience candidates_by_type=${format_memory_counts(report.candidates_by_type)}')
-	println('memory_salience skipped_by_reason=${format_memory_counts(report.skipped_by_reason)}')
-	println('memory_salience discarded_before_embedding=${format_memory_counts(report.discarded_before_embedding)}')
+$if llama_cpp ? {
+	fn print_memory_salience_report(report agentview.MemorySalienceReport) {
+		println('memory_salience raw=${report.raw_entries} candidates=${report.candidate_entries} embedding_candidates=${report.embedding_candidate_entries}')
+		println('memory_salience candidates_by_type=${format_memory_counts(report.candidates_by_type)}')
+		println('memory_salience skipped_by_reason=${format_memory_counts(report.skipped_by_reason)}')
+		println('memory_salience discarded_before_embedding=${format_memory_counts(report.discarded_before_embedding)}')
+	}
 }
 
 fn run_memory_distill(args []string, store agentview.PollyDbStore) ! {
 	$if llama_cpp ? {
 		embedding_model_path := memory_embedding_model_path()!
+		gpu_layers := memory_embedding_gpu_layers()
 		mut embedding_engine := memory.new_llama_embedding_engine(memory.LlamaEmbeddingConfig{
 			model_path:   embedding_model_path
 			n_ctx:        512
 			n_batch:      512
-			n_gpu_layers: 0
+			n_gpu_layers: gpu_layers
 		})!
 		defer {
 			embedding_engine.close()
@@ -421,11 +478,15 @@ fn run_memory_distill(args []string, store agentview.PollyDbStore) ! {
 		mut persisted := []memory.PersistedReflection{}
 		if memory_use_heuristic_distill() {
 			persisted = store.distill_recent_memory_heuristic(mut embedding_engine, options)!
+		} else if os.getenv('BAILIAN_CODING_API_KEY').len > 0 {
+			mut api_gen := memory.new_openai_generator(memory.OpenAIGeneratorConfig{})!
+			defer {}
+			persisted = store.distill_recent_memory(mut embedding_engine, mut api_gen, options)!
 		} else {
 			generation_model_path := memory_generation_model_path()!
 			mut generator := memory.new_llama_generation_engine(memory.LlamaGenerationConfig{
 				model_path:       generation_model_path
-				n_ctx:            2048
+				n_ctx:            4096
 				n_batch:          512
 				n_gpu_layers:     0
 				max_tokens:       260
@@ -453,25 +514,433 @@ fn run_context_command(args []string, store agentview.PollyDbStore) ! {
 	}
 	cwd := parse_flag_value(args, '--cwd')
 	repo := parse_flag_value(args, '--repo')
+	as_of_commit := parse_flag_value(args, '--as-of-commit')
 	context := store.memory_context(agentview.MemoryContextRequest{
-		query:           query
-		limit:           parse_limit(args, 6)
-		include_sources: has_flag(args, '--sources')
-		cwd:             cwd
-		repo:            repo
+		query:            query
+		limit:            parse_limit(args, 6)
+		include_sources:  has_flag(args, '--sources')
+		cwd:              cwd
+		repo:             repo
+		as_of_commit_cid: as_of_commit
 	})!
 	print(context.markdown)
 }
 
+struct DemoExport {
+	title        string
+	tagline      string
+	generated_at string
+	store_root   string
+	commits      []DemoCommit
+	session      DemoSession
+	entries      []DemoEntry
+	graph        agentview.EpisodeGraph
+}
+
+struct DemoCommit {
+	cid         string
+	root_cid    string
+	parent_cids []string
+	message     string
+	author      string
+	timestamp   i64
+}
+
+struct DemoSession {
+	id         string
+	title      string
+	cwd        string
+	source     string
+	updated_at string
+}
+
+struct DemoEntry {
+	seq       int
+	timestamp string
+	kind      string
+	role      string
+	tool_name string
+	text      string
+}
+
+fn run_demo_export(args []string, store agentview.PollyDbStore, store_root string, codex_root string) ! {
+	ensure_store_ready('sessions', store, codex_root)!
+	session_id := parse_flag_value(args, '--session-id')
+	mut transcript := agentview.TranscriptPage{}
+	if session_id.len > 0 {
+		transcript = store.load_transcript_page(agentview.TranscriptRequest{
+			session_id: session_id
+			offset:     0
+			limit:      48
+		})!
+	} else {
+		result := store.list_sessions_page(agentview.SessionListRequest{
+			limit:            1
+			offset:           0
+			include_archived: true
+		})!
+		if result.sessions.len == 0 {
+			return error('demo-export needs at least one imported session')
+		}
+		transcript = store.load_transcript_page(agentview.TranscriptRequest{
+			session_id: result.sessions[0].id
+			offset:     0
+			limit:      48
+		})!
+	}
+	summary := transcript.summary
+	visible_entries := demo_visible_entries(transcript.entries)
+	graph := store.save_episode_graph(demo_episode_graph_from_transcript(transcript))!
+	export := DemoExport{
+		title:        'PollyDB Agent History Graph'
+		tagline:      'AI-generated understanding stored as versioned, replayable rows.'
+		generated_at: time.now().format_rfc3339()
+		store_root:   store_root
+		commits:      demo_branch_commits(store_root, 8)
+		session:      DemoSession{
+			id:         summary.id
+			title:      summary.title
+			cwd:        summary.cwd
+			source:     summary.source
+			updated_at: summary.updated_at
+		}
+		entries:      visible_entries.map(DemoEntry{
+			seq:       it.seq
+			timestamp: it.timestamp
+			kind:      it.kind.str()
+			role:      it.role
+			tool_name: it.tool_name
+			text:      compact_demo_text(it.text, 900)
+		})
+		graph:        graph
+	}
+	out_path := parse_flag_value(args, '--out')
+	final_path := if out_path.len > 0 { out_path } else { 'demo/agent-history/demo-data.json' }
+	parent := os.dir(final_path)
+	if parent.len > 0 && parent != '.' {
+		os.mkdir_all(parent)!
+	}
+	payload := json.encode(export)
+	os.write_file(final_path, payload)!
+	if final_path.ends_with('.json') {
+		js_path := final_path[..final_path.len - '.json'.len] + '.js'
+		os.write_file(js_path, 'window.__POLLYDB_DEMO_DATA = ${payload};\n')!
+	}
+	println('demo exported ${final_path}')
+}
+
+fn demo_episode_graph_from_transcript(transcript agentview.TranscriptPage) agentview.EpisodeGraph {
+	summary := transcript.summary
+	entries := demo_visible_entries(transcript.entries)
+	start_seq := if entries.len > 0 { entries[0].seq } else { 0 }
+	end_seq := if entries.len > 0 { entries[entries.len - 1].seq } else { 0 }
+	user_entry := first_demo_entry_by_role(entries, 'user')
+	assistant_entry := first_demo_entry_by_role(entries, 'assistant')
+	last_entry := last_demo_entry(entries)
+	episode_id := 'episode-demo-' + stable_demo_id(summary.id) + '-' +
+		rand.uuid_v4().replace('-', '')
+	problem_node := 'node-${episode_id}-problem'
+	action_node := 'node-${episode_id}-action'
+	evidence_node := 'node-${episode_id}-evidence'
+	outcome_node := 'node-${episode_id}-outcome'
+	return agentview.EpisodeGraph{
+		episode: agentview.Episode{
+			episode_id:  episode_id
+			session_id:  summary.id
+			start_seq:   start_seq
+			end_seq:     end_seq
+			title:       if summary.title.len > 0 { summary.title } else { 'Agent work episode' }
+			intent:      if user_entry.text.len > 0 {
+				compact_demo_text(user_entry.text, 180)
+			} else {
+				'找回这次 agent 会话当时要解决的问题。'
+			}
+			outcome:     if last_entry.text.len > 0 {
+				compact_demo_text(last_entry.text, 220)
+			} else {
+				'把长会话沉淀成可回放、可追溯的工作记忆。'
+			}
+			status:      'derived'
+			cwd:         summary.cwd
+			repo:        demo_repo_from_cwd(summary.cwd)
+			confidence:  82
+			source_refs: demo_source_refs(summary.id, [user_entry, assistant_entry])
+		}
+		report:  agentview.EpisodeReport{
+			report_id:           'report-${episode_id}'
+			summary_md:          demo_report_markdown(summary, user_entry, assistant_entry)
+			decisions_json:      json.encode([
+				'把长会话整理成可复用的工作记忆，而不是让用户重读 transcript。',
+			])
+			failures_json:       '[]'
+			commands_json:       json.encode(entries.filter(it.tool_name.len > 0).map(it.tool_name))
+			files_json:          '[]'
+			open_questions_json: json.encode([
+				'下一步应该让模型自动拆出多个 episode，并为每个 episode 生成更准确的标题。',
+			])
+			source_refs:         demo_source_refs(summary.id, [user_entry, assistant_entry])
+		}
+		nodes:   [
+			agentview.EpisodeReasoningNode{
+				node_id:     problem_node
+				episode_id:  episode_id
+				kind:        'problem'
+				title:       '用户当时想解决什么？'
+				content:     if user_entry.text.len > 0 {
+					compact_demo_text(user_entry.text, 320)
+				} else {
+					'这次会话从一个需要被找回的用户问题开始。'
+				}
+				start_seq:   user_entry.seq
+				end_seq:     user_entry.seq
+				confidence:  88
+				source_refs: demo_source_refs(summary.id, [user_entry])
+			},
+			agentview.EpisodeReasoningNode{
+				node_id:     action_node
+				episode_id:  episode_id
+				kind:        'action'
+				title:       'Agent 如何开始推进？'
+				content:     if assistant_entry.text.len > 0 {
+					compact_demo_text(assistant_entry.text, 320)
+				} else {
+					'Agent 给出了下一步处理动作。'
+				}
+				start_seq:   assistant_entry.seq
+				end_seq:     assistant_entry.seq
+				confidence:  78
+				source_refs: demo_source_refs(summary.id, [assistant_entry])
+			},
+			agentview.EpisodeReasoningNode{
+				node_id:    evidence_node
+				episode_id: episode_id
+				kind:       'evidence'
+				title:      '每个判断都能回到原文'
+				content:    'PollyDB 把原文消息、记忆节点和证据引用存成结构化 row，所以用户不用重读长会话，也能审计每个结论从哪里来。'
+				start_seq:  start_seq
+				end_seq:    end_seq
+				confidence: 92
+			},
+			agentview.EpisodeReasoningNode{
+				node_id:    outcome_node
+				episode_id: episode_id
+				kind:       'outcome'
+				title:      '沉淀成可复用记忆'
+				content:    '这张记忆卡不是一次性摘要，而是一次 commit：之后可以比较版本、回滚、合并，或让模型基于新证据继续更新。'
+				start_seq:  end_seq
+				end_seq:    end_seq
+				confidence: 84
+			},
+		]
+		links:   [
+			agentview.EpisodeReasoningLink{
+				link_id:      'link-${episode_id}-problem-action'
+				episode_id:   episode_id
+				from_node_id: problem_node
+				to_node_id:   action_node
+				kind:         'led_to'
+				confidence:   80
+			},
+			agentview.EpisodeReasoningLink{
+				link_id:      'link-${episode_id}-action-evidence'
+				episode_id:   episode_id
+				from_node_id: action_node
+				to_node_id:   evidence_node
+				kind:         'supported_by'
+				confidence:   82
+			},
+			agentview.EpisodeReasoningLink{
+				link_id:      'link-${episode_id}-evidence-outcome'
+				episode_id:   episode_id
+				from_node_id: evidence_node
+				to_node_id:   outcome_node
+				kind:         'resolves'
+				confidence:   76
+			},
+		]
+	}
+}
+
+fn demo_visible_entries(entries []agentview.SessionEntry) []agentview.SessionEntry {
+	mut visible := []agentview.SessionEntry{}
+	for entry in entries {
+		if is_demo_runtime_context_entry(entry) {
+			continue
+		}
+		visible << entry
+	}
+	return visible
+}
+
+fn is_demo_runtime_context_entry(entry agentview.SessionEntry) bool {
+	text := entry.text.trim_space()
+	return text.starts_with('<environment_context>') || text.starts_with('<developer_context>')
+}
+
+fn demo_branch_commits(store_root string, limit int) []DemoCommit {
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { return []DemoCommit{} }
+	defer {
+		db.close() or {}
+	}
+	commits := db.branch_log('main', limit) or { return []DemoCommit{} }
+	return commits.map(DemoCommit{
+		cid:         it.cid
+		root_cid:    it.root_cid
+		parent_cids: it.parent_cids
+		message:     it.meta.message
+		author:      it.meta.author
+		timestamp:   it.meta.timestamp
+	})
+}
+
+fn first_demo_entry_by_role(entries []agentview.SessionEntry, role string) agentview.SessionEntry {
+	for entry in entries {
+		if entry.role == role && entry.text.trim_space().len > 0
+			&& !is_demo_runtime_context_entry(entry) {
+			return entry
+		}
+	}
+	for entry in entries {
+		if entry.text.trim_space().len > 0 && !is_demo_runtime_context_entry(entry) {
+			return entry
+		}
+	}
+	return agentview.SessionEntry{}
+}
+
+fn last_demo_entry(entries []agentview.SessionEntry) agentview.SessionEntry {
+	for idx := entries.len - 1; idx >= 0; idx-- {
+		entry := entries[idx]
+		if entry.role == 'assistant' && entry.text.trim_space().len > 0
+			&& !is_demo_runtime_context_entry(entry) {
+			return entry
+		}
+	}
+	for idx := entries.len - 1; idx >= 0; idx-- {
+		entry := entries[idx]
+		if entry.text.trim_space().len > 0 && !is_demo_runtime_context_entry(entry) {
+			return entry
+		}
+	}
+	return agentview.SessionEntry{}
+}
+
+fn demo_source_refs(session_id string, entries []agentview.SessionEntry) []agentview.EpisodeSourceRef {
+	mut refs := []agentview.EpisodeSourceRef{}
+	mut seen := map[string]bool{}
+	for entry in entries {
+		if entry.text.trim_space().len == 0 {
+			continue
+		}
+		key := '${session_id}:${entry.seq}'
+		if key in seen {
+			continue
+		}
+		seen[key] = true
+		refs << agentview.EpisodeSourceRef{
+			table_name:  'entries'
+			primary_key: key
+			column_name: 'content_text'
+			start_seq:   entry.seq
+			end_seq:     entry.seq
+			text:        compact_demo_text(entry.text, 500)
+		}
+	}
+	return refs
+}
+
+fn demo_report_markdown(summary agentview.SessionSummary, user_entry agentview.SessionEntry, assistant_entry agentview.SessionEntry) string {
+	topic_title := if summary.title.len > 0 { summary.title } else { 'Agent work episode' }
+	user_goal := if user_entry.text.len > 0 {
+		compact_demo_text(user_entry.text, 220)
+	} else {
+		'找回这次会话当时要解决的问题。'
+	}
+	first_step := if assistant_entry.text.len > 0 {
+		compact_demo_text(assistant_entry.text, 220)
+	} else {
+		'保留 agent 的关键处理动作，并链接回原文证据。'
+	}
+	lines := [
+		'# ${topic_title}',
+		'',
+		'用户当前判断：AgentView 不应该只是历史浏览器。真正诉求是把长期 Codex/Claude 会话转成可恢复、可追溯、可继续使用的工作记忆。',
+		'',
+		'关键结论：',
+		'- 用户不想重读 session，而是想找回当时的上下文、决策、坑和下一步。',
+		'- AgentView 适合做 PollyDB 的 showcase，不宜变成主产品。',
+		'- PollyDB 的核心卖点应是：把 AI 生成的理解结果存成 typed rows、commits 和 evidence refs，而不是一段不可审计的摘要。',
+		'- Demo 应该展示 episode graph、证据引用、版本历史，而不是 TUI 浏览器。',
+		'',
+		'下次继续时：',
+		'- 不要再把重点放在 transcript browser。',
+		'- 优先做“长会话 -> 结构化记忆 -> 证据引用 -> 版本提交 -> 图形回放”。',
+		'- UI 文案要面向用户问题；内部的 commit/root/episode 只在用户需要审计时出现。',
+		'',
+		'证据：',
+		'- 用户问题：${user_goal}',
+		'- 当时推进：${first_step}',
+	]
+	return lines.join('\n') + '\n'
+}
+
+fn stable_demo_id(raw string) string {
+	mut out := ''
+	for ch in raw {
+		c := ch.ascii_str()
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			out += c.to_lower()
+		} else if out.len == 0 || !out.ends_with('-') {
+			out += '-'
+		}
+	}
+	return out.trim('-')
+}
+
+fn demo_repo_from_cwd(cwd string) string {
+	if cwd.len == 0 {
+		return ''
+	}
+	return os.base(cwd)
+}
+
+fn compact_demo_text(text string, max_len int) string {
+	cleaned := text.replace('\r', ' ').trim_space()
+	if max_len <= 0 || cleaned.len <= max_len {
+		return cleaned
+	}
+	if max_len <= 1 {
+		return cleaned[..max_len]
+	}
+	return cleaned[..max_len - 1].trim_space() + '…'
+}
+
 fn run_scenes_command(args []string, store agentview.PollyDbStore) ! {
-	_ = args
-	scenes := store.list_scenes()!
-	println('scenes total=${scenes.len}')
-	for scene in scenes {
-		println('${scene.scene_id} | repo=${scene.repo} | cwd=${scene.cwd} | topic=${scene.topic} | workflow=${scene.workflow}')
-		println('  time: ${scene.time_start} to ${scene.time_end}')
-		println('  atomic_memories: ${scene.atomic_memory_ids.join(", ")}')
-		println('')
+	subcommand := if args.len > 1 { args[1] } else { 'list' }
+	match subcommand {
+		'list' {
+			scenes := store.list_scenes()!
+			println('scenes total=${scenes.len}')
+			for scene in scenes {
+				println('${scene.scene_id} | repo=${scene.repo} | cwd=${scene.cwd} | topic=${scene.topic} | workflow=${scene.workflow}')
+				println('  time: ${scene.time_start} to ${scene.time_end}')
+				println('  atomic_memories: ${scene.atomic_memory_ids.join(', ')}')
+				println('')
+			}
+		}
+		'timeline' {
+			scene_id := if args.len > 2 {
+				args[2]
+			} else {
+				return error('scenes timeline requires <scene_id>')
+			}
+			max_commits := parse_flag_int(args, '--max-commits', 0)
+			timeline := store.scene_card_timeline(scene_id, max_commits)!
+			print_scene_card_timeline(timeline)
+		}
+		else {
+			return error('unknown scenes command: ${subcommand}; expected list|timeline')
+		}
 	}
 }
 
@@ -539,65 +1008,91 @@ fn print_memory_list(result agentview.MemoryListResult) {
 	}
 }
 
-fn print_memory_preview(previews []agentview.MemoryDistillPreviewCard) {
-	mut keep_count := 0
-	mut discard_count := 0
-	mut defer_count := 0
-	mut discard_reasons := map[string]int{}
-	for preview in previews {
-		if preview.write_plan.action == 'defer' {
-			defer_count++
-		} else if preview.decision.keep {
-			keep_count++
-		} else {
-			discard_count++
-			reason := if preview.decision.reason.len > 0 { preview.decision.reason } else { 'discard' }
-			discard_reasons[reason] = discard_reasons[reason] + 1
-		}
-	}
-	println('memory_preview cards=${previews.len} keep=${keep_count} defer=${defer_count} discard=${discard_count} discard_reasons=${format_memory_counts(discard_reasons)}')
-	for preview in previews {
+fn print_memory_audit_report(report agentview.MemoryAuditReport) {
+	println('memory_audit audited=${report.audited} active=${report.total_active} superseded=${report.total_superseded} add=${report.add_count} update=${report.update_count} defer=${report.defer_count} discard=${report.discard_count} reasons=${format_memory_counts(report.reason_counts)}')
+	for item in report.items {
+		active := if item.active { 'active' } else { 'superseded' }
 		println('')
-		println('action=${preview.write_plan.action} reason=${preview.write_plan.reason} score=${preview.write_plan.score} confidence=${preview.write_plan.trace.confidence}')
-		println('title=${preview.title}')
-		println('topic=${preview.topic_key} evidence=${preview.evidence_count} supersedes=${preview.supersedes_id}')
-		println('signals=${preview.write_plan.trace.signals.join(',')} blockers=${preview.write_plan.trace.blockers.join(',')}')
-		println('inference=${preview.write_plan.trace.inference}')
-		if preview.write_plan.action == 'defer' {
-			println('deferred candidate; no L1 memory card will be written yet')
-			continue
+		println('${item.reflection_id} | ${active} | action=${item.write_plan.action} reason=${item.write_plan.reason} score=${item.write_plan.score} confidence=${item.write_plan.trace.confidence} sources=${item.source_count}')
+		println('title=${item.title}')
+		if item.topic_key.len > 0 {
+			println('topic=${item.topic_key}')
 		}
-		if preview.write_plan.action == 'discard' {
-			println('discarded candidate; no memory card will be written')
-			continue
-		}
-		println('')
-		println(preview.summary_md.trim_space())
-		if preview.insight_md.trim_space().len > 0 {
-			println('')
-			println(preview.insight_md.trim_space())
+		println('signals=${item.write_plan.trace.signals.join(',')} blockers=${item.write_plan.trace.blockers.join(',')}')
+		println('inference=${item.write_plan.trace.inference}')
+		if item.summary_preview.len > 0 {
+			println(item.summary_preview)
 		}
 	}
 }
 
-fn print_memory_distill_result(persisted []memory.PersistedReflection) {
-	println('memory_distill reflections=${persisted.len}')
-	if persisted.len == 0 {
-		println('no new reflections')
-		return
-	}
-	for reflection in persisted {
-		println('')
-		println('id=${reflection.reflection_id} kind=${reflection.reflection_kind} topic=${reflection.topic_key} sources=${reflection.source_refs.len}')
-		if reflection.supersedes_reflection_id.len > 0 {
-			println('supersedes=${reflection.supersedes_reflection_id}')
+$if llama_cpp ? {
+	fn print_memory_preview(previews []agentview.MemoryDistillPreviewCard) {
+		mut keep_count := 0
+		mut discard_count := 0
+		mut defer_count := 0
+		mut discard_reasons := map[string]int{}
+		for preview in previews {
+			if preview.write_plan.action == 'defer' {
+				defer_count++
+			} else if preview.decision.keep {
+				keep_count++
+			} else {
+				discard_count++
+				reason := if preview.decision.reason.len > 0 {
+					preview.decision.reason
+				} else {
+					'discard'
+				}
+				discard_reasons[reason] = discard_reasons[reason] + 1
+			}
 		}
-		println('title=${reflection.title}')
-		println('')
-		println(reflection.summary_md.trim_space())
-		if reflection.insight_md.trim_space().len > 0 {
+		println('memory_preview cards=${previews.len} keep=${keep_count} defer=${defer_count} discard=${discard_count} discard_reasons=${format_memory_counts(discard_reasons)}')
+		for preview in previews {
 			println('')
-			println(reflection.insight_md.trim_space())
+			println('action=${preview.write_plan.action} reason=${preview.write_plan.reason} score=${preview.write_plan.score} confidence=${preview.write_plan.trace.confidence}')
+			println('title=${preview.title}')
+			println('topic=${preview.topic_key} evidence=${preview.evidence_count} supersedes=${preview.supersedes_id}')
+			println('signals=${preview.write_plan.trace.signals.join(',')} blockers=${preview.write_plan.trace.blockers.join(',')}')
+			println('inference=${preview.write_plan.trace.inference}')
+			if preview.write_plan.action == 'defer' {
+				println('deferred candidate; no L1 memory card will be written yet')
+				continue
+			}
+			if preview.write_plan.action == 'discard' {
+				println('discarded candidate; no memory card will be written')
+				continue
+			}
+			println('')
+			println(preview.summary_md.trim_space())
+			if preview.insight_md.trim_space().len > 0 {
+				println('')
+				println(preview.insight_md.trim_space())
+			}
+		}
+	}
+}
+
+$if llama_cpp ? {
+	fn print_memory_distill_result(persisted []memory.PersistedReflection) {
+		println('memory_distill reflections=${persisted.len}')
+		if persisted.len == 0 {
+			println('no new reflections')
+			return
+		}
+		for reflection in persisted {
+			println('')
+			println('id=${reflection.reflection_id} kind=${reflection.reflection_kind} topic=${reflection.topic_key} sources=${reflection.source_refs.len}')
+			if reflection.supersedes_reflection_id.len > 0 {
+				println('supersedes=${reflection.supersedes_reflection_id}')
+			}
+			println('title=${reflection.title}')
+			println('')
+			println(reflection.summary_md.trim_space())
+			if reflection.insight_md.trim_space().len > 0 {
+				println('')
+				println(reflection.insight_md.trim_space())
+			}
 		}
 	}
 }
@@ -606,6 +1101,111 @@ fn print_memory_delete_result(result agentview.MemoryDeleteResult) {
 	println('memory_delete requested=${result.requested_ids.len} deleted_reflections=${result.deleted_reflections} deleted_links=${result.deleted_links} missing=${result.missing_ids.len}')
 	if result.missing_ids.len > 0 {
 		println('missing=${result.missing_ids.join(',')}')
+	}
+}
+
+fn print_memory_evolution_chain(chain memory.ReflectionEvolutionChain) {
+	if chain.nodes.len == 0 {
+		println('evolution_chain root=${chain.root_reflection_id} nodes=0 (reflection not found)')
+		return
+	}
+	println('evolution_chain root=${chain.root_reflection_id} depth=${chain.nodes.len - 1}')
+	println('')
+	for node in chain.nodes {
+		indent := '  '.repeat(node.depth)
+		prefix := if node.depth == 0 {
+			'● [depth=${node.depth}]'
+		} else {
+			'○ [depth=${node.depth}]'
+		}
+		supersede_info := if node.supersedes_reflection_id.len > 0 {
+			' supersedes=${node.supersedes_reflection_id}'
+		} else {
+			''
+		}
+		parent_info := if node.parent_ref.len > 0 {
+			' parent=${node.parent_ref}'
+		} else if node.depth > 0 {
+			' (root)'
+		} else if chain.nodes.len == 1 {
+			' (no parent)'
+		} else {
+			''
+		}
+		println('${indent}${prefix} ${node.reflection_id}${supersede_info}${parent_info}')
+		println('${indent}    kind=${node.reflection_kind} topic=${node.topic_key} sources=${node.source_count} created=${node.created_at}')
+		println('${indent}    title: ${node.title}')
+		if node.summary_md.len > 0 {
+			summary_line := first_memory_summary_line(node.summary_md)
+			if summary_line.len > 0 {
+				println('${indent}    summary: ${summary_line}')
+			}
+		}
+		println('')
+	}
+}
+
+fn print_memory_supersede_graph(graph memory.ReflectionSupersedeGraph) {
+	if graph.nodes.len == 0 {
+		println('supersede_graph root=${graph.root_reflection_id} nodes=0 (reflection not found)')
+		return
+	}
+	println('supersede_graph root=${graph.root_reflection_id} nodes=${graph.nodes.len}')
+	println('')
+	// 按创建时间排序显示
+	mut sorted := []memory.ReflectionSupersedeNode{cap: graph.nodes.len}
+	for _, node in graph.nodes {
+		sorted << node
+	}
+	sorted.sort_with_compare(fn (a &memory.ReflectionSupersedeNode, b &memory.ReflectionSupersedeNode) int {
+		if a.created_at < b.created_at {
+			return -1
+		}
+		if a.created_at > b.created_at {
+			return 1
+		}
+		return 0
+	})
+	for node in sorted {
+		is_root := node.reflection_id == graph.root_reflection_id
+		marker := if is_root { '▶' } else { ' ' }
+		active := if node.active { 'active' } else { 'superseded' }
+		supersedes := if node.supersedes_reflection_id.len > 0 {
+			' → supersedes ${node.supersedes_reflection_id}'
+		} else {
+			''
+		}
+		superseded_by := if node.superseded_by_ids.len > 0 {
+			' ← superseded_by [${node.superseded_by_ids.join(', ')}]'
+		} else {
+			''
+		}
+		println('${marker} ${node.reflection_id} [${active}]${supersedes}${superseded_by}')
+		println('    kind=${node.reflection_kind} topic=${node.topic_key} created=${node.created_at}')
+		println('    title: ${node.title}')
+		println('')
+	}
+}
+
+fn print_scene_card_timeline(timeline memory.SceneBlockCardTimeline) {
+	println('scene_timeline scene_id=${timeline.scene_id}')
+	println('  repo=${timeline.repo} cwd=${timeline.cwd} topic=${timeline.topic}')
+	println('  current_cards=${timeline.current_card_ids.len} events=${timeline.events.len}')
+	println('  scanned_commits=${timeline.total_commits} matching_commits=${timeline.matching_commits}')
+	if timeline.events.len == 0 {
+		println('  (no card addition events found in commit history)')
+		return
+	}
+	println('')
+	println('Card Addition Timeline (reconstructed from commit history):')
+	println(strings.repeat(`-`, 72))
+	for i, event in timeline.events {
+		seq := i + 1
+		time_str := time.unix(event.commit_time).format_ss()
+		println('${seq:3d}. [${time_str}] card=${event.reflection_id}')
+		println('      commit=${event.commit_cid} pos=${event.position}')
+		println('      "${event.commit_message}" by ${event.commit_author}')
+		println('')
 	}
 }
 
@@ -636,59 +1236,92 @@ fn first_memory_summary_line(summary_md string) string {
 	return ''
 }
 
-fn memory_distill_options_from_args(args []string) agentview.MemoryDistillOptions {
-	max_jobs := parse_flag_int(args, '--max-jobs', 4)
-	return agentview.MemoryDistillOptions{
-		recent_sessions:  parse_flag_int(args, '--recent-sessions', 64)
-		max_jobs:         max_jobs
-		neighbor_limit:   parse_flag_int(args, '--neighbor-limit', 8)
-		min_evidence:     parse_flag_int(args, '--min-evidence', 1)
-		candidate_limit:  parse_flag_int(args, '--candidate-limit', max_jobs * 16)
-		candidate_offset: parse_flag_int(args, '--candidate-offset', 0)
+$if llama_cpp ? {
+	fn memory_distill_options_from_args(args []string) agentview.MemoryDistillOptions {
+		max_jobs := parse_flag_int(args, '--max-jobs', 4)
+		all_sessions := has_flag(args, '--all-sessions')
+		style := parse_flag_value(args, '--style')
+		// 全量模式下 candidate_limit 默认不限；增量模式下用 max_jobs*16
+		default_candidate_limit := if all_sessions { 0 } else { max_jobs * 16 }
+		default_max_candidates_per_session := if all_sessions { 100 } else { 0 }
+		default_batch_commit_sessions := if all_sessions { 10 } else { 0 }
+		return agentview.MemoryDistillOptions{
+			recent_sessions:            parse_flag_int(args, '--recent-sessions', 64)
+			max_jobs:                   max_jobs
+			neighbor_limit:             parse_flag_int(args, '--neighbor-limit', 8)
+			min_evidence:               parse_flag_int(args, '--min-evidence', 1)
+			candidate_limit:            parse_flag_int(args, '--candidate-limit',
+				default_candidate_limit)
+			candidate_offset:           parse_flag_int(args, '--candidate-offset', 0)
+			all_sessions:               all_sessions
+			max_cards:                  parse_flag_int(args, '--max-cards', 0)
+			style:                      style
+			max_candidates_per_session: parse_flag_int(args, '--max-candidates-per-session',
+				default_max_candidates_per_session)
+			batch_commit_sessions:      parse_flag_int(args, '--batch-commit-sessions',
+				default_batch_commit_sessions)
+			force_reprocess:            has_flag(args, '--force-reprocess')
+		}
 	}
 }
 
-fn memory_use_heuristic_distill() bool {
-	return os.getenv('POLLYDB_MEMORY_FAST_DISTILL').trim_space() in ['1', 'true', 'yes']
+$if llama_cpp ? {
+	fn memory_use_heuristic_distill() bool {
+		return os.getenv('POLLYDB_MEMORY_FAST_DISTILL').trim_space() in ['1', 'true', 'yes']
+	}
 }
 
-fn memory_embedding_model_path() !string {
-	model_path := os.getenv('POLLYDB_MEMORY_EMBEDDING_MODEL').trim_space()
-	if model_path.len == 0 {
-		return error('missing embedding model path; set POLLYDB_MEMORY_EMBEDDING_MODEL')
+$if llama_cpp ? {
+	fn memory_embedding_model_path() !string {
+		model_path := os.getenv('POLLYDB_MEMORY_EMBEDDING_MODEL').trim_space()
+		if model_path.len == 0 {
+			return error('missing embedding model path; set POLLYDB_MEMORY_EMBEDDING_MODEL')
+		}
+		return model_path
 	}
-	return model_path
 }
 
-fn memory_generation_model_path() !string {
-	model_path := os.getenv('POLLYDB_MEMORY_GENERATION_MODEL').trim_space()
-	if model_path.len == 0 {
-		return error('missing generation model path; set POLLYDB_MEMORY_GENERATION_MODEL or POLLYDB_MEMORY_FAST_DISTILL=1')
+$if llama_cpp ? {
+	fn memory_embedding_gpu_layers() int {
+		val := os.getenv('POLLYDB_MEMORY_EMBEDDING_GPU_LAYERS').trim_space()
+		if val.len == 0 {
+			return 99 // Apple Silicon 默认全 GPU 加速
+		}
+		return val.int()
 	}
-	return model_path
+}
+
+$if llama_cpp ? {
+	fn memory_generation_model_path() !string {
+		model_path := os.getenv('POLLYDB_MEMORY_GENERATION_MODEL').trim_space()
+		if model_path.len == 0 {
+			return error('missing generation model path; set POLLYDB_MEMORY_GENERATION_MODEL or POLLYDB_MEMORY_FAST_DISTILL=1')
+		}
+		return model_path
+	}
 }
 
 fn run_explain_browser(args []string) ! {
 	store_root := resolve_store_root(args)
 	store := agentview.PollyDbStore.open(store_root)!
 	session_request := agentview.SessionListRequest{
-		limit: 20
-		query: parse_flag_value(args, '--query')
-		cwd_prefix: parse_flag_value(args, '--cwd-prefix')
-		source: parse_flag_value(args, '--source')
+		limit:            20
+		query:            parse_flag_value(args, '--query')
+		cwd_prefix:       parse_flag_value(args, '--cwd-prefix')
+		source:           parse_flag_value(args, '--source')
 		include_archived: !has_flag(args, '--no-archived')
 	}
 	transcript_request := agentview.TranscriptRequest{
 		session_id: parse_flag_value(args, '--session-id')
-		limit: 40
+		limit:      40
 	}
 	search_request := agentview.SearchRequest{
-		query: parse_flag_value(args, '--search')
+		query:      parse_flag_value(args, '--search')
 		session_id: parse_flag_value(args, '--session-id')
 		cwd_prefix: parse_flag_value(args, '--cwd-prefix')
-		source: parse_flag_value(args, '--source')
-		kind: parse_flag_value(args, '--kind')
-		limit: 20
+		source:     parse_flag_value(args, '--source')
+		kind:       parse_flag_value(args, '--kind')
+		limit:      20
 	}
 	explain := store.explain_browser_queries(session_request, transcript_request, search_request)!
 	println('sessions: strategy=${explain.sessions.strategy} index=${explain.sessions.index_name}')
@@ -714,23 +1347,23 @@ fn run_bench_browser(args []string) ! {
 	}
 	rounds := parse_flag_int(args, '--rounds', 5)
 	session_request := agentview.SessionListRequest{
-		limit: 50
-		query: parse_flag_value(args, '--query')
-		cwd_prefix: parse_flag_value(args, '--cwd-prefix')
-		source: parse_flag_value(args, '--source')
+		limit:            50
+		query:            parse_flag_value(args, '--query')
+		cwd_prefix:       parse_flag_value(args, '--cwd-prefix')
+		source:           parse_flag_value(args, '--source')
 		include_archived: !has_flag(args, '--no-archived')
 	}
 	transcript_request := agentview.TranscriptRequest{
 		session_id: parse_flag_value(args, '--session-id')
-		limit: 40
+		limit:      40
 	}
 	search_request := agentview.SearchRequest{
-		query: parse_flag_value(args, '--search')
+		query:      parse_flag_value(args, '--search')
 		session_id: parse_flag_value(args, '--session-id')
 		cwd_prefix: parse_flag_value(args, '--cwd-prefix')
-		source: parse_flag_value(args, '--source')
-		kind: parse_flag_value(args, '--kind')
-		limit: 20
+		source:     parse_flag_value(args, '--source')
+		kind:       parse_flag_value(args, '--kind')
+		limit:      20
 	}
 	mut sessions_ms := i64(0)
 	mut sessions_open_ms := i64(0)
@@ -814,7 +1447,8 @@ fn run_bench_browser(args []string) ! {
 		sessions_query_project_ms += session_execution.query.project_ms
 		sessions_query_continuation_ms += session_execution.query.continuation_ms
 		if transcript_request.session_id.len > 0 {
-			transcript_execution := browser_session.load_transcript_page_explained(transcript_request)!
+			transcript_execution :=
+				browser_session.load_transcript_page_explained(transcript_request)!
 			transcript_ms += transcript_execution.total_ms
 			transcript_open_ms += transcript_execution.open_ms
 			transcript_open_backends_ms += transcript_execution.open_backends_ms
@@ -865,7 +1499,8 @@ fn run_bench_browser(args []string) ! {
 
 fn run_bench_codex(args []string) ! {
 	codex_root := resolve_codex_root(args)
-	cfg := storage.ChunkConfig.default().with_detailed_timings(true).with_split_backed_working_set(has_flag(args, '--split-backed'))
+	cfg := storage.ChunkConfig.default().with_detailed_timings(true).with_split_backed_working_set(has_flag(args,
+		'--split-backed'))
 	store_root := if has_flag(args, '--store-root') {
 		resolve_store_root(args)
 	} else {
@@ -876,18 +1511,22 @@ fn run_bench_codex(args []string) ! {
 	eprintln('bench start codex_root=${codex_root} store=${store_root}')
 	mut store := agentview.PollyDbStore.open(store_root)!
 	eprintln('bench phase=sync-first')
-	sync_first := store.sync_codex_with_progress_and_config(codex_root, sync_progress_detailed_to_stderr, cfg)!
+	sync_first := store.sync_codex_with_progress_and_config(codex_root,
+		sync_progress_detailed_to_stderr, cfg)!
 	state_after_sync_first := bench_store_state_counts(store_root) or { BenchStoreStateCounts{} }
 	eprintln('bench phase=index-first')
-	index_first := store.ensure_search_indexes_with_progress_and_config(search_index_progress_to_stderr, cfg)!
+	index_first :=
+		store.ensure_search_indexes_with_progress_and_config(search_index_progress_to_stderr, cfg)!
 	state_after_index_first := bench_store_state_counts(store_root) or { BenchStoreStateCounts{} }
 	eprintln('bench phase=reopen')
 	store = agentview.PollyDbStore.open(store_root)!
 	eprintln('bench phase=sync-second')
-	sync_second := store.sync_codex_with_progress_and_config(codex_root, sync_progress_detailed_to_stderr, cfg)!
+	sync_second := store.sync_codex_with_progress_and_config(codex_root,
+		sync_progress_detailed_to_stderr, cfg)!
 	state_after_sync_second := bench_store_state_counts(store_root) or { BenchStoreStateCounts{} }
 	eprintln('bench phase=index-second')
-	index_second := store.ensure_search_indexes_with_progress_and_config(search_index_progress_to_stderr, cfg)!
+	index_second :=
+		store.ensure_search_indexes_with_progress_and_config(search_index_progress_to_stderr, cfg)!
 	state_after_index_second := bench_store_state_counts(store_root) or { BenchStoreStateCounts{} }
 	eprintln('bench done store=${store_root}')
 	println('bench store=${store_root}')
@@ -905,13 +1544,16 @@ fn run_bench_codex_delta(args []string) ! {
 	codex_root := resolve_codex_root(args)
 	session_limit := parse_flag_int(args, '--sessions', 20)
 	mutate_count := parse_flag_int(args, '--mutate', 5)
-	subset_root := normalize_cli_path(os.join_path(os.vtmp_dir(), 'agentview-bench-codex-delta-src-${time.now().unix_micro()}'))
+	subset_root := normalize_cli_path(os.join_path(os.vtmp_dir(),
+		'agentview-bench-codex-delta-src-${time.now().unix_micro()}'))
 	store_root := if has_flag(args, '--store-root') {
 		resolve_store_root(args)
 	} else {
-		normalize_cli_path(os.join_path(os.vtmp_dir(), 'agentview-bench-codex-delta-store-${time.now().unix_micro()}'))
+		normalize_cli_path(os.join_path(os.vtmp_dir(),
+			'agentview-bench-codex-delta-store-${time.now().unix_micro()}'))
 	}
-	cfg := storage.ChunkConfig.default().with_detailed_timings(true).with_split_backed_working_set(has_flag(args, '--split-backed'))
+	cfg := storage.ChunkConfig.default().with_detailed_timings(true).with_split_backed_working_set(has_flag(args,
+		'--split-backed'))
 	os.rmdir_all(subset_root) or {}
 	os.rmdir_all(store_root) or {}
 	os.mkdir_all(subset_root)!
@@ -923,13 +1565,15 @@ fn run_bench_codex_delta(args []string) ! {
 	mut store := agentview.PollyDbStore.open(store_root)!
 	eprintln('bench delta start codex_root=${codex_root} subset=${subset_root} store=${store_root} sessions=${selected_paths.len} mutate=${mutate_count}')
 	eprintln('bench delta phase=sync-first')
-	sync_first := store.sync_codex_with_progress_and_config(subset_root, sync_progress_detailed_to_stderr, storage.ChunkConfig.default())!
+	sync_first := store.sync_codex_with_progress_and_config(subset_root,
+		sync_progress_detailed_to_stderr, storage.ChunkConfig.default())!
 	eprintln('bench delta phase=mutate')
 	mutated := mutate_codex_subset(mut selected_paths, mutate_count)!
 	eprintln('bench delta phase=reopen')
 	store = agentview.PollyDbStore.open(store_root)!
 	eprintln('bench delta phase=sync-second')
-	sync_second := store.sync_codex_with_progress_and_config(subset_root, sync_progress_detailed_to_stderr, cfg)!
+	sync_second := store.sync_codex_with_progress_and_config(subset_root,
+		sync_progress_detailed_to_stderr, cfg)!
 	println('bench delta store=${store_root} subset=${subset_root}')
 	println('delta first sessions=${sync_first.sessions} entries=${sync_first.entries} skipped=${sync_first.skipped} total=${sync_first.total_ms}ms apply=${sync_first.apply_ms}ms')
 	println('delta second sessions=${sync_second.sessions} entries=${sync_second.entries} skipped=${sync_second.skipped} total=${sync_second.total_ms}ms apply=${sync_second.apply_ms}ms split_backed=${cfg.enable_split_backed_working_set}')
@@ -940,13 +1584,16 @@ fn run_bench_codex_index_delta(args []string) ! {
 	codex_root := resolve_codex_root(args)
 	session_limit := parse_flag_int(args, '--sessions', 20)
 	mutate_count := parse_flag_int(args, '--mutate', 5)
-	subset_root := normalize_cli_path(os.join_path(os.vtmp_dir(), 'agentview-bench-codex-index-delta-src-${time.now().unix_micro()}'))
+	subset_root := normalize_cli_path(os.join_path(os.vtmp_dir(),
+		'agentview-bench-codex-index-delta-src-${time.now().unix_micro()}'))
 	store_root := if has_flag(args, '--store-root') {
 		resolve_store_root(args)
 	} else {
-		normalize_cli_path(os.join_path(os.vtmp_dir(), 'agentview-bench-codex-index-delta-store-${time.now().unix_micro()}'))
+		normalize_cli_path(os.join_path(os.vtmp_dir(),
+			'agentview-bench-codex-index-delta-store-${time.now().unix_micro()}'))
 	}
-	cfg := storage.ChunkConfig.default().with_split_backed_working_set(has_flag(args, '--split-backed'))
+	cfg := storage.ChunkConfig.default().with_split_backed_working_set(has_flag(args,
+		'--split-backed'))
 	os.rmdir_all(subset_root) or {}
 	os.rmdir_all(store_root) or {}
 	os.mkdir_all(subset_root)!
@@ -958,9 +1605,11 @@ fn run_bench_codex_index_delta(args []string) ! {
 	mut store := agentview.PollyDbStore.open(store_root)!
 	eprintln('bench index delta start codex_root=${codex_root} subset=${subset_root} store=${store_root} sessions=${selected_paths.len} mutate=${mutate_count}')
 	eprintln('bench index delta phase=sync-first')
-	_ = store.sync_codex_with_progress_and_config(subset_root, sync_progress_noop, storage.ChunkConfig.default())!
+	_ = store.sync_codex_with_progress_and_config(subset_root, sync_progress_noop,
+		storage.ChunkConfig.default())!
 	eprintln('bench index delta phase=index-first')
-	index_first := store.ensure_search_indexes_with_progress_and_config(search_index_progress_to_stderr, storage.ChunkConfig.default())!
+	index_first := store.ensure_search_indexes_with_progress_and_config(search_index_progress_to_stderr,
+		storage.ChunkConfig.default())!
 	eprintln('bench index delta phase=mutate')
 	mutated := mutate_codex_subset(mut selected_paths, mutate_count)!
 	eprintln('bench index delta phase=reopen')
@@ -968,7 +1617,8 @@ fn run_bench_codex_index_delta(args []string) ! {
 	eprintln('bench index delta phase=sync-second')
 	_ = store.sync_codex_with_progress_and_config(subset_root, sync_progress_noop, cfg)!
 	eprintln('bench index delta phase=index-second')
-	index_second := store.ensure_search_indexes_with_progress_and_config(search_index_progress_to_stderr, cfg)!
+	index_second :=
+		store.ensure_search_indexes_with_progress_and_config(search_index_progress_to_stderr, cfg)!
 	println('bench index delta store=${store_root} subset=${subset_root}')
 	println('index delta first changed=${index_first.changed} scanned=${index_first.rows_scanned} backfilled=${index_first.rows_backfilled} backfill=${index_first.backfill_ms}ms rebuild=${index_first.rebuild_ms}ms total=${index_first.total_ms}ms')
 	println('index delta second changed=${index_second.changed} scanned=${index_second.rows_scanned} backfilled=${index_second.rows_backfilled} backfill=${index_second.backfill_ms}ms rebuild=${index_second.rebuild_ms}ms total=${index_second.total_ms}ms split_backed=${cfg.enable_split_backed_working_set}')
@@ -1039,7 +1689,8 @@ fn mutate_codex_subset(mut paths []string, limit int) !int {
 		if !content.ends_with('\n') {
 			content += '\n'
 		}
-		content += '{"timestamp":"' + timestamp + '","type":"user_message","payload":{"text":"bench delta mutation ${changed}"}}\n'
+		content += '{"timestamp":"' + timestamp +
+			'","type":"user_message","payload":{"text":"bench delta mutation ${changed}"}}\n'
 		os.write_file(path, content)!
 		changed++
 	}
@@ -1061,10 +1712,10 @@ fn bench_store_state_counts(store_root string) !BenchStoreStateCounts {
 	}
 	session := db.begin_session(storage.SessionOptions.for_branch('main'))!
 	return BenchStoreStateCounts{
-		entries: count_table_rows(mut db, session, 'entries')
-		ingest_state: count_table_rows(mut db, session, 'ingest_state')
+		entries:            count_table_rows(mut db, session, 'entries')
+		ingest_state:       count_table_rows(mut db, session, 'ingest_state')
 		entry_ingest_state: count_table_rows(mut db, session, 'entry_ingest_state')
-		search_state: count_table_rows(mut db, session, 'search_state')
+		search_state:       count_table_rows(mut db, session, 'search_state')
 		entry_search_state: count_table_rows(mut db, session, 'entry_search_state')
 	}
 }
@@ -1076,7 +1727,8 @@ fn count_table_rows(mut db storage.PersistentDatabase, session storage.DatabaseS
 
 fn run_bench_write_path(args []string) ! {
 	partition_mode := parse_partition_mode(args)!
-	mut cfg := storage.ChunkConfig.default().with_detailed_timings(true).with_partitioned_rebuild(partition_mode != 'off')
+	mut cfg :=
+		storage.ChunkConfig.default().with_detailed_timings(true).with_partitioned_rebuild(partition_mode != 'off')
 	if partition_mode == 'force' {
 		cfg = cfg.with_force_partitioned_rebuild(true)
 	}
@@ -1133,7 +1785,8 @@ fn run_bench_write_path(args []string) ! {
 
 fn run_bench_write_layout(args []string) ! {
 	partition_mode := parse_partition_mode(args)!
-	mut cfg := storage.ChunkConfig.default().with_detailed_timings(true).with_partitioned_rebuild(partition_mode != 'off')
+	mut cfg :=
+		storage.ChunkConfig.default().with_detailed_timings(true).with_partitioned_rebuild(partition_mode != 'off')
 	if partition_mode == 'force' {
 		cfg = cfg.with_force_partitioned_rebuild(true)
 	}
@@ -1237,7 +1890,8 @@ fn run_bench_split_materialize(args []string) ! {
 
 fn run_bench_write_matrix(args []string) ! {
 	partition_mode := parse_partition_mode(args)!
-	mut cfg := storage.ChunkConfig.default().with_detailed_timings(true).with_partitioned_rebuild(partition_mode != 'off')
+	mut cfg :=
+		storage.ChunkConfig.default().with_detailed_timings(true).with_partitioned_rebuild(partition_mode != 'off')
 	if partition_mode == 'force' {
 		cfg = cfg.with_force_partitioned_rebuild(true)
 	}
@@ -1266,6 +1920,7 @@ const bench_index_columns = ['session_id', 'timestamp', 'kind', 'tag', 'project'
 fn bench_entries_spec(index_count int) !storage.TypedTableSpec {
 	table := storage.TableDef.new('entries', [
 		storage.ColumnDef.new('id', .string_, false)!,
+		storage.ColumnDef.new('agent', .string_, false)!,
 		storage.ColumnDef.new('session_id', .string_, false)!,
 		storage.ColumnDef.new('timestamp', .datetime_, false)!,
 		storage.ColumnDef.new('kind', .string_, false)!,
@@ -1276,7 +1931,8 @@ fn bench_entries_spec(index_count int) !storage.TypedTableSpec {
 	], ['id'])!
 	mut indexes := []storage.SchemaIndexDef{}
 	for idx, column_name in bench_index_columns[..index_count] {
-		indexes << storage.SchemaIndexDef.new('entries_bench_${idx + 1}_${column_name}_idx', column_name)!
+		indexes << storage.SchemaIndexDef.new('entries_bench_${idx + 1}_${column_name}_idx',
+			column_name)!
 	}
 	return storage.TypedTableSpec.new(table, indexes)!
 }
@@ -1289,7 +1945,7 @@ fn bench_entries_view(spec storage.TypedTableSpec, existing_rows int, cfg storag
 		row := bench_entry_row(i)
 		primary_key := bench_entry_id(i)
 		items << storage.KVPair{
-			key: table_view.row_key(primary_key.bytes())
+			key:   table_view.row_key(primary_key.bytes())
 			value: codec.encode(row)!
 		}
 	}
@@ -1300,34 +1956,34 @@ fn bench_entries_view(spec storage.TypedTableSpec, existing_rows int, cfg storag
 }
 
 struct BenchWritePathStats {
-	elapsed_ms                          i64
-	fallback_ops_encode_ms             i64
-	fallback_ops_index_ms              i64
-	fallback_build_prepare_rows_ms     i64
+	elapsed_ms                           i64
+	fallback_ops_encode_ms               i64
+	fallback_ops_index_ms                i64
+	fallback_build_prepare_rows_ms       i64
 	fallback_build_prepare_keys_merge_ms i64
-	fallback_build_ms                  i64
-	changed_keys                       int
-	new_keys                           int
-	deleted_existing_keys              int
-	touched_existing_keys              int
-	span_count                         int
-	span_max_keys                      int
-	span_avg_keys                      int
-	span_covered_existing_keys         int
-	span_covered_existing_pct          int
-	partition_candidate                bool
+	fallback_build_ms                    i64
+	changed_keys                         int
+	new_keys                             int
+	deleted_existing_keys                int
+	touched_existing_keys                int
+	span_count                           int
+	span_max_keys                        int
+	span_avg_keys                        int
+	span_covered_existing_keys           int
+	span_covered_existing_pct            int
+	partition_candidate                  bool
 }
 
 struct BenchWriteLayoutStats {
-	apply_ms            i64
-	split_materialize_ms i64
-	apply_plus_split_ms i64
-	split_apply_prototype_ms i64
-	split_apply_delta_ms i64
-	split_apply_batched_ms i64
+	apply_ms                      i64
+	split_materialize_ms          i64
+	apply_plus_split_ms           i64
+	split_apply_prototype_ms      i64
+	split_apply_delta_ms          i64
+	split_apply_batched_ms        i64
 	split_apply_batched_steady_ms i64
 	split_apply_batched_bridge_ms i64
-	split_working_set_apply_ms i64
+	split_working_set_apply_ms    i64
 }
 
 fn bench_write_path_once(view storage.TypedIndexedSchemaView, ops []storage.TypedWriteOp, cfg storage.ChunkConfig, rounds int) BenchWritePathStats {
@@ -1349,22 +2005,22 @@ fn bench_write_path_once(view storage.TypedIndexedSchemaView, ops []storage.Type
 		total_fallback_build_ms += update.timings.build_ms
 	}
 	return BenchWritePathStats{
-		elapsed_ms: total_elapsed_ms / rounds
-		fallback_ops_encode_ms: total_fallback_ops_encode_ms / rounds
-		fallback_ops_index_ms: total_fallback_ops_index_ms / rounds
-		fallback_build_prepare_rows_ms: total_fallback_build_prepare_rows_ms / rounds
+		elapsed_ms:                           total_elapsed_ms / rounds
+		fallback_ops_encode_ms:               total_fallback_ops_encode_ms / rounds
+		fallback_ops_index_ms:                total_fallback_ops_index_ms / rounds
+		fallback_build_prepare_rows_ms:       total_fallback_build_prepare_rows_ms / rounds
 		fallback_build_prepare_keys_merge_ms: total_fallback_build_prepare_keys_merge_ms / rounds
-		fallback_build_ms: total_fallback_build_ms / rounds
-		changed_keys: plan.changed_keys
-		new_keys: plan.new_keys
-		deleted_existing_keys: plan.deleted_existing_keys
-		touched_existing_keys: plan.touched_existing_keys
-		span_count: plan.spans
-		span_max_keys: plan.max_span_keys
-		span_avg_keys: plan.avg_span_keys
-		span_covered_existing_keys: plan.covered_existing_keys
-		span_covered_existing_pct: plan.covered_existing_pct
-		partition_candidate: plan.partition_candidate
+		fallback_build_ms:                    total_fallback_build_ms / rounds
+		changed_keys:                         plan.changed_keys
+		new_keys:                             plan.new_keys
+		deleted_existing_keys:                plan.deleted_existing_keys
+		touched_existing_keys:                plan.touched_existing_keys
+		span_count:                           plan.spans
+		span_max_keys:                        plan.max_span_keys
+		span_avg_keys:                        plan.avg_span_keys
+		span_covered_existing_keys:           plan.covered_existing_keys
+		span_covered_existing_pct:            plan.covered_existing_pct
+		partition_candidate:                  plan.partition_candidate
 	}
 }
 
@@ -1378,7 +2034,9 @@ fn bench_write_layout_once(view storage.TypedIndexedSchemaView, ops []storage.Ty
 	mut total_split_batched_steady_ms := i64(0)
 	mut total_split_batched_bridge_ms := i64(0)
 	spec := storage.TypedTableSpec.new(view.schema.codec.table, view.indexes) or { panic(err) }
-	base_working_set := storage.TypedWorkingSet.new('bench', 'base', view.schema.table.tree, [spec]) or { panic(err) }
+	base_working_set := storage.TypedWorkingSet.new('bench', 'base', view.schema.table.tree, [
+		spec,
+	]) or { panic(err) }
 	split_working_set := base_working_set.split_backed(cfg) or { panic(err) }
 	write_set := typed_write_set_from_ops(ops)
 	mut total_split_working_set_apply_ms := i64(0)
@@ -1405,7 +2063,9 @@ fn bench_write_layout_once(view storage.TypedIndexedSchemaView, ops []storage.Ty
 		bridge_split := split_view.apply_write_ops_split_batched(ops, cfg) or { continue }
 		_ = (storage.TypedSchemaView.new_with_split_storage(bridge_split, view.schema.codec))
 		_ = (storage.TypedIndexedSchemaView.new_with_split_storage(storage.TypedSchemaView.new_with_split_storage(bridge_split,
-			view.schema.codec), view.indexes, bridge_split) or { continue }).mixed_backed(cfg) or { continue }
+			view.schema.codec), view.indexes, bridge_split) or { continue }).mixed_backed(cfg) or {
+			continue
+		}
 		total_split_batched_bridge_ms += split_batched_bridge_sw.elapsed().milliseconds()
 		mut split_working_set_sw := time.new_stopwatch()
 		mut working_set := split_working_set.clone()
@@ -1413,15 +2073,15 @@ fn bench_write_layout_once(view storage.TypedIndexedSchemaView, ops []storage.Ty
 		total_split_working_set_apply_ms += split_working_set_sw.elapsed().milliseconds()
 	}
 	return BenchWriteLayoutStats{
-		apply_ms: total_apply_ms / rounds
-		split_materialize_ms: total_split_ms / rounds
-		apply_plus_split_ms: (total_apply_ms + total_split_ms) / rounds
-		split_apply_prototype_ms: total_split_apply_ms / rounds
-		split_apply_delta_ms: total_split_delta_ms / rounds
-		split_apply_batched_ms: total_split_batched_ms / rounds
+		apply_ms:                      total_apply_ms / rounds
+		split_materialize_ms:          total_split_ms / rounds
+		apply_plus_split_ms:           (total_apply_ms + total_split_ms) / rounds
+		split_apply_prototype_ms:      total_split_apply_ms / rounds
+		split_apply_delta_ms:          total_split_delta_ms / rounds
+		split_apply_batched_ms:        total_split_batched_ms / rounds
 		split_apply_batched_steady_ms: total_split_batched_steady_ms / rounds
 		split_apply_batched_bridge_ms: total_split_batched_bridge_ms / rounds
-		split_working_set_apply_ms: total_split_working_set_apply_ms / rounds
+		split_working_set_apply_ms:    total_split_working_set_apply_ms / rounds
 	}
 }
 
@@ -1443,10 +2103,10 @@ fn bench_entry_ops(table_name string, existing_rows int, count int, mode string)
 		'insert' {
 			for i := existing_rows; i < existing_rows + count; i++ {
 				ops << storage.TypedWriteOp{
-					table_name: table_name
+					table_name:  table_name
 					primary_key: bench_entry_id(i).bytes()
-					row: bench_entry_row(i)
-					delete: false
+					row:         bench_entry_row(i)
+					delete:      false
 				}
 			}
 		}
@@ -1454,10 +2114,10 @@ fn bench_entry_ops(table_name string, existing_rows int, count int, mode string)
 			for i := 0; i < count; i++ {
 				target := i % existing_rows
 				ops << storage.TypedWriteOp{
-					table_name: table_name
+					table_name:  table_name
 					primary_key: bench_entry_id(target).bytes()
-					row: bench_entry_row_variant(target, 'update')
-					delete: false
+					row:         bench_entry_row_variant(target, 'update')
+					delete:      false
 				}
 			}
 		}
@@ -1465,10 +2125,10 @@ fn bench_entry_ops(table_name string, existing_rows int, count int, mode string)
 			for i := 0; i < count; i++ {
 				target := i % existing_rows
 				ops << storage.TypedWriteOp{
-					table_name: table_name
+					table_name:  table_name
 					primary_key: bench_entry_id(target).bytes()
-					row: storage.TypedRowData.new()
-					delete: true
+					row:         storage.TypedRowData.new()
+					delete:      true
 				}
 			}
 		}
@@ -1478,28 +2138,28 @@ fn bench_entry_ops(table_name string, existing_rows int, count int, mode string)
 					0 {
 						target := i % existing_rows
 						ops << storage.TypedWriteOp{
-							table_name: table_name
+							table_name:  table_name
 							primary_key: bench_entry_id(target).bytes()
-							row: bench_entry_row_variant(target, 'update')
-							delete: false
+							row:         bench_entry_row_variant(target, 'update')
+							delete:      false
 						}
 					}
 					1 {
 						target := i % existing_rows
 						ops << storage.TypedWriteOp{
-							table_name: table_name
+							table_name:  table_name
 							primary_key: bench_entry_id(target).bytes()
-							row: storage.TypedRowData.new()
-							delete: true
+							row:         storage.TypedRowData.new()
+							delete:      true
 						}
 					}
 					else {
 						target := existing_rows + i
 						ops << storage.TypedWriteOp{
-							table_name: table_name
+							table_name:  table_name
 							primary_key: bench_entry_id(target).bytes()
-							row: bench_entry_row_variant(target, 'insert')
-							delete: false
+							row:         bench_entry_row_variant(target, 'insert')
+							delete:      false
 						}
 					}
 				}
@@ -1507,12 +2167,14 @@ fn bench_entry_ops(table_name string, existing_rows int, count int, mode string)
 		}
 		else {}
 	}
+
 	return ops
 }
 
 fn bench_entry_row(i int) storage.TypedRowData {
 	mut row := storage.TypedRowData.new()
 	row.set('id', bench_entry_id(i))
+	row.set('agent', 'codex')
 	row.set('session_id', 'session-${(i / 128):04d}')
 	row.set('timestamp', '2026-04-06T12:${(i % 60):02d}:${(i % 60):02d}.000000Z')
 	row.set('kind', bench_entry_kind(i))
@@ -1532,13 +2194,16 @@ fn bench_entry_row_variant(i int, variant string) storage.TypedRowData {
 			row.set('tag', 'tag-${(i / 17) % 16:02d}')
 			row.set('project', 'project-${(i / 91) % 8:02d}')
 			row.set('role', bench_entry_role(i + 1))
-			row.set('content_text', 'entry ${i:08d} updated synthetic payload for typed write path benchmark')
+			row.set('content_text',
+				'entry ${i:08d} updated synthetic payload for typed write path benchmark')
 		}
 		'insert' {
-			row.set('content_text', 'entry ${i:08d} inserted synthetic payload for typed write path benchmark')
+			row.set('content_text',
+				'entry ${i:08d} inserted synthetic payload for typed write path benchmark')
 		}
 		else {}
 	}
+
 	return row
 }
 
@@ -1546,7 +2211,7 @@ fn bench_tree_items(count int) []storage.KVPair {
 	mut items := []storage.KVPair{cap: count}
 	for i := 0; i < count; i++ {
 		items << storage.KVPair{
-			key: bench_tree_key(i)
+			key:   bench_tree_key(i)
 			value: bench_tree_value(i)
 		}
 	}
@@ -1698,15 +2363,15 @@ fn ensure_store_ready(command string, store agentview.PollyDbStore, codex_root s
 		return
 	}
 	result := store.list_sessions_page(agentview.SessionListRequest{
-		limit: 1
-		offset: 0
+		limit:            1
+		offset:           0
 		include_archived: true
 	}) or {
 		if err.msg().contains('branch not found:') {
 			eprintln('store is empty, syncing from ${codex_root} ...')
 			store.sync_codex_with_options_and_progress_and_config(codex_root, agentview.SyncOptions{
 				batch_sessions: 8
-			}, sync_progress_compact_to_stderr, storage.ChunkConfig.default())!
+			}, sync_progress_compact_to_stderr, agentview.codex_sync_chunk_config())!
 			return
 		}
 		return err
@@ -1717,21 +2382,24 @@ fn ensure_store_ready(command string, store agentview.PollyDbStore, codex_root s
 	eprintln('store is empty, syncing from ${codex_root} ...')
 	store.sync_codex_with_options_and_progress_and_config(codex_root, agentview.SyncOptions{
 		batch_sessions: 8
-	}, sync_progress_compact_to_stderr, storage.ChunkConfig.default())!
+	}, sync_progress_compact_to_stderr, agentview.codex_sync_chunk_config())!
 }
 
 fn sync_progress_compact_to_stderr(progress agentview.SyncProgress) {
 	match progress.phase {
 		'start' {
-			eprintln('sync start total=${progress.total_sessions} skipped=${progress.skipped_sessions}')
+			eprintln('sync start total=${progress.total_sessions} skipped=${progress.skipped_sessions} setup=${progress.setup_ms}ms')
 		}
 		'skip' {
-			eprintln('sync skip ${progress.processed_sessions}/${progress.total_sessions} ${progress.session_id} ${progress.session_title}')
+			if progress.processed_sessions % 25 == 0
+				|| progress.processed_sessions == progress.total_sessions {
+				eprintln('sync skip ${progress.processed_sessions}/${progress.total_sessions} skipped=${progress.skipped_sessions}')
+			}
 		}
 		'resume_skip' {
 			if progress.session_id.len > 0 {
 				eprintln('sync resume anchor ${progress.processed_sessions}/${progress.total_sessions} ${progress.session_id}')
-			} else {
+			} else if progress.processed_sessions % 25 == 0 {
 				eprintln('sync resume skip ${progress.processed_sessions}/${progress.total_sessions}')
 			}
 		}
@@ -1746,7 +2414,7 @@ fn sync_progress_compact_to_stderr(progress agentview.SyncProgress) {
 			}
 		}
 		'done' {
-			eprintln('sync done processed=${progress.processed_sessions} imported=${progress.imported_sessions} entries=${progress.imported_entries} skipped=${progress.skipped_sessions} checkpoints=${progress.checkpoint_count} read=${progress.read_ms}ms build=${progress.build_ms}ms apply=${progress.apply_ms}ms finish=${progress.finish_ms}ms total=${progress.total_ms}ms')
+			eprintln('sync done processed=${progress.processed_sessions} imported=${progress.imported_sessions} entries=${progress.imported_entries} skipped=${progress.skipped_sessions} checkpoints=${progress.checkpoint_count} setup=${progress.setup_ms}ms prefetch=${progress.prefetch_ms}ms resume_skip=${progress.resume_skip_ms}ms skip=${progress.skip_ms}ms read=${progress.read_ms}ms build=${progress.build_ms}ms apply=${progress.apply_ms}ms commit=${progress.commit_ms}ms checkpoint=${progress.checkpoint_ms}ms flush=${progress.flush_ms}ms fts=${progress.fts_ms}ms fts_text=${progress.fts_text_us}us fts_insert=${progress.fts_insert_us}us fts_insert_fts=${progress.fts_insert_fts_us}us fts_commit=${progress.fts_commit_us}us fts_ops=${progress.fts_ops} fts_inserted=${progress.fts_inserted} finish=${progress.finish_ms}ms total=${progress.total_ms}ms')
 		}
 		else {}
 	}

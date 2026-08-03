@@ -1,0 +1,412 @@
+schema_version: 1
+
+tables:
+  - name: sessions
+    description: Codex session summaries
+    primary_key: [id]
+    columns:
+      - name: id
+        type: string
+        nullable: false
+      - name: title
+        type: string
+        nullable: false
+      - name: updated_at
+        type: datetime
+        nullable: false
+      - name: started_at
+        type: datetime
+        nullable: true
+      - name: cwd
+        type: string
+        nullable: true
+      - name: source
+        type: string
+        nullable: true
+      - name: originator
+        type: string
+        nullable: true
+      - name: cli_version
+        type: string
+        nullable: true
+      - name: path
+        type: string
+        nullable: false
+      - name: archived
+        type: bool
+        nullable: false
+      - name: entry_count
+        type: i64
+        nullable: false
+      - name: user_turns
+        type: i64
+        nullable: false
+      - name: tool_calls
+        type: i64
+        nullable: false
+    indexes:
+      - name: updated_at_idx
+        kind: column
+        column: updated_at
+      - name: updated_at_cover_idx
+        kind: covering
+        column: updated_at
+      - name: path_idx
+        kind: column
+        column: path
+
+  - name: ingest_state
+    primary_key: [path]
+    columns:
+      - name: path
+        type: string
+        nullable: false
+      - name: session_id
+        type: string
+        nullable: false
+      - name: source_mtime_unix
+        type: i64
+        nullable: false
+      - name: source_size_bytes
+        type: i64
+        nullable: false
+    indexes:
+      - name: ingest_session_idx
+        kind: column
+        column: session_id
+
+  - name: search_state
+    primary_key: [session_id]
+    columns:
+      - name: session_id
+        type: string
+        nullable: false
+      - name: source_mtime_unix
+        type: i64
+        nullable: false
+      - name: source_size_bytes
+        type: i64
+        nullable: false
+    indexes: []
+
+  - name: search_meta_state
+    primary_key: [name]
+    columns:
+      - name: name
+        type: string
+        nullable: false
+      - name: value
+        type: string
+        nullable: false
+    indexes: []
+
+  - name: sync_resume_state
+    primary_key: [name]
+    columns:
+      - name: name
+        type: string
+        nullable: false
+      - name: last_completed_path
+        type: string
+        nullable: false
+      - name: last_completed_session_id
+        type: string
+        nullable: false
+      - name: completed_batches
+        type: i64
+        nullable: false
+      - name: completed_sessions
+        type: i64
+        nullable: false
+    indexes: []
+
+  - name: entry_ingest_state
+    primary_key: [id]
+    columns:
+      - name: id
+        type: string
+        nullable: false
+      - name: session_id
+        type: string
+        nullable: false
+      - name: entry_hash
+        type: string
+        nullable: false
+    indexes:
+      - name: entry_ingest_session_idx
+        kind: column
+        column: session_id
+
+  - name: entry_search_state
+    primary_key: [id]
+    columns:
+      - name: id
+        type: string
+        nullable: false
+      - name: session_id
+        type: string
+        nullable: false
+      - name: entry_hash
+        type: string
+        nullable: false
+    indexes:
+      - name: entry_search_session_idx
+        kind: column
+        column: session_id
+
+  - name: entries
+    primary_key: [id]
+    columns:
+      - name: id
+        type: string
+        nullable: false
+      - name: agent
+        type: string
+        nullable: false
+      - name: session_id
+        type: string
+        nullable: false
+      - name: session_title
+        type: string
+        nullable: false
+      - name: seq
+        type: i64
+        nullable: false
+      - name: timestamp
+        type: datetime
+        nullable: false
+      - name: role
+        type: string
+        nullable: false
+      - name: kind
+        type: string
+        nullable: false
+      - name: tool_name
+        type: string
+        nullable: true
+      - name: call_id
+        type: string
+        nullable: true
+      - name: title
+        type: string
+        nullable: true
+      - name: content_text
+        type: string
+        nullable: false
+      - name: content_md
+        type: markdown
+        nullable: false
+      - name: raw_type
+        type: string
+        nullable: true
+      - name: phase
+        type: string
+        nullable: true
+    indexes:
+      - name: entries_agent_idx
+        kind: column
+        column: agent
+      - name: entries_session_idx
+        kind: column
+        column: session_id
+      - name: entries_session_cover_idx
+        kind: covering_projected
+        column: session_id
+        stored_columns: [id, agent, session_id, session_title, seq, timestamp, role, kind, tool_name, call_id, title, raw_type, phase]
+      - name: entries_timestamp_idx
+        kind: column
+        column: timestamp
+
+  - name: episodes
+    primary_key: [episode_id]
+    columns:
+      - name: episode_id
+        type: string
+        nullable: false
+      - name: session_id
+        type: string
+        nullable: false
+      - name: start_seq
+        type: i64
+        nullable: false
+      - name: end_seq
+        type: i64
+        nullable: false
+      - name: title
+        type: string
+        nullable: false
+      - name: intent
+        type: string
+        nullable: true
+      - name: outcome
+        type: string
+        nullable: true
+      - name: status
+        type: string
+        nullable: false
+      - name: cwd
+        type: string
+        nullable: true
+      - name: repo
+        type: string
+        nullable: true
+      - name: confidence
+        type: i64
+        nullable: false
+      - name: source_refs_json
+        type: json
+        nullable: false
+      - name: derived_from_root_hash
+        type: string
+        nullable: false
+      - name: created_at
+        type: datetime
+        nullable: false
+        default_current_timestamp: true
+      - name: updated_at
+        type: datetime
+        nullable: false
+        default_current_timestamp: true
+        auto_update_current_timestamp: true
+    indexes:
+      - name: episodes_session_idx
+        kind: column
+        column: session_id
+      - name: episodes_status_idx
+        kind: column
+        column: status
+      - name: episodes_repo_idx
+        kind: column
+        column: repo
+
+  - name: episode_reports
+    primary_key: [report_id]
+    columns:
+      - name: report_id
+        type: string
+        nullable: false
+      - name: episode_id
+        type: string
+        nullable: false
+      - name: summary_md
+        type: string
+        nullable: false
+      - name: decisions_json
+        type: json
+        nullable: false
+      - name: failures_json
+        type: json
+        nullable: false
+      - name: commands_json
+        type: json
+        nullable: false
+      - name: files_json
+        type: json
+        nullable: false
+      - name: open_questions_json
+        type: json
+        nullable: false
+      - name: source_refs_json
+        type: json
+        nullable: false
+      - name: derived_from_root_hash
+        type: string
+        nullable: false
+      - name: created_at
+        type: datetime
+        nullable: false
+        default_current_timestamp: true
+    indexes:
+      - name: episode_reports_episode_idx
+        kind: column
+        column: episode_id
+
+  - name: episode_reasoning_nodes
+    primary_key: [node_id]
+    columns:
+      - name: node_id
+        type: string
+        nullable: false
+      - name: episode_id
+        type: string
+        nullable: false
+      - name: kind
+        type: string
+        nullable: false
+      - name: title
+        type: string
+        nullable: false
+      - name: content
+        type: string
+        nullable: false
+      - name: start_seq
+        type: i64
+        nullable: false
+      - name: end_seq
+        type: i64
+        nullable: false
+      - name: confidence
+        type: i64
+        nullable: false
+      - name: source_refs_json
+        type: json
+        nullable: false
+      - name: derived_from_root_hash
+        type: string
+        nullable: false
+      - name: created_at
+        type: datetime
+        nullable: false
+        default_current_timestamp: true
+    indexes:
+      - name: episode_nodes_episode_idx
+        kind: column
+        column: episode_id
+      - name: episode_nodes_kind_idx
+        kind: column
+        column: kind
+
+  - name: episode_reasoning_links
+    primary_key: [link_id]
+    columns:
+      - name: link_id
+        type: string
+        nullable: false
+      - name: episode_id
+        type: string
+        nullable: false
+      - name: from_node_id
+        type: string
+        nullable: false
+      - name: to_node_id
+        type: string
+        nullable: false
+      - name: kind
+        type: string
+        nullable: false
+      - name: confidence
+        type: i64
+        nullable: false
+      - name: evidence_refs_json
+        type: json
+        nullable: false
+      - name: derived_from_root_hash
+        type: string
+        nullable: false
+      - name: created_at
+        type: datetime
+        nullable: false
+        default_current_timestamp: true
+    indexes:
+      - name: episode_links_episode_idx
+        kind: column
+        column: episode_id
+      - name: episode_links_from_idx
+        kind: column
+        column: from_node_id
+      - name: episode_links_to_idx
+        kind: column
+        column: to_node_id
+      - name: episode_links_kind_idx
+        kind: column
+        column: kind

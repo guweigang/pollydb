@@ -55,6 +55,17 @@ pub:
 	checkpoint_ms                         i64
 	flush_ms                              i64
 	finish_ms                             i64
+	fts_ms                                i64
+	fts_text_us                           i64
+	fts_insert_us                         i64
+	fts_insert_fts_us                     i64
+	fts_commit_us                         i64
+	fts_ops                               int
+	fts_inserted                          int
+	setup_ms                              i64
+	prefetch_ms                           i64
+	resume_skip_ms                        i64
+	skip_ms                               i64
 	total_ms                              i64
 }
 
@@ -117,6 +128,17 @@ pub:
 	checkpoint_ms                         i64
 	flush_ms                              i64
 	finish_ms                             i64
+	fts_ms                                i64
+	fts_text_us                           i64
+	fts_insert_us                         i64
+	fts_insert_fts_us                     i64
+	fts_commit_us                         i64
+	fts_ops                               int
+	fts_inserted                          int
+	setup_ms                              i64
+	prefetch_ms                           i64
+	resume_skip_ms                        i64
+	skip_ms                               i64
 	total_ms                              i64
 }
 

@@ -3,6 +3,7 @@ module agentview
 import crypto.sha256
 import encoding.base64
 import math
+import json
 import memory
 import os
 import query as queryapi
@@ -22,8 +23,15 @@ const agentview_memory_reflections_summary_fts_index = 'memory_reflections_summa
 const agentview_general_fts_indexes = ['entries_content_text_fts_idx']
 const session_summary_select_columns = ['id', 'title', 'updated_at', 'started_at', 'cwd', 'source',
 	'originator', 'cli_version', 'path', 'archived', 'entry_count', 'user_turns', 'tool_calls']
-const transcript_entry_select_columns = ['seq', 'timestamp', 'role', 'kind', 'tool_name', 'call_id',
-	'title', 'content_text', 'content_md', 'raw_type', 'phase']
+const transcript_entry_order_select_columns = ['seq', 'agent', 'timestamp', 'role', 'kind',
+	'tool_name', 'call_id', 'title', 'raw_type', 'phase']
+const transcript_entry_select_columns = ['seq', 'agent', 'timestamp', 'role', 'kind', 'tool_name',
+	'call_id', 'title', 'content_text', 'content_md', 'raw_type', 'phase']
+
+struct TranscriptEntryOrderRow {
+	seq         int
+	primary_key []u8
+}
 
 pub struct PollyDbStore {
 pub:
@@ -48,12 +56,18 @@ mut:
 
 pub struct MemoryDistillOptions {
 pub:
-	recent_sessions  int = 12
-	max_jobs         int = 4
-	neighbor_limit   int = 8
-	min_evidence     int = 1
-	candidate_limit  int
-	candidate_offset int
+	recent_sessions            int = 12
+	max_jobs                   int = 4
+	neighbor_limit             int = 8
+	min_evidence               int = 1
+	candidate_limit            int
+	candidate_offset           int
+	all_sessions               bool   // 全量批处理模式
+	max_cards                  int    // 产出卡片上限，0 表示不限制
+	style                      string // 蒸馏风格：'default' 或 'recap'
+	max_candidates_per_session int    // 每 session 最大 embedding 候选数，0=不限
+	batch_commit_sessions      int    // 每 N 个 session 合并一次 commit
+	force_reprocess            bool   // 忽略 reflected_sources，强制重新蒸馏（LLM 模式重跑用）
 }
 
 pub struct MemoryDistillPreviewCard {
@@ -101,12 +115,45 @@ pub mut:
 	candidates_by_type          map[string]int
 }
 
+pub struct MemoryAuditRequest {
+pub:
+	limit              int = 20
+	offset             int
+	include_superseded bool
+	as_of_commit_cid   string
+}
+
+pub struct MemoryAuditItem {
+pub:
+	reflection_id   string
+	title           string
+	topic_key       string
+	active          bool
+	source_count    int
+	write_plan      MemoryWritePlan
+	summary_preview string
+}
+
+pub struct MemoryAuditReport {
+pub:
+	total_active     int
+	total_superseded int
+	audited          int
+	add_count        int
+	update_count     int
+	defer_count      int
+	discard_count    int
+	reason_counts    map[string]int
+	items            []MemoryAuditItem
+}
+
 pub struct MemoryListRequest {
 pub:
 	query              string
 	limit              int = 20
 	offset             int
 	include_superseded bool
+	as_of_commit_cid   string // 如果设置，只返回该 commit 时间点及之前存在的记忆卡片
 }
 
 pub struct MemoryCard {
@@ -134,11 +181,12 @@ pub:
 
 pub struct MemoryContextRequest {
 pub:
-	query           string
-	limit           int = 6
-	include_sources bool
-	cwd             string
-	repo            string
+	query            string
+	limit            int = 6
+	include_sources  bool
+	cwd              string
+	repo             string
+	as_of_commit_cid string
 }
 
 pub struct MemoryContextResult {
@@ -150,10 +198,10 @@ pub:
 
 pub struct MemoryDeleteResult {
 pub:
-	requested_ids        []string
-	deleted_reflections  int
-	deleted_links        int
-	missing_ids          []string
+	requested_ids       []string
+	deleted_reflections int
+	deleted_links       int
+	missing_ids         []string
 }
 
 struct MemorySalienceDecision {
@@ -229,6 +277,42 @@ fn normalize_root_dir(path string) string {
 	return if os.exists(path) { os.real_path(path) } else { os.norm_path(path) }
 }
 
+struct AppliedDatabaseSchema {
+	changed_tables       []string
+	changed_capabilities int
+}
+
+fn has_memory_capability(db storage.PersistentDatabase, table_name string, column_name string) bool {
+	for capability in db.memory_capabilities_for_table(table_name) {
+		if capability.column_name == column_name {
+			return true
+		}
+	}
+	return false
+}
+
+fn apply_database_schema(mut db storage.PersistentDatabase, schema storage.DatabaseSchema) !AppliedDatabaseSchema {
+	mut changed_tables := []string{}
+	table_specs := schema.tables.clone()
+	for spec in table_specs {
+		if db.register_or_update_table(spec)! {
+			changed_tables << spec.name()
+		}
+	}
+	mut changed_capabilities := 0
+	memory_capabilities := schema.memory_capabilities.clone()
+	for capability in memory_capabilities {
+		if !has_memory_capability(db, capability.table_name, capability.column_name) {
+			db.register_memory_capability(capability)!
+			changed_capabilities++
+		}
+	}
+	return AppliedDatabaseSchema{
+		changed_tables:       changed_tables
+		changed_capabilities: changed_capabilities
+	}
+}
+
 fn (store PollyDbStore) init_schema() ! {
 	if !os.exists(store.root_dir) {
 		os.mkdir_all(store.root_dir)!
@@ -244,33 +328,9 @@ fn (store PollyDbStore) init_schema() ! {
 	defer {
 		db.close() or {}
 	}
-	mut changed_tables := []string{}
-	if db.register_or_update_table(sessions_spec()!)! {
-		changed_tables << 'sessions'
-	}
-	if db.register_or_update_table(ingest_state_spec()!)! {
-		changed_tables << 'ingest_state'
-	}
-	if db.register_or_update_table(search_state_spec()!)! {
-		changed_tables << 'search_state'
-	}
-	if db.register_or_update_table(search_meta_state_spec()!)! {
-		changed_tables << 'search_meta_state'
-	}
-	if db.register_or_update_table(sync_resume_state_spec()!)! {
-		changed_tables << 'sync_resume_state'
-	}
-	if db.register_or_update_table(entry_ingest_state_spec()!)! {
-		changed_tables << 'entry_ingest_state'
-	}
-	if db.register_or_update_table(entry_search_state_spec()!)! {
-		changed_tables << 'entry_search_state'
-	}
-	if db.register_or_update_table(entries_spec(false)!)! {
-		changed_tables << 'entries'
-	}
-	if changed_tables.len > 0 && store_branch in db.branch_names() {
-		_ = db.rebuild_indexes_at_branch(store_branch, changed_tables,
+	applied := apply_database_schema(mut db, default_codex_session_schema().schema()!)!
+	if applied.changed_tables.len > 0 && store_branch_exists(mut db) {
+		_ = db.rebuild_indexes_at_branch(store_branch, applied.changed_tables,
 			storage.ChunkConfig.default())!
 	}
 	db.checkpoint()!
@@ -281,12 +341,282 @@ pub fn (store PollyDbStore) ensure_memory_schema() !bool {
 	defer {
 		db.close() or {}
 	}
-	mut changed := db.register_or_update_table(entries_memory_spec(false)!)!
-	changed = ensure_agentview_memory_capability(mut db)! || changed
+	applied := apply_database_schema(mut db, codex_session_memory_schema().schema()!)!
+	changed := applied.changed_tables.len > 0 || applied.changed_capabilities > 0
 	if changed {
 		db.checkpoint()!
 	}
 	return changed
+}
+
+pub fn (store PollyDbStore) ensure_episode_graph_schema() !bool {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	applied := apply_database_schema(mut db, default_codex_session_schema().schema()!)!
+	changed := applied.changed_tables.len > 0 || applied.changed_capabilities > 0
+	if changed {
+		db.checkpoint()!
+	}
+	return changed
+}
+
+pub fn (store PollyDbStore) save_episode_graph(graph EpisodeGraph) !EpisodeGraph {
+	if graph.episode.episode_id.trim_space().len == 0 {
+		return error('episode graph requires episode_id')
+	}
+	if graph.episode.session_id.trim_space().len == 0 {
+		return error('episode graph requires session_id')
+	}
+	_ = store.ensure_episode_graph_schema()!
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	derived_hash := db.checkout(store_branch) or { storage.Commit{} }.root_cid
+	now := storage.current_datetime_string()
+	episode := normalize_episode_for_write(graph.episode, derived_hash, now)
+	report :=
+		normalize_episode_report_for_write(graph.report, episode.episode_id, derived_hash, now)
+	nodes := normalize_episode_nodes_for_write(graph.nodes, episode.episode_id, derived_hash, now)
+	links := normalize_episode_links_for_write(graph.links, episode.episode_id, derived_hash, now)
+	validate_episode_graph_rows(episode, report, nodes, links)!
+	mut writes := storage.TypedWriteSet.new()
+	writes.put('episodes', episode.episode_id.bytes(), episode_row(episode))
+	writes.put('episode_reports', report.report_id.bytes(), episode_report_row(report))
+	for node in nodes {
+		writes.put('episode_reasoning_nodes', node.node_id.bytes(),
+			episode_reasoning_node_row(node))
+	}
+	for link in links {
+		writes.put('episode_reasoning_links', link.link_id.bytes(),
+			episode_reasoning_link_row(link))
+	}
+	_ = db.apply_typed_write_set(store_branch, writes, storage.ChunkConfig.default(), storage.CommitMeta{
+		author:  'agentview'
+		message: 'save episode reasoning graph ${episode.episode_id}'
+	})!
+	return EpisodeGraph{
+		episode: episode
+		report:  report
+		nodes:   nodes
+		links:   links
+	}
+}
+
+fn normalize_episode_for_write(episode Episode, derived_hash string, now string) Episode {
+	return Episode{
+		...episode
+		status:                 if episode.status.trim_space().len > 0 {
+			episode.status
+		} else {
+			'draft'
+		}
+		confidence:             clamp_confidence(episode.confidence)
+		derived_from_root_hash: if episode.derived_from_root_hash.len > 0 {
+			episode.derived_from_root_hash
+		} else {
+			derived_hash
+		}
+		created_at:             if episode.created_at.len > 0 { episode.created_at } else { now }
+		updated_at:             now
+	}
+}
+
+fn normalize_episode_report_for_write(report EpisodeReport, episode_id string, derived_hash string, now string) EpisodeReport {
+	report_id := if report.report_id.trim_space().len > 0 {
+		report.report_id
+	} else {
+		'episode_report_' + rand.uuid_v4().replace('-', '')
+	}
+	return EpisodeReport{
+		...report
+		report_id:              report_id
+		episode_id:             episode_id
+		decisions_json:         normalize_json_array(report.decisions_json)
+		failures_json:          normalize_json_array(report.failures_json)
+		commands_json:          normalize_json_array(report.commands_json)
+		files_json:             normalize_json_array(report.files_json)
+		open_questions_json:    normalize_json_array(report.open_questions_json)
+		derived_from_root_hash: if report.derived_from_root_hash.len > 0 {
+			report.derived_from_root_hash
+		} else {
+			derived_hash
+		}
+		created_at:             if report.created_at.len > 0 { report.created_at } else { now }
+	}
+}
+
+fn normalize_episode_nodes_for_write(nodes []EpisodeReasoningNode, episode_id string, derived_hash string, now string) []EpisodeReasoningNode {
+	mut out := []EpisodeReasoningNode{cap: nodes.len}
+	for node in nodes {
+		out << EpisodeReasoningNode{
+			...node
+			node_id:                if node.node_id.trim_space().len > 0 {
+				node.node_id
+			} else {
+				'episode_node_' + rand.uuid_v4().replace('-', '')
+			}
+			episode_id:             episode_id
+			confidence:             clamp_confidence(node.confidence)
+			derived_from_root_hash: if node.derived_from_root_hash.len > 0 {
+				node.derived_from_root_hash
+			} else {
+				derived_hash
+			}
+			created_at:             if node.created_at.len > 0 { node.created_at } else { now }
+		}
+	}
+	return out
+}
+
+fn normalize_episode_links_for_write(links []EpisodeReasoningLink, episode_id string, derived_hash string, now string) []EpisodeReasoningLink {
+	mut out := []EpisodeReasoningLink{cap: links.len}
+	for link in links {
+		out << EpisodeReasoningLink{
+			...link
+			link_id:                if link.link_id.trim_space().len > 0 {
+				link.link_id
+			} else {
+				'episode_link_' + rand.uuid_v4().replace('-', '')
+			}
+			episode_id:             episode_id
+			confidence:             clamp_confidence(link.confidence)
+			derived_from_root_hash: if link.derived_from_root_hash.len > 0 {
+				link.derived_from_root_hash
+			} else {
+				derived_hash
+			}
+			created_at:             if link.created_at.len > 0 { link.created_at } else { now }
+		}
+	}
+	return out
+}
+
+fn validate_episode_graph_rows(episode Episode, report EpisodeReport, nodes []EpisodeReasoningNode, links []EpisodeReasoningLink) ! {
+	if episode.start_seq < 0 || episode.end_seq < episode.start_seq {
+		return error('episode graph has invalid entry span')
+	}
+	if report.report_id.trim_space().len == 0 {
+		return error('episode graph requires report_id')
+	}
+	mut node_ids := map[string]bool{}
+	for node in nodes {
+		if node.node_id.trim_space().len == 0 {
+			return error('episode graph contains node without node_id')
+		}
+		if node.kind.trim_space().len == 0 {
+			return error('episode graph node ${node.node_id} requires kind')
+		}
+		node_ids[node.node_id] = true
+	}
+	for link in links {
+		if link.link_id.trim_space().len == 0 {
+			return error('episode graph contains link without link_id')
+		}
+		if link.from_node_id !in node_ids {
+			return error('episode graph link ${link.link_id} references missing from_node_id')
+		}
+		if link.to_node_id !in node_ids {
+			return error('episode graph link ${link.link_id} references missing to_node_id')
+		}
+		if link.kind.trim_space().len == 0 {
+			return error('episode graph link ${link.link_id} requires kind')
+		}
+	}
+}
+
+fn episode_row(episode Episode) storage.TypedRowData {
+	mut row := storage.TypedRowData.new()
+	row.set('episode_id', episode.episode_id)
+	row.set('session_id', episode.session_id)
+	row.set('start_seq', i64(episode.start_seq))
+	row.set('end_seq', i64(episode.end_seq))
+	row.set('title', episode.title)
+	set_optional_string(mut row, 'intent', episode.intent)
+	set_optional_string(mut row, 'outcome', episode.outcome)
+	row.set('status', episode.status)
+	set_optional_string(mut row, 'cwd', episode.cwd)
+	set_optional_string(mut row, 'repo', episode.repo)
+	row.set('confidence', i64(episode.confidence))
+	row.set('source_refs_json', json.encode(episode.source_refs))
+	row.set('derived_from_root_hash', episode.derived_from_root_hash)
+	row.set('created_at', episode.created_at)
+	row.set('updated_at', episode.updated_at)
+	return row
+}
+
+fn episode_report_row(report EpisodeReport) storage.TypedRowData {
+	mut row := storage.TypedRowData.new()
+	row.set('report_id', report.report_id)
+	row.set('episode_id', report.episode_id)
+	row.set('summary_md', report.summary_md)
+	row.set('decisions_json', report.decisions_json)
+	row.set('failures_json', report.failures_json)
+	row.set('commands_json', report.commands_json)
+	row.set('files_json', report.files_json)
+	row.set('open_questions_json', report.open_questions_json)
+	row.set('source_refs_json', json.encode(report.source_refs))
+	row.set('derived_from_root_hash', report.derived_from_root_hash)
+	row.set('created_at', report.created_at)
+	return row
+}
+
+fn episode_reasoning_node_row(node EpisodeReasoningNode) storage.TypedRowData {
+	mut row := storage.TypedRowData.new()
+	row.set('node_id', node.node_id)
+	row.set('episode_id', node.episode_id)
+	row.set('kind', node.kind)
+	row.set('title', node.title)
+	row.set('content', node.content)
+	row.set('start_seq', i64(node.start_seq))
+	row.set('end_seq', i64(node.end_seq))
+	row.set('confidence', i64(node.confidence))
+	row.set('source_refs_json', json.encode(node.source_refs))
+	row.set('derived_from_root_hash', node.derived_from_root_hash)
+	row.set('created_at', node.created_at)
+	return row
+}
+
+fn episode_reasoning_link_row(link EpisodeReasoningLink) storage.TypedRowData {
+	mut row := storage.TypedRowData.new()
+	row.set('link_id', link.link_id)
+	row.set('episode_id', link.episode_id)
+	row.set('from_node_id', link.from_node_id)
+	row.set('to_node_id', link.to_node_id)
+	row.set('kind', link.kind)
+	row.set('confidence', i64(link.confidence))
+	row.set('evidence_refs_json', json.encode(link.evidence_refs))
+	row.set('derived_from_root_hash', link.derived_from_root_hash)
+	row.set('created_at', link.created_at)
+	return row
+}
+
+fn set_optional_string(mut row storage.TypedRowData, name string, value string) {
+	if value.len > 0 {
+		row.set(name, value)
+	} else {
+		row.set(name, storage.NullValue{})
+	}
+}
+
+fn normalize_json_array(raw string) string {
+	trimmed := raw.trim_space()
+	if trimmed.len == 0 {
+		return '[]'
+	}
+	return trimmed
+}
+
+fn clamp_confidence(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
 }
 
 pub fn (store PollyDbStore) distill_recent_memory(mut embedding_engine memory.EmbeddingEngine, mut generator memory.ReflectionTextGenerator, options MemoryDistillOptions) ![]memory.PersistedReflection {
@@ -309,12 +639,124 @@ pub fn (store PollyDbStore) preview_recent_memory(mut embedding_engine memory.Em
 		false)
 }
 
+pub fn (store PollyDbStore) audit_memory(request MemoryAuditRequest) !MemoryAuditReport {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	session_opts := if request.as_of_commit_cid.len > 0 {
+		storage.SessionOptions.for_commit(store_branch, request.as_of_commit_cid)
+	} else {
+		storage.SessionOptions.for_branch(store_branch)
+	}
+	session := db.begin_session(session_opts)!
+	if !db.has_table('memory_reflections') {
+		return MemoryAuditReport{}
+	}
+	rows := session.scan_table(mut db, 'memory_reflections', 0)!
+	superseded := superseded_memory_reflection_ids(rows)
+	mut cards := []MemoryCard{cap: rows.len}
+	for row in rows {
+		card := memory_card_from_row(mut db, row, superseded, []string{})!
+		if !request.include_superseded && !card.active {
+			continue
+		}
+		cards << card
+	}
+	cards.sort_with_compare(fn (a &MemoryCard, b &MemoryCard) int {
+		if a.created_at > b.created_at {
+			return -1
+		}
+		if a.created_at < b.created_at {
+			return 1
+		}
+		return 0
+	})
+	mut total_active := 0
+	mut total_superseded := 0
+	mut add_count := 0
+	mut update_count := 0
+	mut defer_count := 0
+	mut discard_count := 0
+	mut reason_counts := map[string]int{}
+	mut audit_items := []MemoryAuditItem{}
+	start := clamp_offset(request.offset, cards.len)
+	limit := if request.limit > 0 { request.limit } else { 20 }
+	end := min_int(start + limit, cards.len)
+	for idx, card in cards {
+		if card.active {
+			total_active++
+		} else {
+			total_superseded++
+		}
+		input := memory.ReflectionPersistInput{
+			title:                    card.title
+			summary_md:               card.summary_md
+			insight_md:               card.insight_md
+			topic_key:                card.topic_key
+			reflection_kind:          card.reflection_kind
+			supersedes_reflection_id: card.supersedes_reflection_id
+		}
+		profile := memory_card_quality_profile(input)
+		decision := memory_card_write_decision_from_profile(profile)
+		plan := memory_card_write_plan(input, profile, decision, card.source_count,
+			card.supersedes_reflection_id)
+		match plan.action {
+			'add' { add_count++ }
+			'update' { update_count++ }
+			'defer' { defer_count++ }
+			else { discard_count++ }
+		}
+
+		reason := if plan.reason.len > 0 { plan.reason } else { plan.action }
+		reason_counts[reason] = reason_counts[reason] + 1
+		if idx >= start && idx < end {
+			audit_items << MemoryAuditItem{
+				reflection_id:   card.reflection_id
+				title:           card.title
+				topic_key:       card.topic_key
+				active:          card.active
+				source_count:    card.source_count
+				write_plan:      plan
+				summary_preview: memory_summary_preview_line(card.summary_md)
+			}
+		}
+	}
+	return MemoryAuditReport{
+		total_active:     total_active
+		total_superseded: total_superseded
+		audited:          cards.len
+		add_count:        add_count
+		update_count:     update_count
+		defer_count:      defer_count
+		discard_count:    discard_count
+		reason_counts:    reason_counts
+		items:            audit_items
+	}
+}
+
+fn memory_summary_preview_line(summary_md string) string {
+	for line in summary_md.split_into_lines() {
+		trimmed := line.trim_space()
+		if trimmed.len == 0 || trimmed.starts_with('#') {
+			continue
+		}
+		return trimmed
+	}
+	return ''
+}
+
 pub fn (store PollyDbStore) list_memory(request MemoryListRequest) !MemoryListResult {
 	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
 	defer {
 		db.close() or {}
 	}
-	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	session_opts := if request.as_of_commit_cid.len > 0 {
+		storage.SessionOptions.for_commit(store_branch, request.as_of_commit_cid)
+	} else {
+		storage.SessionOptions.for_branch(store_branch)
+	}
+	session := db.begin_session(session_opts)!
 	if !db.has_table('memory_reflections') {
 		return MemoryListResult{
 			strategy: 'no_memory_table'
@@ -382,16 +824,23 @@ pub fn (store PollyDbStore) memory_context(request MemoryContextRequest) !Memory
 	defer {
 		db.close() or {}
 	}
-	if store_branch !in db.branch_names() {
+	if !store_branch_exists(mut db) {
 		return MemoryContextResult{
 			markdown: ''
 			memories: []MemoryCard{}
 		}
 	}
-	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	session_opts := if request.as_of_commit_cid.len > 0 {
+		storage.SessionOptions.for_commit(store_branch, request.as_of_commit_cid)
+	} else {
+		storage.SessionOptions.for_branch(store_branch)
+	}
+	session := db.begin_session(session_opts)!
 
 	// 1. 匹配当前 Scene Block (L2)
-	scene_blocks := db.list_scene_blocks(store_branch) or { []memory.SceneBlock{} }
+	scene_blocks := db.list_scene_blocks_at(store_branch, request.as_of_commit_cid) or {
+		[]memory.SceneBlock{}
+	}
 	mut best_scene := memory.SceneBlock{}
 	mut max_cwd_len := -1
 	for block in scene_blocks {
@@ -420,8 +869,9 @@ pub fn (store PollyDbStore) memory_context(request MemoryContextRequest) !Memory
 	}
 	if best_scene.scene_id.len == 0 && request.query.len > 0 {
 		for block in scene_blocks {
-			if (block.topic.len > 0 && request.query.to_lower().contains(block.topic.to_lower())) || 
-			   (block.workflow.len > 0 && request.query.to_lower().contains(block.workflow.to_lower())) {
+			if (block.topic.len > 0 && request.query.to_lower().contains(block.topic.to_lower()))
+				|| (block.workflow.len > 0
+				&& request.query.to_lower().contains(block.workflow.to_lower())) {
 				best_scene = block
 				break
 			}
@@ -435,10 +885,12 @@ pub fn (store PollyDbStore) memory_context(request MemoryContextRequest) !Memory
 	if best_scene.scene_id.len > 0 && best_scene.atomic_memory_ids.len > 0 {
 		if db.has_table('memory_reflections') {
 			mut scene_memories := []MemoryCard{}
-			all_rows := session.scan_table(mut db, 'memory_reflections', 0) or { []storage.TypedSchemaRow{} }
+			all_rows := session.scan_table(mut db, 'memory_reflections', 0) or {
+				[]storage.TypedSchemaRow{}
+			}
 			superseded := superseded_memory_reflection_ids(all_rows)
 			terms := normalized_search_terms(request.query)
-			
+
 			for block_mem_id in best_scene.atomic_memory_ids {
 				if row := session.get_row(mut db, 'memory_reflections', block_mem_id.bytes()) {
 					card := memory_card_from_row(mut db, row, superseded, terms)!
@@ -495,10 +947,13 @@ pub fn (store PollyDbStore) memory_context(request MemoryContextRequest) !Memory
 	}
 
 	// 3. 叠加全局 L3 Persona
-	persona_profiles := db.list_persona_profiles(store_branch) or { []memory.PersonaProfile{} }
+	persona_profiles := db.list_persona_profiles_at(store_branch, request.as_of_commit_cid) or {
+		[]memory.PersonaProfile{}
+	}
 
 	// 4. 组装并渲染 Context Markdown
-	markdown := render_hierarchical_memory_context_markdown(request, best_scene, memories, persona_profiles)
+	markdown := render_hierarchical_memory_context_markdown(request, best_scene, memories,
+		persona_profiles)
 
 	return MemoryContextResult{
 		query:    request.query
@@ -553,17 +1008,15 @@ pub fn (store PollyDbStore) delete_memory(reflection_ids []string) !MemoryDelete
 		for row in link_rows {
 			from_table := agentview_optional_row_string(row, 'from_table_name')
 			from_key_b64 := agentview_optional_row_string(row, 'from_primary_key_b64')
-			if from_table == 'memory_reflections' && base64_key_matches_any_id(from_key_b64,
-				existing_ids) {
+			if from_table == 'memory_reflections'
+				&& base64_key_matches_any_id(from_key_b64, existing_ids) {
 				link_keys << row.primary_key.clone()
 				continue
 			}
 			derived_from_root := agentview_optional_row_string(row, 'derived_from_root_hash')
 			if derived_from_root.len > 0
-				&& memory_link_root_matches_deleted_reflection(link_rows, derived_from_root,
-				existing_ids)
-				&& !memory_link_root_has_remaining_reflection(link_rows, derived_from_root,
-				existing_ids) {
+				&& memory_link_root_matches_deleted_reflection(link_rows, derived_from_root, existing_ids)
+				&& !memory_link_root_has_remaining_reflection(link_rows, derived_from_root, existing_ids) {
 				link_keys << row.primary_key.clone()
 			}
 		}
@@ -593,16 +1046,61 @@ pub fn (store PollyDbStore) delete_memory(reflection_ids []string) !MemoryDelete
 	}
 }
 
+// memory_evolution_chain 查询一条记忆的完整演化链（沿 parent_ref 回溯）
+pub fn (store PollyDbStore) memory_evolution_chain(reflection_id string) !memory.ReflectionEvolutionChain {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	if !store_branch_exists(mut db) {
+		return memory.ReflectionEvolutionChain{
+			root_reflection_id: reflection_id
+			nodes:              []memory.ReflectionEvolutionNode{}
+		}
+	}
+	return db.reflection_evolution_chain(store_branch, reflection_id)!
+}
+
+// memory_supersede_graph 查询围绕一条记忆的更替关系图
+pub fn (store PollyDbStore) memory_supersede_graph(reflection_id string) !memory.ReflectionSupersedeGraph {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	if !store_branch_exists(mut db) {
+		return memory.ReflectionSupersedeGraph{
+			root_reflection_id: reflection_id
+			nodes:              map[string]memory.ReflectionSupersedeNode{}
+		}
+	}
+	return db.reflection_supersede_graph(store_branch, reflection_id)!
+}
+
 pub fn (store PollyDbStore) list_scenes() ![]memory.SceneBlock {
 	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
 	defer {
 		db.close() or {}
 	}
-	if store_branch !in db.branch_names() {
+	if !store_branch_exists(mut db) {
 		return []memory.SceneBlock{}
 	}
 	db.ensure_scene_blocks_table()!
 	return db.list_scene_blocks(store_branch)!
+}
+
+// scene_card_timeline 通过回溯 commit 历史重建场景块的卡片添加时间线
+// max_commits 控制扫描的 commit 数量上限，0 表示默认 512
+pub fn (store PollyDbStore) scene_card_timeline(scene_id string, max_commits int) !memory.SceneBlockCardTimeline {
+	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	defer {
+		db.close() or {}
+	}
+	if !store_branch_exists(mut db) {
+		return memory.SceneBlockCardTimeline{
+			scene_id: scene_id
+		}
+	}
+	return db.scene_block_card_timeline(store_branch, scene_id, max_commits)!
 }
 
 pub fn (store PollyDbStore) list_personas() ![]memory.PersonaProfile {
@@ -610,7 +1108,7 @@ pub fn (store PollyDbStore) list_personas() ![]memory.PersonaProfile {
 	defer {
 		db.close() or {}
 	}
-	if store_branch !in db.branch_names() {
+	if !store_branch_exists(mut db) {
 		return []memory.PersonaProfile{}
 	}
 	db.ensure_persona_profiles_table()!
@@ -625,13 +1123,13 @@ pub fn (store PollyDbStore) add_persona(content string) !memory.PersonaProfile {
 	db.ensure_persona_profiles_table()!
 	persona_id := 'persona_' + rand.uuid_v4().replace('-', '')[..16]
 	profile := memory.PersonaProfile{
-		persona_id: persona_id
+		persona_id:      persona_id
 		preference_kind: 'preference'
-		content: content
-		created_at: storage.current_datetime_string()
+		content:         content
+		created_at:      storage.current_datetime_string()
 	}
 	db.save_persona_profile(store_branch, profile, storage.ChunkConfig.default(), storage.CommitMeta{
-		author: 'agentview'
+		author:  'agentview'
 		message: 'add persona profile'
 	})!
 	return profile
@@ -644,7 +1142,7 @@ pub fn (store PollyDbStore) delete_persona(persona_id string) ! {
 	}
 	db.ensure_persona_profiles_table()!
 	db.delete_persona_profile(store_branch, persona_id, storage.ChunkConfig.default(), storage.CommitMeta{
-		author: 'agentview'
+		author:  'agentview'
 		message: 'delete persona profile'
 	})!
 }
@@ -656,7 +1154,7 @@ pub fn (store PollyDbStore) save_scene(scene memory.SceneBlock) ! {
 	}
 	db.ensure_scene_blocks_table()!
 	db.save_scene_block(store_branch, scene, storage.ChunkConfig.default(), storage.CommitMeta{
-		author: 'agentview'
+		author:  'agentview'
 		message: 'save scene block'
 	})!
 }
@@ -734,13 +1232,11 @@ pub fn (store PollyDbStore) save_memory(reflection memory.PersistedReflection) !
 		mut writes := storage.TypedWriteSet.new()
 		writes.put('memory_reflections', reflection.reflection_id.bytes(), row)
 		db.apply_typed_write_set(store_branch, writes, storage.ChunkConfig.default(), storage.CommitMeta{
-			author: 'agentview'
+			author:  'agentview'
 			message: 'save memory card'
 		})!
 	}
 }
-
-
 
 fn base64_key_matches_any_id(encoded string, ids map[string]bool) bool {
 	if encoded.len == 0 {
@@ -759,7 +1255,8 @@ fn memory_link_root_matches_deleted_reflection(rows []storage.TypedSchemaRow, ro
 			continue
 		}
 		if base64_key_matches_any_id(agentview_optional_row_string(row, 'from_primary_key_b64'),
-			ids) {
+			ids)
+		{
 			return true
 		}
 	}
@@ -789,94 +1286,428 @@ fn (store PollyDbStore) distill_recent_memory_with_mode(mut embedding_engine mem
 		db.close() or {}
 	}
 	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
-	recent_sessions := if options.recent_sessions > 0 { options.recent_sessions } else { 12 }
-	mut entry_rows := recent_entry_rows(mut db, session, recent_sessions)!
-	memory_distill_progress('loaded recent sessions=${recent_sessions} entries=${entry_rows.len}')
-	if entry_rows.len == 0 {
+	// 全量批处理模式 vs 增量模式
+	max_sessions := if options.all_sessions {
+		0
+	} else {
+		if options.recent_sessions > 0 { options.recent_sessions } else { 12 }
+	}
+	// 产出上限：max_cards 优先，其次全量模式不限量，最后用 max_jobs
+	card_limit := if options.max_cards > 0 {
+		options.max_cards
+	} else if options.all_sessions {
+		0 // unlimited
+	} else {
+		if options.max_jobs > 0 { options.max_jobs } else { 4 }
+	}
+
+	mut session_rows := []storage.TypedSchemaRow{}
+	sessions_table_spec := session.table_spec('sessions') or { storage.TypedTableSpec{} }
+	if max_sessions > 0 && table_has_index(sessions_table_spec, 'updated_at_cover_idx') {
+		// 增量模式：取最近 N 个 session
+		session_rows = session.lookup_index_between_reverse_projected(mut db, 'sessions',
+			'updated_at_cover_idx', session_list_min_updated_at, session_list_max_updated_at,
+			max_sessions, ['id', 'updated_at']) or { []storage.TypedSchemaRow{} }
+	} else {
+		// 全量模式或回退：读取所有 session 并按 updated_at 排序
+		session_rows = session.scan_table(mut db, 'sessions', 0)!
+		session_rows.sort_with_compare(fn (a &storage.TypedSchemaRow, b &storage.TypedSchemaRow) int {
+			a_updated := agentview_optional_row_string(*a, 'updated_at')
+			b_updated := agentview_optional_row_string(*b, 'updated_at')
+			if a_updated > b_updated { return -1 }
+			if a_updated < b_updated { return 1 }
+			return 0
+		})
+		if max_sessions > 0 && session_rows.len > max_sessions {
+			session_rows = session_rows[..max_sessions].clone()
+		}
+	}
+	mode_label := if options.all_sessions { 'batch (all sessions)' } else { 'recent' }
+	memory_distill_progress('loaded sessions=${session_rows.len} mode=${mode_label} card_limit=${card_limit}')
+	if session_rows.len == 0 {
 		return []memory.PersistedReflection{}
 	}
-	candidates, _ := memory_candidates_for_embedding(mut db, session, entry_rows,
-		options.candidate_limit, options.candidate_offset)!
-	memory_distill_progress('embedding candidates=${candidates.len}')
-	if candidates.len == 0 {
-		return []memory.PersistedReflection{}
-	}
-	mut segment_anchors := build_memory_segment_anchors(candidates, mut embedding_engine,
-		options.candidate_limit) or { []MemorySegmentAnchor{} }
-	memory_distill_progress('segment anchors=${segment_anchors.len}')
-	if segment_anchors.len == 0 {
-		return []memory.PersistedReflection{}
-	}
+
 	mut reflected_sources := db.reflected_source_keys(store_branch) or {
 		map[string]bool{}
 	}
-	// 关闭准备阶段的数据库句柄，避免其在耗时的大模型推理阶段一直保持开启
+
+	// 在高负载前关闭全局长会话
 	db.close() or {}
 
-	max_jobs := if options.max_jobs > 0 { options.max_jobs } else { 4 }
 	neighbor_limit := if options.neighbor_limit > 0 { options.neighbor_limit } else { 8 }
 	min_evidence := if options.min_evidence > 0 { options.min_evidence } else { 1 }
 	mut persisted := []memory.PersistedReflection{}
-	for anchor_idx, anchor in segment_anchors {
-		primary_key := anchor.primary_key.clone()
-		source_key := memory.reflection_source_key('entries', primary_key, 'content_md')
-		if source_key in reflected_sources {
-			memory_distill_progress('skip reflected anchor ${anchor_idx + 1}/${segment_anchors.len} key=${primary_key.bytestr()}')
-			continue
-		}
-		memory_distill_progress('build reflection ${anchor_idx + 1}/${segment_anchors.len} key=${primary_key.bytestr()} persisted=${persisted.len}/${max_jobs}')
-		job := build_in_memory_agentview_reflection_job(anchor, neighbor_limit)
-		if job.evidence.len < min_evidence {
-			memory_distill_progress('skip weak evidence key=${primary_key.bytestr()} evidence=${job.evidence.len}/${min_evidence}')
-			continue
-		}
-		distill_options := memory.ReflectionDistillOptions{
-			max_evidence: neighbor_limit
-		}
-		if !memory.reflection_job_has_distillable_outline(job, distill_options) {
-			memory_distill_progress('skip empty reflection outline key=${primary_key.bytestr()}')
-			reflected_sources[source_key] = true
-			continue
-		}
-		memory_distill_progress('distill reflection card key=${primary_key.bytestr()} evidence=${job.evidence.len}')
-		raw_input := if use_heuristic {
-			memory.heuristic_reflection_persist_input(job, distill_options)
-		} else {
-			memory.generate_reflection_persist_input(job, mut generator, distill_options)!
-		}
-		sanitized_input := memory_card_sanitize_input(raw_input)
-		card_topic_key := memory_card_topic_key(sanitized_input)
-		mut input := memory.ReflectionPersistInput{
-			...sanitized_input
-			topic_key: card_topic_key
-		}
-		memory_distill_progress('quality gate key=${primary_key.bytestr()} title=${input.title}')
-		profile := memory_card_quality_profile(input)
-		write_decision := memory_card_write_decision_from_profile(profile)
-		write_plan := memory_card_write_plan(input, profile, write_decision, job.evidence.len,
-			'')
-		if write_plan.action == 'defer' {
-			eprintln('agentview memory: defer reflection card for ${primary_key.bytestr()}: ${write_plan.reason}')
-			continue
-		}
-		if write_plan.action == 'discard' {
-			eprintln('agentview memory: discard reflection card for ${primary_key.bytestr()}: ${write_plan.reason}')
-			reflected_sources[source_key] = true
-			continue
-		}
-		memory_distill_progress('dedupe and persist reflection key=${primary_key.bytestr()} topic=${input.topic_key}')
-		reflection := store.save_distilled_reflection(job, input, anchor, mut embedding_engine) or {
-			eprintln('agentview memory: skip persisting reflection for ${primary_key.bytestr()}: ${err}')
-			continue
-		}
-		persisted << reflection
-		memory_distill_progress('persisted reflection ${persisted.len}/${max_jobs} id=${reflection.reflection_id} title=${reflection.title}')
-		reflected_sources[source_key] = true
-		if persisted.len >= max_jobs {
+	mut total_report := MemorySalienceReport{}
+
+	// 跨 session 批量写入状态
+	candidate_per_session := if options.max_candidates_per_session > 0 {
+		options.max_candidates_per_session
+	} else {
+		0
+	}
+	batch_sessions := if options.batch_commit_sessions > 0 {
+		options.batch_commit_sessions
+	} else {
+		0
+	}
+	mut batch_writes := storage.TypedWriteSet.new()
+	mut scene_card_map := map[string][]string{}
+	mut scene_chain_prev := map[string]string{}
+	mut topic_chain_prev := map[string]string{} // topic_key → last reflection_id
+	mut commits_pending := 0
+	mut total_session_cards := 0
+
+	// 跨 session 的 write_db，在需要时才打开
+	mut write_db := storage.PersistentDatabase{}
+	mut write_db_open := false
+
+	for s_row in session_rows {
+		// 产出上限检查：card_limit=0 表示不限制
+		if card_limit > 0 && persisted.len >= card_limit {
+			memory_distill_progress('reached card_limit=${card_limit}, stopping')
 			break
 		}
+		session_id := agentview_required_row_string(s_row, 'id') or { continue }
+
+		mut batch_db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+		batch_session := batch_db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+
+		entries_table_spec := batch_session.table_spec('entries') or { storage.TypedTableSpec{} }
+		mut rows := []storage.TypedSchemaRow{}
+		if table_has_index(entries_table_spec, 'entries_session_cover_idx') {
+			rows = batch_session.lookup_index_projected(mut batch_db, 'entries',
+				'entries_session_cover_idx', session_id, 0, ['id', 'timestamp']) or {
+				[]storage.TypedSchemaRow{}
+			}
+		} else if table_has_index(entries_table_spec, 'entries_session_idx') {
+			rows = batch_session.lookup_index_projected(mut batch_db, 'entries',
+				'entries_session_idx', session_id, 0, [
+				'id',
+				'timestamp',
+			]) or { []storage.TypedSchemaRow{} }
+		}
+
+		if rows.len == 0 {
+			batch_db.close() or {}
+			continue
+		}
+
+		rows.sort_with_compare(fn (a &storage.TypedSchemaRow, b &storage.TypedSchemaRow) int {
+			a_ts := agentview_optional_row_string(*a, 'timestamp')
+			b_ts := agentview_optional_row_string(*b, 'timestamp')
+			if a_ts > b_ts { return -1 }
+			if a_ts < b_ts { return 1 }
+			return 0
+		})
+
+		candidates, report := memory_candidates_for_embedding(mut batch_db, batch_session, rows,
+			candidate_per_session, 0)!
+		total_report.raw_entries += report.raw_entries
+		total_report.candidate_entries += report.candidate_entries
+		total_report.embedding_candidate_entries += report.embedding_candidate_entries
+		for k, v in report.candidates_by_type {
+			total_report.candidates_by_type[k] = total_report.candidates_by_type[k] + v
+		}
+		for k, v in report.skipped_by_reason {
+			total_report.skipped_by_reason[k] = total_report.skipped_by_reason[k] + v
+		}
+		for k, v in report.discarded_before_embedding {
+			total_report.discarded_before_embedding[k] =
+				total_report.discarded_before_embedding[k] + v
+		}
+
+		mut segment_anchors := build_memory_segment_anchors(candidates, mut embedding_engine, 0) or {
+			[]MemorySegmentAnchor{}
+		}
+
+		batch_db.close() or {}
+
+		if segment_anchors.len == 0 {
+			continue
+		}
+
+		// 懒打开 write_db
+		if !write_db_open {
+			write_db = storage.PersistentDatabase.open(store.root_dir, store_branch)!
+			write_db.ensure_memory_reflections_table()!
+			write_db.ensure_scene_blocks_table()!
+			write_db_open = true
+		}
+		mut session_card_count := 0
+
+		for anchor_idx, anchor in segment_anchors {
+			if card_limit > 0 && persisted.len + session_card_count >= card_limit {
+				break
+			}
+			primary_key := anchor.primary_key.clone()
+			source_key := memory.reflection_source_key('entries', primary_key, 'content_md')
+			if !options.force_reprocess && source_key in reflected_sources {
+				continue
+			}
+			memory_distill_progress('session=${session_id} build reflection ${anchor_idx + 1}/${segment_anchors.len} persisted=${
+				persisted.len + session_card_count}/${if card_limit > 0 {
+				card_limit.str()
+			} else {
+				'∞'
+			}}')
+			job := build_in_memory_agentview_reflection_job(anchor, neighbor_limit)
+			if job.evidence.len < min_evidence {
+				continue
+			}
+			distill_options := memory.ReflectionDistillOptions{
+				max_evidence: neighbor_limit
+			}
+			if !memory.reflection_job_has_distillable_outline(job, distill_options) {
+				reflected_sources[source_key] = true
+				continue
+			}
+
+			// 构建 topic_key 用于 parent_ref 和 supersede 追踪
+			topic_hint := memory.reflection_default_topic_key(job)
+
+			raw_input := if use_heuristic {
+				if options.style == 'recap' {
+					memory.heuristic_recap_persist_input(job, distill_options)
+				} else {
+					memory.heuristic_reflection_persist_input(job, distill_options)
+				}
+			} else {
+				if options.style == 'recap' {
+					memory.generate_recap_persist_input(job, mut generator, distill_options) or {
+						eprintln('agentview memory: failed to generate LLM recap for ${primary_key.bytestr()}: ${err}')
+						continue
+					}
+				} else {
+					memory.generate_reflection_persist_input(job, mut generator, distill_options) or {
+						eprintln('agentview memory: failed to generate LLM reflection input for ${primary_key.bytestr()}: ${err}')
+						continue
+					}
+				}
+			}
+			sanitized_input := memory_card_sanitize_input(raw_input)
+			card_topic_key := memory_card_topic_key(sanitized_input)
+			mut input := memory.ReflectionPersistInput{
+				...sanitized_input
+				topic_key: card_topic_key
+			}
+			profile := memory_card_quality_profile(input)
+			write_decision := memory_card_write_decision_from_profile(profile)
+			write_plan :=
+				memory_card_write_plan(input, profile, write_decision, job.evidence.len, '')
+			if use_heuristic && write_plan.action == 'discard' {
+				memory_distill_progress('heuristic discard overridden: ${write_plan.reason} score=${write_plan.score}')
+			}
+			if write_plan.action == 'defer' {
+				continue
+			}
+			if write_plan.action == 'discard' && !use_heuristic {
+				continue
+			}
+
+			// 设置 parent_ref 和 supersedes：同一 topic 的链式关系
+			if topic_hint.len > 0 {
+				if prev_id := topic_chain_prev[topic_hint] {
+					input = memory.ReflectionPersistInput{
+						...input
+						parent_ref:               prev_id
+						supersedes_reflection_id: prev_id
+					}
+				}
+			}
+
+			// 构建卡片行数据（不提交）
+			batched := write_db.build_reflection_rows(job, input) or {
+				eprintln('agentview memory: failed to build reflection rows for ${primary_key.bytestr()}: ${err}')
+				continue
+			}
+			batch_writes.put('memory_reflections', batched.reflection_id.bytes(),
+				batched.reflection_row)
+			for i, link_row in batched.link_rows {
+				batch_writes.put('memory_links', batched.link_ids[i].bytes(), link_row)
+			}
+
+			// 获取 session 的 cwd 用于场景关联
+			cwd := anchor_cwd(mut write_db, anchor.session_id)
+			if cwd.len > 0 {
+				// memory_chain 链接：同一场景中相邻卡片的物理链
+				if prev_id := scene_chain_prev[cwd] {
+					chain_id := 'link_' + rand.uuid_v4().replace('-', '')
+					mut chain_row := storage.TypedRowData.new()
+					chain_row.set('link_id', chain_id)
+					chain_row.set('link_kind', 'memory_chain')
+					chain_row.set('from_table_name', 'memory_reflections')
+					chain_row.set('from_primary_key_b64', base64.encode(prev_id.bytes()))
+					chain_row.set('from_column_name', storage.NullValue{})
+					chain_row.set('to_table_name', 'memory_reflections')
+					chain_row.set('to_primary_key_b64',
+						base64.encode(batched.reflection_id.bytes()))
+					chain_row.set('to_column_name', storage.NullValue{})
+					chain_row.set('metadata_json', json.encode(memory.MemoryLinkMetadataDto{
+						kind: 'memory_chain'
+						text: 'temporal successor link in scene'
+					}))
+					chain_row.set('derived_from_root_hash', batched.derived_hash)
+					chain_row.set('created_at', batched.created_at)
+					batch_writes.put('memory_links', chain_id.bytes(), chain_row)
+				}
+				scene_chain_prev[cwd] = batched.reflection_id
+				scene_card_map[cwd] << batched.reflection_id
+			}
+			if topic_hint.len > 0 {
+				topic_chain_prev[topic_hint] = batched.reflection_id
+			}
+
+			session_card_count++
+			reflected_sources[source_key] = true
+			source_refs := memory.reflection_job_source_refs(job)
+			links := memory.build_reflection_links(job, batched.reflection_id, source_refs,
+				batched.derived_hash, batched.created_at)
+			persisted << memory.PersistedReflection{
+				reflection_id:            batched.reflection_id
+				reflection_kind:          if input.reflection_kind.len > 0 {
+					input.reflection_kind
+				} else {
+					job.reflection_kind
+				}
+				title:                    input.title
+				summary_md:               input.summary_md
+				insight_md:               input.insight_md
+				source_refs:              source_refs
+				parent_ref:               input.parent_ref
+				topic_key:                input.topic_key
+				derived_from_root_hash:   batched.derived_hash
+				supersedes_reflection_id: input.supersedes_reflection_id
+				created_at:               batched.created_at
+				links:                    links
+			}
+		}
+
+		// 按 batch_commit_sessions 批量提交
+		total_session_cards += session_card_count
+		commits_pending++
+		if batch_sessions > 0 && commits_pending >= batch_sessions {
+			flush_batch_commit(mut write_db, mut batch_writes, mut scene_card_map,
+				total_session_cards, commits_pending)
+			total_session_cards = 0
+			commits_pending = 0
+		}
 	}
+
+	// 最终提交：剩余未提交的卡片
+	if write_db_open && total_session_cards > 0 {
+		flush_batch_commit(mut write_db, mut batch_writes, mut scene_card_map, total_session_cards,
+			commits_pending)
+	}
+	if write_db_open {
+		write_db.close() or {}
+	}
+	memory_distill_progress('memory_salience raw=${total_report.raw_entries} candidates=${total_report.candidate_entries} embedding_candidates=${total_report.embedding_candidate_entries}')
+	memory_distill_progress('memory_salience skipped_by_reason=${format_memory_counts(total_report.skipped_by_reason)}')
+	memory_distill_progress('memory_salience discarded_before_embedding=${format_memory_counts(total_report.discarded_before_embedding)}')
 	return persisted
+}
+
+fn format_memory_counts(counts map[string]int) string {
+	if counts.len == 0 {
+		return '{}'
+	}
+	mut keys := []string{cap: counts.len}
+	for key, _ in counts {
+		keys << key
+	}
+	keys.sort()
+	mut parts := []string{cap: keys.len}
+	for key in keys {
+		parts << '${key}:${counts[key]}'
+	}
+	return parts.join(',')
+}
+
+fn flush_batch_commit(mut db storage.PersistentDatabase, mut writes storage.TypedWriteSet, mut scene_map map[string][]string, card_count int, session_count int) {
+	// 批量更新 scene_blocks
+	if scene_map.len > 0 {
+		existing_scenes := db.list_scene_blocks(store_branch) or { []memory.SceneBlock{} }
+		for cwd, card_ids in scene_map {
+			repo := find_repo_from_cwd(cwd)
+			mut found := false
+			for scene in existing_scenes {
+				if scene.cwd == cwd {
+					mut ids := scene.atomic_memory_ids.clone()
+					for card_id in card_ids {
+						if card_id !in ids {
+							ids << card_id
+						}
+					}
+					mut scene_row := storage.TypedRowData.new()
+					scene_row.set('scene_id', scene.scene_id)
+					if scene.repo.len > 0 {
+						scene_row.set('repo', scene.repo)
+					} else {
+						scene_row.set('repo', storage.NullValue{})
+					}
+					if scene.cwd.len > 0 {
+						scene_row.set('cwd', scene.cwd)
+					} else {
+						scene_row.set('cwd', storage.NullValue{})
+					}
+					if scene.topic.len > 0 {
+						scene_row.set('topic', scene.topic)
+					} else {
+						scene_row.set('topic', storage.NullValue{})
+					}
+					if scene.workflow.len > 0 {
+						scene_row.set('workflow', scene.workflow)
+					} else {
+						scene_row.set('workflow', storage.NullValue{})
+					}
+					scene_row.set('time_start', scene.time_start)
+					scene_row.set('time_end', scene.time_end)
+					scene_row.set('atomic_memory_ids', json.encode(ids))
+					if scene.metadata_json.len > 0 {
+						scene_row.set('metadata_json', scene.metadata_json)
+					} else {
+						scene_row.set('metadata_json', storage.NullValue{})
+					}
+					scene_row.set('created_at', scene.created_at)
+					scene_row.set('updated_at', storage.current_datetime_string())
+					writes.put('scene_blocks', scene.scene_id.bytes(), scene_row)
+					found = true
+					break
+				}
+			}
+			if !found {
+				new_scene_id := 'scene_' + rand.uuid_v4().replace('-', '')
+				now := storage.current_datetime_string()
+				mut scene_row := storage.TypedRowData.new()
+				scene_row.set('scene_id', new_scene_id)
+				if repo.len > 0 {
+					scene_row.set('repo', repo)
+				} else {
+					scene_row.set('repo', storage.NullValue{})
+				}
+				scene_row.set('cwd', cwd)
+				scene_row.set('topic', storage.NullValue{})
+				scene_row.set('workflow', storage.NullValue{})
+				scene_row.set('time_start', now)
+				scene_row.set('time_end', now)
+				scene_row.set('atomic_memory_ids', json.encode(card_ids))
+				scene_row.set('metadata_json', storage.NullValue{})
+				scene_row.set('created_at', now)
+				scene_row.set('updated_at', now)
+				writes.put('scene_blocks', new_scene_id.bytes(), scene_row)
+			}
+		}
+	}
+	memory_distill_progress('committing batch: ${card_count} cards, ${scene_map.len} scenes, ${session_count} sessions')
+	db.apply_typed_write_set(store_branch, writes, storage.ChunkConfig.default(), storage.CommitMeta{
+		author:    'pollydb-cli'
+		message:   'batch distill ${card_count} memory cards from ${session_count} sessions'
+		timestamp: time.now().unix()
+	}) or { eprintln('agentview memory: batch commit failed: ${err}') }
+	// 重置累积状态
+	writes = storage.TypedWriteSet.new()
+	scene_map = map[string][]string{}
 }
 
 fn (store PollyDbStore) save_distilled_reflection(job memory.ReflectionJob, input memory.ReflectionPersistInput, anchor MemorySegmentAnchor, mut embedding_engine memory.EmbeddingEngine) !memory.PersistedReflection {
@@ -886,15 +1717,16 @@ fn (store PollyDbStore) save_distilled_reflection(job memory.ReflectionJob, inpu
 	}
 	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
 	mut final_input := input
-	if existing_reflection_id := find_existing_reflection_for_memory_card(mut db, session,
-		input, mut embedding_engine)
+	if existing_reflection_id := find_existing_reflection_for_memory_card(mut db, session, input, mut
+		embedding_engine)
 	{
 		final_input = memory.ReflectionPersistInput{
 			...input
 			supersedes_reflection_id: existing_reflection_id
 		}
 	}
-	reflection := db.persist_prebuilt_reflection_job(job, final_input, storage.ChunkConfig.default(), storage.CommitMeta{
+	reflection := db.persist_prebuilt_reflection_job(job, final_input,
+		storage.ChunkConfig.default(), storage.CommitMeta{
 		author:  'pollydb-cli'
 		message: 'distill agentview memory'
 	})!
@@ -921,14 +1753,41 @@ fn (store PollyDbStore) save_distilled_reflection(job memory.ReflectionJob, inpu
 				block := scene_blocks[found_idx]
 				if reflection.reflection_id !in block.atomic_memory_ids {
 					mut ids := block.atomic_memory_ids.clone()
+
+					// 方案 A：在场景中相邻卡片间自动建立 memory_chain 物理链接
+					if ids.len > 0 {
+						last_id := ids.last()
+						chain_link := memory.MemoryLink{
+							link_id:                'link_' + rand.uuid_v4().replace('-', '')
+							link_kind:              'memory_chain'
+							from_table_name:        'memory_reflections'
+							from_primary_key:       last_id.bytes()
+							from_column_name:       'summary_md'
+							to_table_name:          'memory_reflections'
+							to_primary_key:         reflection.reflection_id.bytes()
+							to_column_name:         'summary_md'
+							metadata_json:          json.encode(memory.MemoryLinkMetadataDto{
+								kind: 'memory_chain'
+								text: 'temporal successor link in scene: ' + block.scene_id
+							})
+							derived_from_root_hash: reflection.derived_from_root_hash
+							created_at:             storage.current_datetime_string()
+						}
+						db.save_memory_link(store_branch, chain_link,
+							storage.ChunkConfig.default(), storage.CommitMeta{
+							author:  'pollydb-cli'
+							message: 'link memory cards into chain'
+						}) or { eprintln('agentview memory: failed to link memory cards: ${err}') }
+					}
+
 					ids << reflection.reflection_id
 					updated_block := memory.SceneBlock{
 						...block
 						atomic_memory_ids: ids
-						updated_at: storage.current_datetime_string()
+						updated_at:        storage.current_datetime_string()
 					}
 					db.save_scene_block(store_branch, updated_block, storage.ChunkConfig.default(), storage.CommitMeta{
-						author: 'pollydb-cli'
+						author:  'pollydb-cli'
 						message: 'associate memory card with scene'
 					}) or {
 						eprintln('agentview memory: failed to associate memory with scene: ${err}')
@@ -936,22 +1795,24 @@ fn (store PollyDbStore) save_distilled_reflection(job memory.ReflectionJob, inpu
 				}
 			} else {
 				new_scene := memory.SceneBlock{
-					scene_id: 'scene_' + rand.uuid_v4().replace('-', '')
-					repo: repo
-					cwd: cwd
-					topic: if final_input.topic_key.len > 0 { final_input.topic_key } else { '' }
-					time_start: storage.current_datetime_string()
-					time_end: storage.current_datetime_string()
+					scene_id:          'scene_' + rand.uuid_v4().replace('-', '')
+					repo:              repo
+					cwd:               cwd
+					topic:             if final_input.topic_key.len > 0 {
+						final_input.topic_key
+					} else {
+						''
+					}
+					time_start:        storage.current_datetime_string()
+					time_end:          storage.current_datetime_string()
 					atomic_memory_ids: [reflection.reflection_id]
-					created_at: storage.current_datetime_string()
-					updated_at: storage.current_datetime_string()
+					created_at:        storage.current_datetime_string()
+					updated_at:        storage.current_datetime_string()
 				}
 				db.save_scene_block(store_branch, new_scene, storage.ChunkConfig.default(), storage.CommitMeta{
-					author: 'pollydb-cli'
+					author:  'pollydb-cli'
 					message: 'create new scene block for memory card'
-				}) or {
-					eprintln('agentview memory: failed to create scene block: ${err}')
-				}
+				}) or { eprintln('agentview memory: failed to create scene block: ${err}') }
 			}
 		}
 	}
@@ -964,9 +1825,22 @@ fn (store PollyDbStore) preview_recent_memory_with_mode(mut embedding_engine mem
 		db.close() or {}
 	}
 	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
-	recent_sessions := if options.recent_sessions > 0 { options.recent_sessions } else { 12 }
-	mut entry_rows := recent_entry_rows(mut db, session, recent_sessions)!
-	memory_distill_progress('loaded recent sessions=${recent_sessions} entries=${entry_rows.len}')
+	// 全量批处理模式 vs 增量模式
+	max_sessions := if options.all_sessions {
+		0
+	} else {
+		if options.recent_sessions > 0 { options.recent_sessions } else { 12 }
+	}
+	card_limit := if options.max_cards > 0 {
+		options.max_cards
+	} else if options.all_sessions {
+		0 // unlimited
+	} else {
+		if options.max_jobs > 0 { options.max_jobs } else { 4 }
+	}
+	mut entry_rows := recent_entry_rows(mut db, session, max_sessions)!
+	mode_label := if options.all_sessions { 'batch (all sessions)' } else { 'recent' }
+	memory_distill_progress('loaded entries=${entry_rows.len} mode=${mode_label} card_limit=${card_limit}')
 	if entry_rows.len == 0 {
 		return []MemoryDistillPreviewCard{}
 	}
@@ -985,18 +1859,24 @@ fn (store PollyDbStore) preview_recent_memory_with_mode(mut embedding_engine mem
 	reflected_sources := db.reflected_source_keys(store_branch) or {
 		map[string]bool{}
 	}
-	max_jobs := if options.max_jobs > 0 { options.max_jobs } else { 4 }
 	neighbor_limit := if options.neighbor_limit > 0 { options.neighbor_limit } else { 8 }
 	min_evidence := if options.min_evidence > 0 { options.min_evidence } else { 1 }
 	mut previews := []MemoryDistillPreviewCard{}
 	for anchor_idx, anchor in segment_anchors {
+		if card_limit > 0 && previews.len >= card_limit {
+			break
+		}
 		primary_key := anchor.primary_key.clone()
 		source_key := memory.reflection_source_key('entries', primary_key, 'content_md')
 		if source_key in reflected_sources {
 			memory_distill_progress('skip reflected anchor ${anchor_idx + 1}/${segment_anchors.len} key=${primary_key.bytestr()}')
 			continue
 		}
-		memory_distill_progress('preview reflection ${anchor_idx + 1}/${segment_anchors.len} key=${primary_key.bytestr()} cards=${previews.len}/${max_jobs}')
+		memory_distill_progress('preview reflection ${anchor_idx + 1}/${segment_anchors.len} key=${primary_key.bytestr()} cards=${previews.len}/${if card_limit > 0 {
+			card_limit.str()
+		} else {
+			'∞'
+		}}')
 		job := build_in_memory_agentview_reflection_job(anchor, neighbor_limit)
 		if job.evidence.len < min_evidence {
 			continue
@@ -1009,9 +1889,20 @@ fn (store PollyDbStore) preview_recent_memory_with_mode(mut embedding_engine mem
 			continue
 		}
 		raw_input := if use_heuristic {
-			memory.heuristic_reflection_persist_input(job, distill_options)
+			if options.style == 'recap' {
+				memory.heuristic_recap_persist_input(job, distill_options)
+			} else {
+				memory.heuristic_reflection_persist_input(job, distill_options)
+			}
 		} else {
-			memory.generate_reflection_persist_input(job, mut generator, distill_options)!
+			if options.style == 'recap' {
+				memory.generate_recap_persist_input(job, mut generator, distill_options) or {
+					eprintln('agentview memory: failed to generate LLM recap for ${primary_key.bytestr()}: ${err}')
+					continue
+				}
+			} else {
+				memory.generate_reflection_persist_input(job, mut generator, distill_options)!
+			}
 		}
 		sanitized_input := memory_card_sanitize_input(raw_input)
 		card_topic_key := memory_card_topic_key(sanitized_input)
@@ -1042,7 +1933,7 @@ fn (store PollyDbStore) preview_recent_memory_with_mode(mut embedding_engine mem
 			evidence_count: job.evidence.len
 			supersedes_id:  supersedes_id
 		}
-		if previews.len >= max_jobs {
+		if card_limit > 0 && previews.len >= card_limit {
 			break
 		}
 	}
@@ -1336,7 +2227,7 @@ fn render_memory_context_markdown(request MemoryContextRequest, memories []Memor
 fn render_hierarchical_memory_context_markdown(request MemoryContextRequest, scene memory.SceneBlock, memories []MemoryCard, personas []memory.PersonaProfile) string {
 	mut lines := []string{}
 	lines << '# Agent Memory Context'
-	
+
 	// 1. 全局 Persona L3
 	if personas.len > 0 {
 		lines << ''
@@ -1372,7 +2263,11 @@ fn render_hierarchical_memory_context_markdown(request MemoryContextRequest, sce
 	} else {
 		for idx, card in memories {
 			lines << ''
-			kind_str := if card.reflection_kind.len > 0 { '[${card.reflection_kind.to_upper()}] ' } else { '' }
+			kind_str := if card.reflection_kind.len > 0 {
+				'[${card.reflection_kind.to_upper()}] '
+			} else {
+				''
+			}
 			lines << '### ${idx + 1}. ${kind_str}${card.title}'
 			if card.summary_md.trim_space().len > 0 {
 				lines << ''
@@ -1427,7 +2322,8 @@ fn memory_card_sanitize_title_with_summary(title string, summary_md string) stri
 	}
 	for point in memory_card_summary_points(summary_md) {
 		candidate := memory_card_sanitize_phrase(point)
-		if memory_card_point_is_discardable(candidate) || memory_card_point_has_blocking_noise(candidate) {
+		if memory_card_point_is_discardable(candidate)
+			|| memory_card_point_has_blocking_noise(candidate) {
 			continue
 		}
 		if candidate.contains('根因') || candidate.contains('原因')
@@ -1465,7 +2361,9 @@ fn memory_card_sanitize_summary_markdown(summary_md string) string {
 		}
 		lines << line
 	}
-	return memory_card_compact_markdown(memory_card_remove_empty_markdown_sections(lines)).trim_space() + '\n'
+	return
+		memory_card_compact_markdown(memory_card_remove_empty_markdown_sections(lines)).trim_space() +
+		'\n'
 }
 
 fn memory_card_remove_empty_markdown_sections(lines []string) []string {
@@ -1578,7 +2476,8 @@ fn memory_card_write_plan(input memory.ReflectionPersistInput, profile MemoryCar
 
 fn memory_card_evidence_decision(profile MemoryCardQualityProfile, evidence_count int, decision MemoryCardWriteDecision) MemoryCardWriteDecision {
 	if evidence_count <= 1 && memory_card_is_weak_single_evidence(profile) {
-		if decision.keep || decision.reason in ['process_title', 'bad_summary_point', 'low_card_value'] {
+		if decision.keep
+			|| decision.reason in ['process_title', 'bad_summary_point', 'low_card_value'] {
 			return memory_card_discard_decision('weak_single_evidence', profile.score)
 		}
 	}
@@ -1778,9 +2677,10 @@ fn memory_card_single_replay_is_strong(profile MemoryCardQualityProfile, point s
 	if profile.score < 6 {
 		return false
 	}
-	return (reflection_like_durable_artifact(point)
-		&& (memory_looks_like_decision_text(point) || memory_looks_like_unresolved_issue_text(point)
-		|| memory_looks_like_constraint_text(point))) || memory_looks_like_root_cause_card_point(point)
+	return (reflection_like_durable_artifact(point) && (memory_looks_like_decision_text(point)
+		|| memory_looks_like_unresolved_issue_text(point)
+		|| memory_looks_like_constraint_text(point)))
+		|| memory_looks_like_root_cause_card_point(point)
 }
 
 fn memory_card_is_weak_single_evidence(profile MemoryCardQualityProfile) bool {
@@ -1922,7 +2822,14 @@ fn memory_card_summary_points(summary_md string) []string {
 		trimmed := line.trim_space()
 		if trimmed.starts_with('- ') || trimmed.starts_with('* ') {
 			points << trimmed[2..].trim_space()
+		} else if trimmed.starts_with('※ recap:') || trimmed.starts_with('※recap:') {
+			// recap 风格卡片：整行作为一个要点
+			points << trimmed
 		}
+	}
+	// 如果没有找到任何要点标记但内容非空，将整段作为单个要点
+	if points.len == 0 && summary_md.trim_space().len > 0 {
+		points << summary_md.trim_space()
 	}
 	return points
 }
@@ -1984,6 +2891,10 @@ fn memory_card_point_has_blocking_noise(point string) bool {
 
 fn memory_card_point_score(point string) int {
 	mut score := 0
+	// recap 风格卡片给予基础分：精炼的一句话技术洞察天然具有参考价值
+	if point.starts_with('※ recap:') || point.starts_with('※recap:') {
+		score += 4
+	}
 	if memory_looks_like_decision_text(point) {
 		score += 3
 	}
@@ -2124,9 +3035,8 @@ fn memory_looks_like_regression_confirmation_for_card(text string) bool {
 	return lower.contains('确认这个') || lower.contains('确认回归')
 		|| lower.contains('正式跑法') || lower.contains('确认没有漏掉')
 		|| lower.contains('确认不是偶发') || lower.contains('不是偶发现象')
-		|| lower.contains('收口验证')
-		|| lower.contains('你现在可以直接改') || lower.contains('你可以直接改')
-		|| lower.contains('现在可以直接改')
+		|| lower.contains('收口验证') || lower.contains('你现在可以直接改')
+		|| lower.contains('你可以直接改') || lower.contains('现在可以直接改')
 }
 
 fn memory_looks_like_hypothesis_validation_for_card(text string) bool {
@@ -2158,10 +3068,10 @@ fn memory_looks_like_vague_resolution_title_for_card(text string) bool {
 
 fn memory_looks_like_process_or_debug_card_title(text string) bool {
 	lower := text.to_lower()
-	for marker in ['日志', 'stderr', '抓最后', '不对劲', '不需要再飘', '根因基本对上',
-		'不能完整返回', '这回栈', '看最后一段', '回打一遍 baseline', '回打一遍baseline',
-		'请求级验证', '真跑两条', '构建还在跑', '中间态', '这笔 commit',
-		'这笔提交', 'sigsegv', '真实炸栈'] {
+	for marker in ['日志', 'stderr', '抓最后', '不对劲', '不需要再飘',
+		'根因基本对上', '不能完整返回', '这回栈', '看最后一段',
+		'回打一遍 baseline', '回打一遍baseline', '请求级验证', '真跑两条',
+		'构建还在跑', '中间态', '这笔 commit', '这笔提交', 'sigsegv', '真实炸栈'] {
 		if lower.contains(marker) {
 			return true
 		}
@@ -2176,11 +3086,12 @@ fn memory_looks_like_root_cause_card_point(text string) bool {
 
 fn memory_looks_like_process_or_debug_card_point(text string) bool {
 	lower := text.to_lower()
-	for marker in ['不能完整返回', '日志文件', 'stderr 输出', '看到崩溃前最后', '我现在修的就是',
-		'不需要再飘', '根因基本对上', '空 body', 'controller not bound',
-		'本地起内置 server', '被沙箱拦住', '不影响我们验证逻辑', '我不想凭感觉猜',
-		'我现在用这个真跑', '构建还在跑', '抢到了旧', '中间态', '这笔 commit',
-		'这笔提交', '收口验证', 'sigsegv', '真实炸栈'] {
+	for marker in ['不能完整返回', '日志文件', 'stderr 输出', '看到崩溃前最后',
+		'我现在修的就是', '不需要再飘', '根因基本对上', '空 body',
+		'controller not bound', '本地起内置 server', '被沙箱拦住',
+		'不影响我们验证逻辑', '我不想凭感觉猜', '我现在用这个真跑',
+		'构建还在跑', '抢到了旧', '中间态', '这笔 commit', '这笔提交',
+		'收口验证', 'sigsegv', '真实炸栈'] {
 		if lower.contains(marker) {
 			return true
 		}
@@ -3652,7 +4563,8 @@ pub fn (store PollyDbStore) ensure_search_schema() !bool {
 	defer {
 		db.close() or {}
 	}
-	changed := db.register_or_update_table(entries_spec(true)!)!
+	search_schema := codex_session_search_schema().schema()!
+	changed := db.register_or_update_table(search_schema.table('entries')!)!
 	if changed {
 		db.checkpoint()!
 	}
@@ -3660,12 +4572,12 @@ pub fn (store PollyDbStore) ensure_search_schema() !bool {
 }
 
 pub fn desired_search_index_names() ![]string {
-	spec := entries_spec(true)!
+	spec := codex_session_search_schema().schema()!.table('entries')!
 	return spec.indexes.map(it.name)
 }
 
 pub fn desired_entries_search_spec() !storage.TypedTableSpec {
-	return entries_spec(true)!
+	return codex_session_search_schema().schema()!.table('entries')
 }
 
 pub fn (store PollyDbStore) ensure_search_indexes() !bool {
@@ -3685,7 +4597,7 @@ pub fn (store PollyDbStore) ensure_search_indexes_with_progress_and_config(repor
 	defer {
 		db.close() or {}
 	}
-	search_spec := entries_spec(true)!
+	search_spec := codex_session_search_schema().schema()!.table('entries')!
 	needs_markdown_backfill := spec_has_markdown_fts_index(search_spec)
 	use_split_backed := cfg.enable_split_backed_working_set
 		&& !search_spec.indexes.any(it.is_field_selector())
@@ -3755,7 +4667,7 @@ pub fn (store PollyDbStore) ensure_search_indexes_with_progress_and_config(repor
 		rows_backfilled: backfill.rows_backfilled
 		backfill_ms:     backfill_ms
 	})
-	if (changed || force_rebuild) && store_branch in db.branch_names() {
+	if (changed || force_rebuild) && store_branch_exists(mut db) {
 		mut rebuild_sw := time.new_stopwatch()
 		db.rebuild_fts_indexes_at_branch(store_branch, ['entries'])!
 		rebuild_ms = rebuild_sw.elapsed().milliseconds()
@@ -3812,12 +4724,12 @@ fn spec_has_markdown_fts_index(spec storage.TypedTableSpec) bool {
 
 pub fn (store PollyDbStore) sync_codex(codex_root string) !SyncStats {
 	return store.sync_codex_with_options_and_progress_and_config(codex_root, SyncOptions{},
-		no_sync_progress, storage.ChunkConfig.default())
+		no_sync_progress, codex_sync_chunk_config())
 }
 
 pub fn (store PollyDbStore) sync_codex_with_progress(codex_root string, reporter SyncProgressReporter) !SyncStats {
 	return store.sync_codex_with_options_and_progress_and_config(codex_root, SyncOptions{},
-		reporter, storage.ChunkConfig.default())
+		reporter, codex_sync_chunk_config())
 }
 
 pub fn (store PollyDbStore) sync_codex_with_progress_and_config(codex_root string, reporter SyncProgressReporter, cfg storage.ChunkConfig) !SyncStats {
@@ -3830,8 +4742,13 @@ pub fn (store PollyDbStore) sync_codex_with_options_and_progress_and_config(code
 		reporter, cfg)
 }
 
+pub fn codex_sync_chunk_config() storage.ChunkConfig {
+	return storage.ChunkConfig.default().with_write_diff(false)
+}
+
 fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_config(codex_root string, options SyncOptions, reporter SyncProgressReporter, cfg storage.ChunkConfig) !SyncStats {
 	mut total_sw := time.new_stopwatch()
+	mut setup_sw := time.new_stopwatch()
 	mut paths := discover_codex_session_paths(codex_root)!
 	paths.sort()
 	paths.reverse_in_place()
@@ -3840,26 +4757,22 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 	}
 	mut title_by_id := load_codex_session_titles(codex_root)!
 	mut db := storage.PersistentDatabase.open(store.root_dir, store_branch)!
+	mut close_with_checkpoint := true
 	defer {
-		db.close() or {}
+		if close_with_checkpoint {
+			db.close() or {}
+		} else {
+			db.close_without_checkpoint()
+		}
 	}
-	mut existing := map[string]SessionSummary{}
-	mut existing_ingest := map[string]IngestState{}
 	existing_resume := load_sync_resume_state(mut db, 'codex_sync') or { SyncResumeState{} }
 	resume_anchor_present := existing_resume.last_completed_path.len > 0
 		&& existing_resume.last_completed_path in paths
-	if store_branch_exists(mut db) {
-		existing = load_existing_sessions_by_id(mut db) or {
-			map[string]SessionSummary{}
-		}
-		existing_ingest = load_existing_ingest_states_by_path(mut db) or {
-			map[string]IngestState{}
-		}
-	}
 	mut skipped := 0
 	batch_sessions := if options.batch_sessions > 0 { options.batch_sessions } else { 0 }
 	mut checkpoint_count := 0
 	empty_markdown := ingest_markdown_for_store(mut db, '')!
+	setup_ms := setup_sw.elapsed().milliseconds()
 	reporter(SyncProgress{
 		total_sessions:    paths.len
 		imported_sessions: 0
@@ -3868,6 +4781,7 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 		checkpoint_count:  checkpoint_count
 		batch_sessions:    batch_sessions
 		phase:             'start'
+		setup_ms:          setup_ms
 	})
 	mut entry_count := 0
 	mut processed := 0
@@ -3913,6 +4827,16 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 	mut total_commit_ms := i64(0)
 	mut total_checkpoint_ms := i64(0)
 	mut total_flush_ms := i64(0)
+	mut total_fts_ms := i64(0)
+	mut total_fts_text_us := i64(0)
+	mut total_fts_insert_us := i64(0)
+	mut total_fts_insert_fts_us := i64(0)
+	mut total_fts_commit_us := i64(0)
+	mut total_fts_ops := 0
+	mut total_fts_inserted := 0
+	mut total_prefetch_ms := i64(0)
+	mut total_resume_skip_ms := i64(0)
+	mut total_skip_ms := i64(0)
 	mut batch_imported := 0
 	mut last_completed_path := existing_resume.last_completed_path
 	mut last_completed_session_id := existing_resume.last_completed_session_id
@@ -3920,6 +4844,28 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 	mut stopped_after_batch := false
 	use_split_group_commit := cfg.enable_split_backed_working_set
 	mut seeded := store_branch_exists(mut db)
+	mut existing_ingest := map[string]IngestState{}
+	mut existing_sessions := map[string]SessionSummary{}
+	if seeded {
+		mut prefetch_sw := time.new_stopwatch()
+		prefetch_paths := codex_sync_prefetch_paths(paths, existing_resume, resume_anchor_present)
+		existing_ingest = load_existing_ingest_states_for_paths(mut db, prefetch_paths) or {
+			map[string]IngestState{}
+		}
+		mut seen_session_ids := map[string]bool{}
+		mut session_ids := []string{cap: existing_ingest.len}
+		for _, state in existing_ingest {
+			if state.session_id.len == 0 || state.session_id in seen_session_ids {
+				continue
+			}
+			seen_session_ids[state.session_id] = true
+			session_ids << state.session_id
+		}
+		existing_sessions = load_existing_sessions_for_ids(mut db, session_ids) or {
+			map[string]SessionSummary{}
+		}
+		total_prefetch_ms = prefetch_sw.elapsed().milliseconds()
+	}
 	mut active_group_commit := false
 	mut session := storage.GroupCommitSession{}
 	mut split_session := storage.SplitGroupCommitSession{}
@@ -3935,10 +4881,13 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 		active_group_commit = true
 	}
 	for path in paths {
+		mut loop_sw := time.new_stopwatch()
 		if waiting_for_resume_anchor {
 			skipped++
 			processed++
 			reached_anchor := path == existing_resume.last_completed_path
+			resume_skip_ms := loop_sw.elapsed().milliseconds()
+			total_resume_skip_ms += resume_skip_ms
 			reporter(SyncProgress{
 				total_sessions:     paths.len
 				processed_sessions: processed
@@ -3953,6 +4902,7 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 					''
 				}
 				phase:              'resume_skip'
+				resume_skip_ms:     resume_skip_ms
 			})
 			if reached_anchor {
 				waiting_for_resume_anchor = false
@@ -3964,12 +4914,23 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 		mut needs_import := true
 		mut current := SessionSummary{}
 		mut found_existing := false
-		state := existing_ingest[path] or { IngestState{} }
+		state := if seeded {
+			existing_ingest[path] or { IngestState{} }
+		} else {
+			IngestState{}
+		}
 		if state.path.len > 0 && state.source_mtime_unix == fingerprint.source_mtime_unix
 			&& state.source_size_bytes == fingerprint.source_size_bytes {
-			if candidate := existing[state.session_id] {
+			candidate := if state.session_id.len > 0 {
+				load_cached_or_existing_session(mut db, mut existing_sessions, state.session_id)
+			} else {
+				SessionSummary{}
+			}
+			if candidate.id.len > 0 {
 				skipped++
 				processed++
+				skip_ms := loop_sw.elapsed().milliseconds()
+				total_skip_ms += skip_ms
 				reporter(SyncProgress{
 					total_sessions:     paths.len
 					processed_sessions: processed
@@ -3981,6 +4942,7 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 					session_id:         candidate.id
 					session_title:      candidate.title
 					phase:              'skip'
+					skip_ms:            skip_ms
 				})
 				continue
 			}
@@ -3990,13 +4952,20 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 		} else {
 			session_id_from_path(path)
 		}
-		if candidate := existing[candidate_id] {
+		candidate := if seeded && candidate_id.len > 0 {
+			load_cached_or_existing_session(mut db, mut existing_sessions, candidate_id)
+		} else {
+			SessionSummary{}
+		}
+		if candidate.id.len > 0 {
 			current = candidate
 			found_existing = true
-		} else if existing.len > 0 {
+		} else if seeded {
 			summary = read_codex_session_summary(path, mut title_by_id)!
-			if candidate := existing[summary.id] {
-				current = candidate
+			summary_candidate := load_cached_or_existing_session(mut db, mut existing_sessions,
+				summary.id)
+			if summary_candidate.id.len > 0 {
+				current = summary_candidate
 				found_existing = true
 			}
 		}
@@ -4023,6 +4992,8 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 			}
 			skipped++
 			processed++
+			skip_ms := loop_sw.elapsed().milliseconds()
+			total_skip_ms += skip_ms
 			reporter(SyncProgress{
 				total_sessions:     paths.len
 				processed_sessions: processed
@@ -4034,6 +5005,7 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 				session_id:         summary.id
 				session_title:      summary.title
 				phase:              'skip'
+				skip_ms:            skip_ms
 			})
 			continue
 		}
@@ -4394,7 +5366,7 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 			source_mtime_unix: fingerprint.source_mtime_unix
 			source_size_bytes: fingerprint.source_size_bytes
 		}
-		existing[summary.id] = summary
+		existing_sessions[summary.id] = summary
 		apply_ms := apply_sw.elapsed().milliseconds()
 		total_apply_ms += apply_ms
 		total_tx_ms += tx_ms
@@ -4495,19 +5467,30 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 		last_completed_path = path
 		last_completed_session_id = summary.id
 		if batch_sessions > 0 && batch_imported >= batch_sessions {
-			flush_sync_batch(mut db, mut session, mut split_session, use_split_group_commit,
-				ingest_rows, cfg)!
-			ingest_rows = map[string]storage.TypedRowData{}
-			batch_imported = 0
-			active_group_commit = false
 			checkpoint_count++
-			write_sync_resume_state(mut db, SyncResumeState{
+			resume_state := SyncResumeState{
 				name:                      'codex_sync'
 				last_completed_path:       last_completed_path
 				last_completed_session_id: last_completed_session_id
 				completed_batches:         existing_resume.completed_batches + checkpoint_count
 				completed_sessions:        existing_resume.completed_sessions + imported
-			})!
+			}
+			flush_timings := flush_sync_batch(mut db, mut session, mut split_session,
+				use_split_group_commit, ingest_rows, resume_state, '', cfg)!
+			total_tx_ms += flush_timings.transaction_ms
+			total_commit_ms += flush_timings.commit_ms
+			total_checkpoint_ms += flush_timings.checkpoint_ms
+			total_flush_ms += flush_timings.flush_ms
+			total_fts_ms += flush_timings.fts_ms
+			total_fts_text_us += flush_timings.fts_text_us
+			total_fts_insert_us += flush_timings.fts_insert_us
+			total_fts_insert_fts_us += flush_timings.fts_insert_fts_us
+			total_fts_commit_us += flush_timings.fts_commit_us
+			total_fts_ops += flush_timings.fts_ops
+			total_fts_inserted += flush_timings.fts_inserted
+			ingest_rows = map[string]storage.TypedRowData{}
+			batch_imported = 0
+			active_group_commit = false
 			reporter(SyncProgress{
 				total_sessions:     paths.len
 				processed_sessions: processed
@@ -4520,28 +5503,42 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 				checkpoint_ms:      total_checkpoint_ms
 			})
 			stopped_after_batch = true
+			close_with_checkpoint = false
 			break
 		}
 	}
 	mut finish_sw := time.new_stopwatch()
 	if seeded && active_group_commit {
 		if ingest_rows.len > 0 || batch_imported > 0 || imported == 0 {
-			flush_sync_batch(mut db, mut session, mut split_session, use_split_group_commit,
-				ingest_rows, cfg)!
 			checkpoint_count++
-			if imported > 0 {
-				write_sync_resume_state(mut db, SyncResumeState{
+			resume_state := if stopped_after_batch && imported > 0 && batch_sessions > 0 {
+				SyncResumeState{
 					name:                      'codex_sync'
 					last_completed_path:       last_completed_path
 					last_completed_session_id: last_completed_session_id
 					completed_batches:         existing_resume.completed_batches + checkpoint_count
 					completed_sessions:        existing_resume.completed_sessions + imported
-				})!
+				}
+			} else {
+				SyncResumeState{}
 			}
+			clear_resume_name := if !stopped_after_batch { 'codex_sync' } else { '' }
+			flush_timings := flush_sync_batch(mut db, mut session, mut split_session,
+				use_split_group_commit, ingest_rows, resume_state, clear_resume_name, cfg)!
+			total_tx_ms += flush_timings.transaction_ms
+			total_commit_ms += flush_timings.commit_ms
+			total_checkpoint_ms += flush_timings.checkpoint_ms
+			total_flush_ms += flush_timings.flush_ms
+			total_fts_ms += flush_timings.fts_ms
+			total_fts_text_us += flush_timings.fts_text_us
+			total_fts_insert_us += flush_timings.fts_insert_us
+			total_fts_insert_fts_us += flush_timings.fts_insert_fts_us
+			total_fts_commit_us += flush_timings.fts_commit_us
+			total_fts_ops += flush_timings.fts_ops
+			total_fts_inserted += flush_timings.fts_inserted
 		}
 	}
 	if !stopped_after_batch {
-		clear_sync_resume_state(mut db, 'codex_sync')!
 		last_completed_path = ''
 		last_completed_session_id = ''
 	}
@@ -4597,6 +5594,17 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 		checkpoint_ms:                         total_checkpoint_ms
 		flush_ms:                              total_flush_ms
 		finish_ms:                             finish_ms
+		fts_ms:                                total_fts_ms
+		fts_text_us:                           total_fts_text_us
+		fts_insert_us:                         total_fts_insert_us
+		fts_insert_fts_us:                     total_fts_insert_fts_us
+		fts_commit_us:                         total_fts_commit_us
+		fts_ops:                               total_fts_ops
+		fts_inserted:                          total_fts_inserted
+		setup_ms:                              setup_ms
+		prefetch_ms:                           total_prefetch_ms
+		resume_skip_ms:                        total_resume_skip_ms
+		skip_ms:                               total_skip_ms
 		total_ms:                              total_sw.elapsed().milliseconds()
 	})
 	return SyncStats{
@@ -4658,25 +5666,55 @@ fn (store PollyDbStore) sync_codex_single_pass_with_options_and_progress_and_con
 		checkpoint_ms:                         total_checkpoint_ms
 		flush_ms:                              total_flush_ms
 		finish_ms:                             finish_ms
+		fts_ms:                                total_fts_ms
+		fts_text_us:                           total_fts_text_us
+		fts_insert_us:                         total_fts_insert_us
+		fts_insert_fts_us:                     total_fts_insert_fts_us
+		fts_commit_us:                         total_fts_commit_us
+		fts_ops:                               total_fts_ops
+		fts_inserted:                          total_fts_inserted
+		setup_ms:                              setup_ms
+		prefetch_ms:                           total_prefetch_ms
+		resume_skip_ms:                        total_resume_skip_ms
+		skip_ms:                               total_skip_ms
 		total_ms:                              total_sw.elapsed().milliseconds()
 	}
 }
 
-fn flush_sync_batch(mut db storage.PersistentDatabase, mut session storage.GroupCommitSession, mut split_session storage.SplitGroupCommitSession, use_split_group_commit bool, ingest_rows map[string]storage.TypedRowData, cfg storage.ChunkConfig) ! {
+fn flush_sync_batch(mut db storage.PersistentDatabase, mut session storage.GroupCommitSession, mut split_session storage.SplitGroupCommitSession, use_split_group_commit bool, ingest_rows map[string]storage.TypedRowData, resume_state SyncResumeState, clear_resume_name string, cfg storage.ChunkConfig) !storage.GroupCommitStageTimings {
 	if use_split_group_commit {
 		if ingest_rows.len > 0 {
 			_ = split_session.put_rows(mut db, 'ingest_state', ingest_rows, cfg,
 				sync_meta('sync ingest state'))!
 		}
-		split_session.finish(mut db)!
+		if resume_state.name.len > 0 {
+			mut resume_rows := map[string]storage.TypedRowData{}
+			resume_rows[resume_state.name] = build_sync_resume_state_row(resume_state)
+			_ = split_session.put_rows(mut db, 'sync_resume_state', resume_rows, cfg,
+				sync_meta('sync resume state ${resume_state.name}'))!
+		}
+		if clear_resume_name.len > 0 {
+			_ = split_session.delete_rows(mut db, 'sync_resume_state', [
+				clear_resume_name.bytes(),
+			], cfg, sync_meta('clear resume state ${clear_resume_name}'))!
+		}
+		return split_session.finish_with_timings(mut db)!
 	} else {
 		if ingest_rows.len > 0 {
 			_ = session.put_rows(mut db, 'ingest_state', ingest_rows, cfg,
 				sync_meta('sync ingest state'))!
 		}
-		session.finish(mut db)!
+		if resume_state.name.len > 0 {
+			_ = session.put_row(mut db, 'sync_resume_state', resume_state.name.bytes(),
+				build_sync_resume_state_row(resume_state), cfg,
+				sync_meta('sync resume state ${resume_state.name}'))!
+		}
+		if clear_resume_name.len > 0 {
+			_ = session.delete_row(mut db, 'sync_resume_state', clear_resume_name.bytes(), cfg,
+				sync_meta('clear resume state ${clear_resume_name}'))!
+		}
+		return session.finish_with_timings(mut db)!
 	}
-	db.checkpoint()!
 }
 
 fn no_sync_progress(_ SyncProgress) {}
@@ -4719,28 +5757,18 @@ fn list_sessions_page_in_session(mut db storage.PersistentDatabase, session stor
 		&& request.include_archived {
 		fetch_limit := max_int(request.offset + max_int(request.limit, 0),
 			max_int(request.limit, 0))
-		mut query_db := queryapi.open_database(db.root_dir, session.branch_name)!
-		defer {
-			query_db.close() or {}
-		}
-		query_session := query_db.begin_session(session.branch_name)!
-		profile := queryapi.query_page_profiled(query_session, mut query_db, queryapi.Request{
-			table_name:     'sessions'
-			order_by:       queryapi.Order{
-				column_name: 'updated_at'
-				direction:   .desc
-			}
-			select_columns: session_summary_select_columns
-			limit:          fetch_limit
-		})!
-		page := profile.page
-		mut out := []SessionSummary{cap: page.rows.len}
-		for row in page.rows {
-			out << decode_session_summary_query(row)!
+		mut fetch_sw := time.new_stopwatch()
+		rows := session.lookup_index_between_reverse_projected(mut db, 'sessions',
+			'updated_at_cover_idx', session_list_min_updated_at, session_list_max_updated_at,
+			fetch_limit, session_summary_select_columns)!
+		fetch_ms := fetch_sw.elapsed().milliseconds()
+		mut out := []SessionSummary{cap: rows.len}
+		for row in rows {
+			out << decode_session_summary(row)!
 		}
 		start := clamp_offset(request.offset, out.len)
 		end := clamp_limit(start, request.limit, out.len)
-		lower_bound_total := if page.cursor.has_more {
+		lower_bound_total := if rows.len == fetch_limit && fetch_limit > 0 {
 			request.offset + out.len + 1
 		} else {
 			out.len
@@ -4753,7 +5781,11 @@ fn list_sessions_page_in_session(mut db storage.PersistentDatabase, session stor
 			explain:                explain_session_list_path(session.table_spec('sessions') or {
 				storage.TypedTableSpec{}
 			}, request)
-			query:                  profile.timings
+			query:                  queryapi.ExecutionTimings{
+				total_ms:      fetch_ms
+				fetch_ms:      fetch_ms
+				returned_rows: max_int(end - start, 0)
+			}
 			open_ms:                open_timings.total_ms
 			open_backends_ms:       open_timings.backends_ms
 			open_catalog_ms:        open_timings.catalog_ms
@@ -4831,23 +5863,24 @@ pub fn (store PollyDbStore) explain_browser_queries(session_request SessionListR
 		db.close() or {}
 	}
 	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
-	sessions_spec := session.table_spec('sessions') or { storage.TypedTableSpec{} }
-	entries_spec := session.table_spec('entries') or { storage.TypedTableSpec{} }
+	sessions_table_spec := session.table_spec('sessions') or { storage.TypedTableSpec{} }
+	entries_table_spec := session.table_spec('entries') or { storage.TypedTableSpec{} }
 	return BrowserQueryExplain{
-		sessions:   explain_session_list_path(sessions_spec, session_request)
-		transcript: explain_transcript_path(entries_spec, transcript_request)
-		search:     explain_search_path(entries_spec, search_request)
+		sessions:   explain_session_list_path(sessions_table_spec, session_request)
+		transcript: explain_transcript_path(entries_table_spec, transcript_request)
+		search:     explain_search_path(entries_table_spec, search_request)
 	}
 }
 
 fn recent_entry_rows(mut db storage.PersistentDatabase, session storage.DatabaseSession, recent_sessions int) ![]storage.TypedSchemaRow {
 	mut session_rows := []storage.TypedSchemaRow{}
-	sessions_spec := session.table_spec('sessions') or { storage.TypedTableSpec{} }
-	if table_has_index(sessions_spec, 'updated_at_cover_idx') {
+	sessions_table_spec := session.table_spec('sessions') or { storage.TypedTableSpec{} }
+	if recent_sessions > 0 && table_has_index(sessions_table_spec, 'updated_at_cover_idx') {
 		session_rows = session.lookup_index_between_reverse_projected(mut db, 'sessions',
 			'updated_at_cover_idx', session_list_min_updated_at, session_list_max_updated_at,
 			recent_sessions, ['id', 'updated_at']) or { []storage.TypedSchemaRow{} }
 	} else {
+		// recent_sessions <= 0 表示全量模式：获取所有 session
 		session_rows = session.scan_table(mut db, 'sessions', 0)!
 		session_rows.sort_with_compare(fn (a &storage.TypedSchemaRow, b &storage.TypedSchemaRow) int {
 			a_updated := agentview_optional_row_string(*a, 'updated_at')
@@ -4860,7 +5893,7 @@ fn recent_entry_rows(mut db storage.PersistentDatabase, session storage.Database
 			}
 			return 0
 		})
-		if session_rows.len > recent_sessions {
+		if recent_sessions > 0 && session_rows.len > recent_sessions {
 			session_rows = session_rows[..recent_sessions].clone()
 		}
 	}
@@ -5100,52 +6133,96 @@ fn load_transcript_page_in_session(mut db storage.PersistentDatabase, session st
 	session_row := session.get_row(mut db, 'sessions', request.session_id.bytes())!
 	summary := decode_session_summary(session_row)!
 	summary_lookup_ms := summary_sw.elapsed().milliseconds()
+	if request.limit > 0 && request.offset >= 0 {
+		mut page_sw := time.new_stopwatch()
+		start := max_int(request.offset, 0)
+		total_hint := max_int(summary.entry_count, start)
+		end := min_int(start + request.limit, total_hint)
+		mut page_entries := []SessionEntry{cap: max_int(end - start, 0)}
+		mut complete_page := true
+		for seq in start .. end {
+			entry_id := '${request.session_id}:${seq}'
+			row := session.get_row(mut db, 'entries', entry_id.bytes()) or {
+				complete_page = false
+				break
+			}
+			page_entries << decode_session_entry_with_markdown(mut db, row)!
+		}
+		if complete_page {
+			page_ms := page_sw.elapsed().milliseconds()
+			return TranscriptExecution{
+				result:                 TranscriptPage{
+					summary:       summary
+					total_entries: total_hint
+					entries:       page_entries
+				}
+				explain:                explain_transcript_path(session.table_spec('entries') or {
+					storage.TypedTableSpec{}
+				}, request)
+				open_ms:                open_timings.total_ms
+				open_backends_ms:       open_timings.backends_ms
+				open_catalog_ms:        open_timings.catalog_ms
+				open_engine_ms:         open_timings.engine.total_ms
+				open_replay_journal_ms: open_timings.engine.repository.replay_journal_ms
+				open_repo_meta_ms:      open_timings.engine.repository.repository_meta_ms
+				open_node_store_ms:     open_timings.engine.repository.node_store_ms
+				open_commit_store_ms:   open_timings.engine.repository.commit_store_ms
+				session_ms:             session_ms
+				summary_lookup_ms:      summary_lookup_ms
+				index_lookup_ms:        0
+				decode_ms:              0
+				order_ms:               0
+				markdown_ms:            page_ms
+				total_ms:               total_sw.elapsed().milliseconds()
+			}
+		}
+	}
 	mut index_sw := time.new_stopwatch()
 	rows := if table_has_index(session.table_spec('entries') or { storage.TypedTableSpec{} },
 		'entries_session_cover_idx')
 	{
 		session.lookup_index_projected(mut db, 'entries', 'entries_session_cover_idx',
-			request.session_id, 0, transcript_entry_select_columns)!
+			request.session_id, 0, transcript_entry_order_select_columns)!
 	} else {
 		session.lookup_index(mut db, 'entries', 'entries_session_idx', request.session_id, 0)!
 	}
 	index_lookup_ms := index_sw.elapsed().milliseconds()
 	mut decode_sw := time.new_stopwatch()
 	mut order_sw := time.new_stopwatch()
-	mut entries := []SessionEntry{cap: rows.len}
-	mut page_rows := []storage.TypedSchemaRow{}
+	mut order_rows := []TranscriptEntryOrderRow{cap: rows.len}
 	for row in rows {
-		entries << decode_session_entry(row)!
-		page_rows << row
+		order_rows << TranscriptEntryOrderRow{
+			seq:         int(must_i64(row, 'seq')!)
+			primary_key: row.primary_key.clone()
+		}
 	}
 	decode_ms := decode_sw.elapsed().milliseconds()
-	mut ordered := []SessionEntry{cap: entries.len}
-	mut ordered_rows := []storage.TypedSchemaRow{cap: page_rows.len}
-	mut order := []int{cap: entries.len}
-	for idx in 0 .. entries.len {
+	mut ordered_rows := []TranscriptEntryOrderRow{cap: order_rows.len}
+	mut order := []int{cap: order_rows.len}
+	for idx in 0 .. order_rows.len {
 		order << idx
 	}
-	order.sort_with_compare(fn [entries] (a &int, b &int) int {
-		if entries[*a].seq < entries[*b].seq {
+	order.sort_with_compare(fn [order_rows] (a &int, b &int) int {
+		if order_rows[*a].seq < order_rows[*b].seq {
 			return -1
 		}
-		if entries[*a].seq > entries[*b].seq {
+		if order_rows[*a].seq > order_rows[*b].seq {
 			return 1
 		}
 		return 0
 	})
 	for idx in order {
-		ordered << entries[idx]
-		ordered_rows << page_rows[idx]
+		ordered_rows << order_rows[idx]
 	}
 	order_ms := order_sw.elapsed().milliseconds()
-	total := ordered.len
+	total := ordered_rows.len
 	start := clamp_offset(request.offset, total)
 	end := clamp_limit(start, request.limit, total)
 	mut markdown_sw := time.new_stopwatch()
 	mut page_entries := []SessionEntry{cap: max_int(end - start, 0)}
 	for idx in start .. end {
-		page_entries << decode_session_entry_with_markdown(mut db, ordered_rows[idx])!
+		row := session.get_row(mut db, 'entries', ordered_rows[idx].primary_key)!
+		page_entries << decode_session_entry_with_markdown(mut db, row)!
 	}
 	markdown_ms := markdown_sw.elapsed().milliseconds()
 	return TranscriptExecution{
@@ -5235,7 +6312,7 @@ pub fn (store PollyDbStore) search_entries_explained(request SearchRequest) !Sea
 
 fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.DatabaseSession, request SearchRequest, query string, terms []string, open_timings storage.PersistentDatabaseOpenTimings, session_ms i64, mut total_sw time.StopWatch) !SearchExecution {
 	mut session_summary_ms := i64(0)
-	entries_spec := session.table_spec('entries') or { storage.TypedTableSpec{} }
+	entries_table_spec := session.table_spec('entries') or { storage.TypedTableSpec{} }
 	mut ranked := []RankedSearchHit{}
 	mut seen := map[string]bool{}
 	mut candidate_rows := []queryapi.QueryRow{}
@@ -5246,7 +6323,7 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 	mut filter_rank_ms := i64(0)
 	mut fts_pages := []queryapi.CursorPage{}
 	for index_name in agentview_general_fts_indexes {
-		if !table_has_index(entries_spec, index_name) {
+		if !table_has_index(entries_table_spec, index_name) {
 			continue
 		}
 		used_fts = true
@@ -5269,6 +6346,7 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 			}
 			select_columns: [
 				'id',
+				'agent',
 				'session_id',
 				'session_title',
 				'seq',
@@ -5385,7 +6463,7 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 				result:                 result
 				explain:                QueryPathExplain{
 					strategy:   'session_index_substring'
-					index_name: if table_has_index(entries_spec, 'entries_session_cover_idx') {
+					index_name: if table_has_index(entries_table_spec, 'entries_session_cover_idx') {
 						'entries_session_cover_idx'
 					} else {
 						'entries_session_idx'
@@ -5434,92 +6512,13 @@ fn search_entries_in_session(mut db storage.PersistentDatabase, session storage.
 				result:                 result
 				explain:                QueryPathExplain{
 					strategy:   'preferred_session_substring'
-					index_name: if table_has_index(entries_spec, 'entries_session_cover_idx') {
+					index_name: if table_has_index(entries_table_spec, 'entries_session_cover_idx') {
 						'entries_session_cover_idx'
 					} else {
 						'entries_session_idx'
 					}
 					notes:      [
 						'no FTS hits; search fell back to substring matching inside the currently open session',
-					]
-				}
-				open_ms:                open_timings.total_ms
-				open_backends_ms:       open_timings.backends_ms
-				open_catalog_ms:        open_timings.catalog_ms
-				open_engine_ms:         open_timings.engine.total_ms
-				open_replay_journal_ms: open_timings.engine.repository.replay_journal_ms
-				open_repo_meta_ms:      open_timings.engine.repository.repository_meta_ms
-				open_node_store_ms:     open_timings.engine.repository.node_store_ms
-				open_commit_store_ms:   open_timings.engine.repository.commit_store_ms
-				session_ms:             session_ms
-				session_summary_ms:     session_summary_ms
-				fts_lookup_ms:          fts_lookup_ms
-				filter_rank_ms:         filter_rank_ms
-				paginate_ms:            paginate_ms
-				total_ms:               total_sw.elapsed().milliseconds()
-			}
-		}
-	}
-	if request.session_id.len == 0 {
-		mut recent_sw := time.new_stopwatch()
-		ranked = collect_recent_session_body_search_hits(mut db, session, request, query, terms)!
-		filter_rank_ms += recent_sw.elapsed().milliseconds()
-		if ranked.len > 0 {
-			mut paginate_sw := time.new_stopwatch()
-			result := paginate_ranked_search_hits(ranked, request)
-			paginate_ms := paginate_sw.elapsed().milliseconds()
-			return SearchExecution{
-				result:                 result
-				explain:                QueryPathExplain{
-					strategy:   'recent_sessions_substring'
-					index_name: if table_has_index(entries_spec, 'entries_session_cover_idx') {
-						'updated_at_cover_idx+entries_session_cover_idx'
-					} else {
-						'updated_at_cover_idx+entries_session_idx'
-					}
-					notes:      [
-						'no FTS hits; search fell back to substring matching across recent session bodies',
-					]
-				}
-				open_ms:                open_timings.total_ms
-				open_backends_ms:       open_timings.backends_ms
-				open_catalog_ms:        open_timings.catalog_ms
-				open_engine_ms:         open_timings.engine.total_ms
-				open_replay_journal_ms: open_timings.engine.repository.replay_journal_ms
-				open_repo_meta_ms:      open_timings.engine.repository.repository_meta_ms
-				open_node_store_ms:     open_timings.engine.repository.node_store_ms
-				open_commit_store_ms:   open_timings.engine.repository.commit_store_ms
-				session_ms:             session_ms
-				session_summary_ms:     session_summary_ms
-				fts_lookup_ms:          fts_lookup_ms
-				filter_rank_ms:         filter_rank_ms
-				paginate_ms:            paginate_ms
-				total_ms:               total_sw.elapsed().milliseconds()
-			}
-		}
-	}
-	if request.session_id.len == 0 {
-		mut metadata_sw := time.new_stopwatch()
-		ranked = collect_session_metadata_search_hits(mut db, session, request, query, terms)!
-		filter_rank_ms += metadata_sw.elapsed().milliseconds()
-		if ranked.len > 0 {
-			mut paginate_sw := time.new_stopwatch()
-			result := paginate_ranked_search_hits(ranked, request)
-			paginate_ms := paginate_sw.elapsed().milliseconds()
-			return SearchExecution{
-				result:                 result
-				explain:                QueryPathExplain{
-					strategy:   'session_metadata_substring'
-					index_name: if table_has_index(session.table_spec('sessions') or {
-						storage.TypedTableSpec{}
-					}, 'updated_at_cover_idx')
-					{
-						'updated_at_cover_idx'
-					} else {
-						''
-					}
-					notes:      [
-						'no FTS hits; search fell back to session title/cwd/source/path substring matching',
 					]
 				}
 				open_ms:                open_timings.total_ms
@@ -5597,6 +6596,7 @@ fn collect_session_local_search_hits(mut db storage.PersistentDatabase, session 
 		session.lookup_index_projected(mut db, 'entries', 'entries_session_cover_idx',
 			request.session_id, 0, [
 			'id',
+			'agent',
 			'session_id',
 			'session_title',
 			'seq',
@@ -5748,147 +6748,6 @@ struct SourceFingerprint {
 	source_size_bytes i64
 }
 
-fn sessions_spec() !storage.TypedTableSpec {
-	table := storage.TableDef.new('sessions', [
-		storage.ColumnDef.new('id', .string_, false)!,
-		storage.ColumnDef.new('title', .string_, false)!,
-		storage.ColumnDef.new('updated_at', .datetime_, false)!,
-		storage.ColumnDef.new('started_at', .datetime_, true)!,
-		storage.ColumnDef.new('cwd', .string_, true)!,
-		storage.ColumnDef.new('source', .string_, true)!,
-		storage.ColumnDef.new('originator', .string_, true)!,
-		storage.ColumnDef.new('cli_version', .string_, true)!,
-		storage.ColumnDef.new('path', .string_, false)!,
-		storage.ColumnDef.new('archived', .bool_, false)!,
-		storage.ColumnDef.new('entry_count', .i64_, false)!,
-		storage.ColumnDef.new('user_turns', .i64_, false)!,
-		storage.ColumnDef.new('tool_calls', .i64_, false)!,
-	], ['id'])!
-	return storage.TypedTableSpec.new(table, [
-		storage.SchemaIndexDef.new('updated_at_idx', 'updated_at')!,
-		storage.SchemaIndexDef.covering('updated_at_cover_idx', 'updated_at')!,
-		storage.SchemaIndexDef.new('path_idx', 'path')!,
-	])!
-}
-
-fn ingest_state_spec() !storage.TypedTableSpec {
-	table := storage.TableDef.new('ingest_state', [
-		storage.ColumnDef.new('path', .string_, false)!,
-		storage.ColumnDef.new('session_id', .string_, false)!,
-		storage.ColumnDef.new('source_mtime_unix', .i64_, false)!,
-		storage.ColumnDef.new('source_size_bytes', .i64_, false)!,
-	], ['path'])!
-	return storage.TypedTableSpec.new(table, [
-		storage.SchemaIndexDef.new('ingest_session_idx', 'session_id')!,
-	])!
-}
-
-fn search_state_spec() !storage.TypedTableSpec {
-	table := storage.TableDef.new('search_state', [
-		storage.ColumnDef.new('session_id', .string_, false)!,
-		storage.ColumnDef.new('source_mtime_unix', .i64_, false)!,
-		storage.ColumnDef.new('source_size_bytes', .i64_, false)!,
-	], ['session_id'])!
-	return storage.TypedTableSpec.new(table, []storage.SchemaIndexDef{})!
-}
-
-fn search_meta_state_spec() !storage.TypedTableSpec {
-	table := storage.TableDef.new('search_meta_state', [
-		storage.ColumnDef.new('name', .string_, false)!,
-		storage.ColumnDef.new('value', .string_, false)!,
-	], ['name'])!
-	return storage.TypedTableSpec.new(table, []storage.SchemaIndexDef{})!
-}
-
-fn sync_resume_state_spec() !storage.TypedTableSpec {
-	table := storage.TableDef.new('sync_resume_state', [
-		storage.ColumnDef.new('name', .string_, false)!,
-		storage.ColumnDef.new('last_completed_path', .string_, false)!,
-		storage.ColumnDef.new('last_completed_session_id', .string_, false)!,
-		storage.ColumnDef.new('completed_batches', .i64_, false)!,
-		storage.ColumnDef.new('completed_sessions', .i64_, false)!,
-	], ['name'])!
-	return storage.TypedTableSpec.new(table, []storage.SchemaIndexDef{})!
-}
-
-fn entry_ingest_state_spec() !storage.TypedTableSpec {
-	table := storage.TableDef.new('entry_ingest_state', [
-		storage.ColumnDef.new('id', .string_, false)!,
-		storage.ColumnDef.new('session_id', .string_, false)!,
-		storage.ColumnDef.new('entry_hash', .string_, false)!,
-	], ['id'])!
-	return storage.TypedTableSpec.new(table, [
-		storage.SchemaIndexDef.new('entry_ingest_session_idx', 'session_id')!,
-	])!
-}
-
-fn entry_search_state_spec() !storage.TypedTableSpec {
-	table := storage.TableDef.new('entry_search_state', [
-		storage.ColumnDef.new('id', .string_, false)!,
-		storage.ColumnDef.new('session_id', .string_, false)!,
-		storage.ColumnDef.new('entry_hash', .string_, false)!,
-	], ['id'])!
-	return storage.TypedTableSpec.new(table, [
-		storage.SchemaIndexDef.new('entry_search_session_idx', 'session_id')!,
-	])!
-}
-
-fn entries_spec(include_search_indexes bool) !storage.TypedTableSpec {
-	table := storage.TableDef.new('entries', [
-		storage.ColumnDef.new('id', .string_, false)!,
-		storage.ColumnDef.new('session_id', .string_, false)!,
-		storage.ColumnDef.new('session_title', .string_, false)!,
-		storage.ColumnDef.new('seq', .i64_, false)!,
-		storage.ColumnDef.new('timestamp', .datetime_, false)!,
-		storage.ColumnDef.new('role', .string_, false)!,
-		storage.ColumnDef.new('kind', .string_, false)!,
-		storage.ColumnDef.new('tool_name', .string_, true)!,
-		storage.ColumnDef.new('call_id', .string_, true)!,
-		storage.ColumnDef.new('title', .string_, true)!,
-		storage.ColumnDef.new('content_text', .string_, false)!,
-		storage.ColumnDef.new('content_md', .markdown_, false)!,
-		storage.ColumnDef.new('raw_type', .string_, true)!,
-		storage.ColumnDef.new('phase', .string_, true)!,
-	], ['id'])!
-	mut indexes := [
-		storage.SchemaIndexDef.new('entries_session_idx', 'session_id')!,
-		storage.SchemaIndexDef.covering('entries_session_cover_idx', 'session_id')!,
-		storage.SchemaIndexDef.new('entries_timestamp_idx', 'timestamp')!,
-	]
-	if include_search_indexes {
-		indexes << storage.SchemaIndexDef.fts_with_options('entries_content_text_fts_idx',
-			'content_text', storage.FtsIndexOptions{
-			tokenizer:      'unicode61 remove_diacritics 2'
-			prefix_lengths: [2, 3, 4]
-		})!
-	}
-	return storage.TypedTableSpec.new(table, indexes)!
-}
-
-fn entries_memory_spec(include_search_indexes bool) !storage.TypedTableSpec {
-	base := entries_spec(include_search_indexes)!
-	mut indexes := base.indexes.clone()
-	indexes << storage.SchemaIndexDef.embedding_markdown('entries_content_block_vec_idx',
-		'content_md', memory.MarkdownEmbeddingScope.block, 'bge-small-zh-v1.5')!
-	indexes << storage.SchemaIndexDef.embedding_markdown(agentview_memory_path_index, 'content_md',
-		memory.MarkdownEmbeddingScope.path, 'bge-small-zh-v1.5')!
-	return storage.TypedTableSpec.new(base.table, indexes)
-}
-
-fn ensure_agentview_memory_capability(mut db storage.PersistentDatabase) !bool {
-	for capability in db.memory_capabilities_for_table(agentview_memory_capability_table) {
-		if capability.column_name == agentview_memory_capability_column {
-			return false
-		}
-	}
-	db.register_memory_capability(storage.MemoryCapabilityDef.reflective_field(agentview_memory_capability_table,
-		agentview_memory_capability_column, storage.ReflectionOptions{
-		embedding_index: agentview_memory_path_index
-		reflection_kind: 'summary'
-	})!)!
-	return true
-}
-
 fn put_session_summary(mut db storage.PersistentDatabase, mut session storage.GroupCommitSession, summary SessionSummary) ! {
 	row := build_session_row(summary)
 	_ = session.put_row(mut db, 'sessions', summary.id.bytes(), row, storage.ChunkConfig.default(),
@@ -5914,6 +6773,7 @@ fn build_session_entry_row(summary SessionSummary, entry SessionEntry, empty_mar
 	entry_id := '${summary.id}:${entry.seq}'
 	mut row := storage.TypedRowData.new()
 	row.set('id', entry_id)
+	row.set('agent', if summary.source.len > 0 { summary.source } else { 'codex' })
 	row.set('session_id', summary.id)
 	row.set('session_title', summary.title)
 	row.set('seq', i64(entry.seq))
@@ -6052,12 +6912,7 @@ fn backfill_search_markdown_for_entries_with_config(mut db storage.PersistentDat
 }
 
 fn ingest_markdown_for_store(mut db storage.PersistentDatabase, text string) !storage.MarkdownRef {
-	stored := storage.ingest_external_field_value(mut db, storage.ColumnDef.new('content_md',
-		.markdown_, false)!, text)!
-	return match stored {
-		storage.MarkdownRef { stored }
-		else { return error('expected markdown ref from external storage ingest') }
-	}
+	return db.ingest_markdown_source_only(text)
 }
 
 fn sync_meta(message string) storage.CommitMeta {
@@ -6069,7 +6924,8 @@ fn sync_meta(message string) storage.CommitMeta {
 }
 
 fn store_branch_exists(mut db storage.PersistentDatabase) bool {
-	return store_branch in db.branch_names()
+	branch := db.branch(store_branch) or { return false }
+	return branch.commit_cid.len > 0
 }
 
 fn seed_store_branch(mut db storage.PersistentDatabase, summary SessionSummary) ! {
@@ -6144,7 +7000,7 @@ fn build_search_meta_state_row(name string, value string) storage.TypedRowData {
 
 fn fingerprint_session_entry_row(row storage.TypedRowData) string {
 	mut parts := []string{}
-	for column in ['id', 'session_id', 'session_title', 'seq', 'timestamp', 'role', 'kind',
+	for column in ['id', 'agent', 'session_id', 'session_title', 'seq', 'timestamp', 'role', 'kind',
 		'tool_name', 'call_id', 'title', 'content_text', 'raw_type', 'phase'] {
 		value := row.get(column) or { storage.NullValue{} }
 		parts << '${value}'
@@ -6199,6 +7055,64 @@ fn load_existing_sessions_by_id(mut db storage.PersistentDatabase) !map[string]S
 	return out
 }
 
+fn load_existing_session_by_id(mut db storage.PersistentDatabase, session_id string) !SessionSummary {
+	if session_id.len == 0 {
+		return SessionSummary{}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	row := session.get_row(mut db, 'sessions', session_id.bytes()) or { return SessionSummary{} }
+	return decode_session_summary(row) or { SessionSummary{} }
+}
+
+fn load_cached_or_existing_session(mut db storage.PersistentDatabase, mut cache map[string]SessionSummary, session_id string) SessionSummary {
+	if session_id.len == 0 {
+		return SessionSummary{}
+	}
+	if session_id in cache {
+		return cache[session_id]
+	}
+	summary := load_existing_session_by_id(mut db, session_id) or { SessionSummary{} }
+	if summary.id.len > 0 {
+		cache[summary.id] = summary
+	}
+	return summary
+}
+
+fn codex_sync_prefetch_paths(paths []string, resume SyncResumeState, resume_anchor_present bool) []string {
+	if !resume_anchor_present {
+		return paths.clone()
+	}
+	mut start := paths.len
+	for idx, path in paths {
+		if path == resume.last_completed_path {
+			start = idx + 1
+			break
+		}
+	}
+	if start >= paths.len {
+		return []string{}
+	}
+	return paths[start..].clone()
+}
+
+fn load_existing_sessions_for_ids(mut db storage.PersistentDatabase, session_ids []string) !map[string]SessionSummary {
+	mut out := map[string]SessionSummary{}
+	if session_ids.len == 0 {
+		return out
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	mut reader := session.table_reader(mut db, 'sessions') or { return out }
+	for session_id in session_ids {
+		if session_id.len == 0 {
+			continue
+		}
+		row := reader.get_row(session_id.bytes()) or { continue }
+		summary := decode_session_summary(row) or { continue }
+		out[summary.id] = summary
+	}
+	return out
+}
+
 fn decode_ingest_state(row storage.TypedSchemaRow) !IngestState {
 	return IngestState{
 		path:              must_string(row, 'path')!
@@ -6213,6 +7127,33 @@ fn load_existing_ingest_states_by_path(mut db storage.PersistentDatabase) !map[s
 	rows := session.scan_table(mut db, 'ingest_state', 0) or { return map[string]IngestState{} }
 	mut out := map[string]IngestState{}
 	for row in rows {
+		state := decode_ingest_state(row) or { continue }
+		out[state.path] = state
+	}
+	return out
+}
+
+fn load_existing_ingest_state_by_path(mut db storage.PersistentDatabase, path string) !IngestState {
+	if path.len == 0 {
+		return IngestState{}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	row := session.get_row(mut db, 'ingest_state', path.bytes()) or { return IngestState{} }
+	return decode_ingest_state(row) or { IngestState{} }
+}
+
+fn load_existing_ingest_states_for_paths(mut db storage.PersistentDatabase, paths []string) !map[string]IngestState {
+	mut out := map[string]IngestState{}
+	if paths.len == 0 {
+		return out
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch))!
+	mut reader := session.table_reader(mut db, 'ingest_state') or { return out }
+	for path in paths {
+		if path.len == 0 {
+			continue
+		}
+		row := reader.get_row(path.bytes()) or { continue }
 		state := decode_ingest_state(row) or { continue }
 		out[state.path] = state
 	}
@@ -6296,26 +7237,44 @@ fn load_sync_resume_state(mut db storage.PersistentDatabase, name string) !SyncR
 	return decode_sync_resume_state(row)!
 }
 
-fn write_sync_resume_state(mut db storage.PersistentDatabase, state SyncResumeState) ! {
+fn write_sync_resume_state(mut db storage.PersistentDatabase, state SyncResumeState, use_split_group_commit bool, cfg storage.ChunkConfig) ! {
 	if state.name.len == 0 {
+		return
+	}
+	if use_split_group_commit {
+		mut rows := map[string]storage.TypedRowData{}
+		rows[state.name] = build_sync_resume_state_row(state)
+		mut session := db.begin_split_group_commit_session(storage.SessionOptions.for_branch(store_branch),
+			storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512), cfg)!
+		_ = session.put_rows(mut db, 'sync_resume_state', rows, cfg,
+			sync_meta('sync resume state ${state.name}'))!
+		session.finish(mut db)!
 		return
 	}
 	mut session := db.begin_group_commit_session(storage.SessionOptions.for_branch(store_branch),
 		storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
 	_ = session.put_row(mut db, 'sync_resume_state', state.name.bytes(),
-		build_sync_resume_state_row(state), storage.ChunkConfig.default(),
-		sync_meta('sync resume state ${state.name}'))!
+		build_sync_resume_state_row(state), cfg, sync_meta('sync resume state ${state.name}'))!
 	session.finish(mut db)!
 }
 
-fn clear_sync_resume_state(mut db storage.PersistentDatabase, name string) ! {
+fn clear_sync_resume_state(mut db storage.PersistentDatabase, name string, use_split_group_commit bool, cfg storage.ChunkConfig) ! {
 	if name.len == 0 {
+		return
+	}
+	if use_split_group_commit {
+		mut session := db.begin_split_group_commit_session(storage.SessionOptions.for_branch(store_branch),
+			storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512), cfg)!
+		_ = session.delete_rows(mut db, 'sync_resume_state', [
+			name.bytes(),
+		], cfg, sync_meta('clear resume state ${name}'))!
+		session.finish(mut db)!
 		return
 	}
 	mut session := db.begin_group_commit_session(storage.SessionOptions.for_branch(store_branch),
 		storage.GroupCommitOptions.high_throughput().with_checkpoint_every(512))!
-	_ = session.delete_row(mut db, 'sync_resume_state', name.bytes(),
-		storage.ChunkConfig.default(), sync_meta('clear resume state ${name}'))!
+	_ = session.delete_row(mut db, 'sync_resume_state', name.bytes(), cfg,
+		sync_meta('clear resume state ${name}'))!
 	session.finish(mut db)!
 }
 
@@ -6563,6 +7522,7 @@ fn build_session_row(summary SessionSummary) storage.TypedRowData {
 fn decode_session_entry(row storage.TypedSchemaRow) !SessionEntry {
 	return SessionEntry{
 		seq:       int(must_i64(row, 'seq')!)
+		agent:     if opt_string(row, 'agent').len > 0 { opt_string(row, 'agent') } else { 'codex' }
 		timestamp: must_string(row, 'timestamp')!
 		kind:      parse_entry_kind(must_string(row, 'kind')!)
 		role:      must_string(row, 'role')!
@@ -7115,6 +8075,15 @@ fn paginate_ranked_search_hits(hits []RankedSearchHit, request SearchRequest) Se
 		total: total
 		hits:  out
 	}
+}
+
+fn anchor_cwd(mut db storage.PersistentDatabase, session_id string) string {
+	if session_id.len == 0 {
+		return ''
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch(store_branch)) or { return '' }
+	row := session.get_row(mut db, 'sessions', session_id.bytes()) or { return '' }
+	return opt_string(row, 'cwd')
 }
 
 fn find_repo_from_cwd(cwd string) string {

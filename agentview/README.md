@@ -29,7 +29,7 @@ CLI supports:
 - scoped search (`search <query> --session-id ID --offset N --limit N`)
 - browse mode with auto-sync on empty stores (`browse`)
 - memory listing and search (`memory list`, `memory search <query>`)
-- memory preview and distillation (`memory preview`, `memory distill`)
+- memory preview, distillation, and quality audit (`memory preview`, `memory distill`, `memory audit`)
 - model-facing memory context output (`context <query>`, `memory context <query>`)
 
 Browse mode supports:

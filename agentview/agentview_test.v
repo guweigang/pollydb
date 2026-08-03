@@ -3,6 +3,7 @@ module agentview
 import memory
 import os
 import storage
+import term.ui as tui
 
 struct AgentViewTestEmbeddingEngine {
 pub:
@@ -71,6 +72,52 @@ fn test_compact_snippet_trims_long_text() {
 	snippet := compact_snippet('alpha beta gamma delta epsilon zeta eta theta iota kappa lambda',
 		'theta', 24)
 	assert snippet.contains('theta')
+}
+
+fn test_browser_input_text_accepts_shift_uppercase_and_utf8() {
+	shift_upper := tui.Event{
+		typ:       .key_down
+		code:      .a
+		modifiers: .shift
+		ascii:     `A`
+		utf8:      'A'
+	}
+	assert browser_input_text(&shift_upper) == 'A'
+
+	chinese := tui.Event{
+		typ:  .key_down
+		code: .null
+		utf8: '中文'
+	}
+	assert browser_input_text(&chinese) == '中文'
+
+	csi_u_chinese := tui.Event{
+		typ:  .key_down
+		code: .null
+		utf8: '\x1b[20013;1u'
+	}
+	assert browser_input_text(&csi_u_chinese) == '中'
+
+	modify_other_keys_chinese := tui.Event{
+		typ:  .key_down
+		code: .null
+		utf8: '\x1b[27;1;25991~'
+	}
+	assert browser_input_text(&modify_other_keys_chinese) == '文'
+
+	ctrl_a := tui.Event{
+		typ:       .key_down
+		code:      .a
+		modifiers: .ctrl
+		utf8:      '\x01'
+	}
+	assert browser_input_text(&ctrl_a) == ''
+
+	shift_key_only := tui.Event{
+		typ:  .key_down
+		code: .null
+	}
+	assert browser_input_text(&shift_key_only) == ''
 }
 
 fn test_list_and_load_codex_sessions_from_fixture() {
@@ -155,11 +202,24 @@ fn test_pollydb_store_sync_and_query_fixture() {
 	spec := session.table_spec('sessions') or { panic(err) }
 	assert spec.indexes.any(it.name == 'updated_at_cover_idx')
 	entry_spec := session.table_spec('entries') or { panic(err) }
+	assert entry_spec.table.columns.any(it.name == 'agent')
 	assert entry_spec.indexes.any(it.name == 'entries_content_text_fts_idx')
 	ingest_rows := session.scan_table(mut db, 'ingest_state', 0) or { panic(err) }
 	entry_search_rows := session.scan_table(mut db, 'entry_search_state', 0) or { panic(err) }
 	assert ingest_rows.len == 1
 	assert entry_search_rows.len == 0
+}
+
+fn test_pollydb_store_global_search_without_fts_does_not_scan_fallback() {
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-no-fts-search')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	execution := store.search_entries_explained(SearchRequest{
+		query: 'storage'
+		limit: 20
+	}) or { panic(err) }
+	assert execution.explain.strategy == 'no_fts_indexes'
+	assert execution.result.hits.len == 0
 }
 
 fn test_pollydb_store_can_enable_memory_schema() {
@@ -183,6 +243,108 @@ fn test_pollydb_store_can_enable_memory_schema() {
 	assert capability.options.embedding_index == 'entries_content_path_vec_idx'
 }
 
+fn test_pollydb_store_saves_episode_reasoning_graph_as_versioned_rows() {
+	codex_root := os.join_path(os.dir(@FILE), 'testdata', 'codex_fixture')
+	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-episode-graph')
+	os.rmdir_all(store_root) or {}
+	store := PollyDbStore.open(store_root) or { panic(err) }
+	_ = store.sync_codex(codex_root) or { panic(err) }
+	graph := store.save_episode_graph(EpisodeGraph{
+		episode: Episode{
+			episode_id:  'episode-session-001-review'
+			session_id:  'session-001'
+			start_seq:   1
+			end_seq:     4
+			title:       'Review patch fixture'
+			intent:      'Review the patch and identify the next action.'
+			outcome:     'The assistant inspected the patch path in the fixture.'
+			status:      'success'
+			cwd:         '/tmp/work'
+			repo:        'work'
+			confidence:  87
+			source_refs: [
+				EpisodeSourceRef{
+					table_name:  'entries'
+					primary_key: 'session-001:1'
+					column_name: 'content_text'
+					start_seq:   1
+					end_seq:     1
+					text:        'Review this patch'
+				},
+			]
+		}
+		report:  EpisodeReport{
+			report_id:           'report-session-001-review'
+			summary_md:          '# Review patch fixture\n\n- User asked for patch review and the assistant moved into inspection.\n'
+			decisions_json:      '["Inspect the patch before recommending changes"]'
+			commands_json:       '[]'
+			files_json:          '[]'
+			failures_json:       '[]'
+			open_questions_json: '[]'
+		}
+		nodes:   [
+			EpisodeReasoningNode{
+				node_id:    'node-review-problem'
+				kind:       'problem'
+				title:      'Patch needs review'
+				content:    'The user asked the agent to review a patch.'
+				start_seq:  1
+				end_seq:    1
+				confidence: 90
+			},
+			EpisodeReasoningNode{
+				node_id:    'node-review-action'
+				kind:       'action'
+				title:      'Inspect patch'
+				content:    'The assistant began by inspecting the patch.'
+				start_seq:  2
+				end_seq:    2
+				confidence: 82
+			},
+		]
+		links:   [
+			EpisodeReasoningLink{
+				link_id:      'link-review-led-to-action'
+				from_node_id: 'node-review-problem'
+				to_node_id:   'node-review-action'
+				kind:         'led_to'
+				confidence:   80
+			},
+		]
+	}) or { panic(err) }
+	assert graph.episode.derived_from_root_hash.len > 0
+	assert graph.report.episode_id == graph.episode.episode_id
+	assert graph.nodes[0].episode_id == graph.episode.episode_id
+	assert graph.links[0].episode_id == graph.episode.episode_id
+
+	mut db := storage.PersistentDatabase.open(store_root, 'main') or { panic(err) }
+	defer {
+		db.close() or {}
+	}
+	session := db.begin_session(storage.SessionOptions.for_branch('main')) or { panic(err) }
+	for table_name in ['episodes', 'episode_reports', 'episode_reasoning_nodes',
+		'episode_reasoning_links'] {
+		_ = session.table_spec(table_name) or { panic('missing table ${table_name}: ${err}') }
+	}
+	episode_rows := session.lookup_index_projected(mut db, 'episodes', 'episodes_session_idx',
+		'session-001', 10, ['episode_id', 'title', 'derived_from_root_hash']) or { panic(err) }
+	assert episode_rows.len == 1
+	assert agentview_optional_row_string(episode_rows[0], 'episode_id') == graph.episode.episode_id
+	assert agentview_optional_row_string(episode_rows[0], 'derived_from_root_hash').len > 0
+	node_rows := session.lookup_index_projected(mut db, 'episode_reasoning_nodes',
+		'episode_nodes_episode_idx', graph.episode.episode_id, 10, ['node_id', 'kind']) or {
+		panic(err)
+	}
+	assert node_rows.len == 2
+	link_rows := session.lookup_index_projected(mut db, 'episode_reasoning_links',
+		'episode_links_episode_idx', graph.episode.episode_id, 10, ['link_id', 'kind']) or {
+		panic(err)
+	}
+	assert link_rows.len == 1
+	log := db.branch_log('main', 3) or { panic(err) }
+	assert log.any(it.meta.message.contains('save episode reasoning graph'))
+}
+
 fn test_pollydb_store_sync_populates_markdown_for_memory_entries() {
 	codex_root := os.join_path(os.dir(@FILE), 'testdata', 'codex_fixture')
 	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-memory-markdown')
@@ -203,6 +365,7 @@ fn test_pollydb_store_sync_populates_markdown_for_memory_entries() {
 	mut empty := 0
 	for row in entry_rows {
 		entry := decode_session_entry(row) or { panic(err) }
+		assert entry.agent.len > 0
 		ref := opt_markdown_ref(row, 'content_md') or { panic('expected markdown ref') }
 		if should_skip_markdown_index(entry, entry.text) {
 			if ref.source_len == 0 {
@@ -398,7 +561,8 @@ fn test_pollydb_store_delete_memory_removes_reflection_and_links() {
 		key:   session_view.row_key(summary.id.bytes())
 		value: session_codec.encode(build_session_row(summary)) or { panic(err) }
 	}
-	for idx, text in ['代码全面改成 import guweigang.vjsx。', '不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案。'] {
+	for idx, text in ['代码全面改成 import guweigang.vjsx。',
+		'不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案。'] {
 		entry := SessionEntry{
 			seq:       idx
 			timestamp: '2026-04-01T10:00:0${idx + 1}Z'
@@ -406,8 +570,9 @@ fn test_pollydb_store_delete_memory_removes_reflection_and_links() {
 			role:      'assistant'
 			text:      text
 		}
-		entry_id, entry_row := build_session_entry_row(summary, entry, ingest_markdown_for_store(mut db,
-			text) or { panic(err) })
+		entry_id, entry_row := build_session_entry_row(summary, entry, ingest_markdown_for_store(mut db, text) or {
+			panic(err)
+		})
 		kvs << storage.KVPair{
 			key:   entry_view.row_key(entry_id.bytes())
 			value: entry_codec.encode(entry_row) or { panic(err) }
@@ -427,11 +592,11 @@ fn test_pollydb_store_delete_memory_removes_reflection_and_links() {
 	mut engine := AgentViewTestEmbeddingEngine{
 		dims:    2
 		vectors: {
-			'代码全面改成 import guweigang.vjsx。':                                                                           [
+			'代码全面改成 import guweigang.vjsx。':                                                        [
 				f32(0.99),
 				0.01,
 			]
-			'不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案。':                                                      [
+			'不要再走 /tmp/vjsx -> ~/.vmodules/vjsx 这种临时软链方案。':                                   [
 				f32(0.97),
 				0.03,
 			]
@@ -449,7 +614,9 @@ fn test_pollydb_store_delete_memory_removes_reflection_and_links() {
 		candidate_limit: 5
 	}) or { panic(err) }
 	assert persisted.len == 1
-	result := store.delete_memory([persisted[0].reflection_id, 'missing-memory-id']) or { panic(err) }
+	result := store.delete_memory([persisted[0].reflection_id, 'missing-memory-id']) or {
+		panic(err)
+	}
 	assert result.deleted_reflections == 1
 	assert result.deleted_links >= 2
 	assert result.missing_ids == ['missing-memory-id']
@@ -999,8 +1166,7 @@ fn test_memory_card_write_plan_explains_add_update_and_discard() {
 	}
 	strong_profile := memory_card_quality_profile(strong_single)
 	strong_decision := memory_card_write_decision_from_profile(strong_profile)
-	strong_plan := memory_card_write_plan(strong_single, strong_profile, strong_decision, 1,
-		'')
+	strong_plan := memory_card_write_plan(strong_single, strong_profile, strong_decision, 1, '')
 	assert strong_plan.action == 'add'
 	assert strong_plan.reason == 'keep'
 }
@@ -1820,30 +1986,30 @@ fn test_pollydb_store_sync_codex_resume_state_across_batches() {
 }
 
 fn test_hierarchical_memory_context() {
-	println("=== [DEBUG] Start test_hierarchical_memory_context")
+	println('=== [DEBUG] Start test_hierarchical_memory_context')
 	codex_root := os.join_path(os.dir(@FILE), 'testdata', 'codex_fixture')
 	store_root := os.join_path(os.vtmp_dir(), 'agentview-store-hierarchical-memory-context')
 	os.rmdir_all(store_root) or {}
-	println("=== [DEBUG] store open")
+	println('=== [DEBUG] store open')
 	store := PollyDbStore.open(store_root) or { panic(err) }
-	println("=== [DEBUG] sync_codex")
+	println('=== [DEBUG] sync_codex')
 	_ = store.sync_codex(codex_root) or { panic(err) }
-	println("=== [DEBUG] ensure_memory_schema")
+	println('=== [DEBUG] ensure_memory_schema')
 	_ = store.ensure_memory_schema() or { panic(err) }
 
 	// 1. 测试 L3 Persona 偏好管理
-	println("=== [DEBUG] list_personas 1")
+	println('=== [DEBUG] list_personas 1')
 	mut list := store.list_personas() or { panic(err) }
 	assert list.len == 0
 
-	println("=== [DEBUG] add_persona 1")
+	println('=== [DEBUG] add_persona 1')
 	p1 := store.add_persona('Prefer KISS style code') or { panic(err) }
-	println("=== [DEBUG] add_persona 2")
+	println('=== [DEBUG] add_persona 2')
 	p2 := store.add_persona('Do not use Tailwind CSS') or { panic(err) }
-	println("=== [DEBUG] list_personas 2")
+	println('=== [DEBUG] list_personas 2')
 	list = store.list_personas() or { panic(err) }
 	assert list.len == 2
-	
+
 	mut has_p1 := false
 	mut has_tailwind_pref := false
 	for p in list {
@@ -1857,53 +2023,53 @@ fn test_hierarchical_memory_context() {
 	assert has_p1
 	assert has_tailwind_pref
 
-	println("=== [DEBUG] delete_persona")
+	println('=== [DEBUG] delete_persona')
 	store.delete_persona(p2.persona_id) or { panic(err) }
-	println("=== [DEBUG] list_personas 3")
+	println('=== [DEBUG] list_personas 3')
 	list = store.list_personas() or { panic(err) }
 	assert list.len == 1
 	assert list[0].persona_id == p1.persona_id
 
 	// 2. 测试 L1/L2 保存与匹配
 	// 写入一个 L1 Memory Card
-	println("=== [DEBUG] save_memory")
+	println('=== [DEBUG] save_memory')
 	store.save_memory(memory.PersistedReflection{
-		reflection_id: 'ref_001'
-		reflection_kind: 'fact'
-		title: 'Use vjsx import'
-		summary_md: 'We decided to use import guweigang.vjsx'
-		insight_md: 'Some evidence text'
-		topic_key: 'vjsx'
+		reflection_id:            'ref_001'
+		reflection_kind:          'fact'
+		title:                    'Use vjsx import'
+		summary_md:               'We decided to use import guweigang.vjsx'
+		insight_md:               'Some evidence text'
+		topic_key:                'vjsx'
 		supersedes_reflection_id: ''
-		created_at: storage.current_datetime_string()
+		created_at:               storage.current_datetime_string()
 	}) or { panic(err) }
 
 	// 保存一个 L2 Scene Block
-	println("=== [DEBUG] save_scene")
+	println('=== [DEBUG] save_scene')
 	store.save_scene(memory.SceneBlock{
-		scene_id: 'scene_001'
-		repo: 'pollytree'
-		cwd: '/users/work/pollytree'
-		topic: 'vjsx_development'
-		workflow: 'refactoring'
-		time_start: storage.current_datetime_string()
-		time_end: storage.current_datetime_string()
+		scene_id:          'scene_001'
+		repo:              'pollytree'
+		cwd:               '/users/work/pollytree'
+		topic:             'vjsx_development'
+		workflow:          'refactoring'
+		time_start:        storage.current_datetime_string()
+		time_end:          storage.current_datetime_string()
 		atomic_memory_ids: ['ref_001']
-		metadata_json: ''
-		created_at: storage.current_datetime_string()
-		updated_at: storage.current_datetime_string()
+		metadata_json:     ''
+		created_at:        storage.current_datetime_string()
+		updated_at:        storage.current_datetime_string()
 	}) or { panic(err) }
 
 	// 3. 测试三阶段 Context 装配 (MemoryContextRequest)
 	// 用已匹配 CWD 访问
-	println("=== [DEBUG] memory_context 1")
+	println('=== [DEBUG] memory_context 1')
 	context1 := store.memory_context(MemoryContextRequest{
 		query: 'vjsx'
-		cwd: '/users/work/pollytree'
-		repo: 'pollytree'
+		cwd:   '/users/work/pollytree'
+		repo:  'pollytree'
 		limit: 5
 	}) or { panic(err) }
-	
+
 	// 期望 markdown 里包含 CWD/Repo 场景标题、L1 卡片信息、L3 Persona 习惯
 	assert context1.markdown.contains('pollytree')
 	assert context1.markdown.contains('We decided to use import guweigang.vjsx')
@@ -1912,8 +2078,8 @@ fn test_hierarchical_memory_context() {
 	// 用未匹配的 CWD/Repo 访问，不匹配 L2，但叠加 L3 Persona
 	context2 := store.memory_context(MemoryContextRequest{
 		query: 'unrelated'
-		cwd: '/users/work/other'
-		repo: 'other'
+		cwd:   '/users/work/other'
+		repo:  'other'
 		limit: 5
 	}) or { panic(err) }
 	assert !context2.markdown.contains('pollytree')
