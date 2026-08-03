@@ -527,7 +527,7 @@ fn (store ChunkStore) persist_index_snapshot(sync_snapshot bool) ! {
 	// Windows does not allow replacing a file while the source handle is open.
 	tmp_file.close()
 	tmp_file_open = false
-	os.mv(tmp_path, index_path) or {
+	atomic_replace_file(tmp_path, index_path) or {
 		os.rm(tmp_path) or {}
 		return err
 	}

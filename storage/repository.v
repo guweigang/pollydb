@@ -641,7 +641,7 @@ pub fn (repo Repository) persist(path string) ! {
 	// Windows does not allow replacing a file while the source handle is open.
 	tmp_file.close()
 	tmp_file_open = false
-	os.mv(tmp_path, path) or {
+	atomic_replace_file(tmp_path, path) or {
 		os.rm(tmp_path) or {}
 		return err
 	}

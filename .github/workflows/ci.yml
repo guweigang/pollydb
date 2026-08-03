@@ -181,11 +181,9 @@ jobs:
             -DUSEARCH_USE_NUMKONG=OFF
           cmake --build .ci-deps/usearch-build --config Release
           Copy-Item .ci-deps/usearch/c/usearch.h thirdparty/native/include/
-          $usearchLib = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter *usearch_c.lib | Select-Object -First 1
-          $usearchDll = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter *usearch_c.dll | Select-Object -First 1
-          if (-not $usearchLib -or -not $usearchDll) { throw "USearch C library artifacts were not produced" }
-          Copy-Item $usearchLib.FullName thirdparty/native/lib/usearch_c.lib
-          Copy-Item $usearchDll.FullName thirdparty/native/bin/usearch_c.dll
+          $usearchLib = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter *usearch_static_c.lib | Select-Object -First 1
+          if (-not $usearchLib) { throw "USearch static C library was not produced" }
+          Copy-Item $usearchLib.FullName thirdparty/native/lib/libusearch_static_c.lib
 
       - name: Show toolchain versions
         shell: bash

@@ -1,14 +1,20 @@
 module storage
 
 #include <io.h>
+#include <windows.h>
 
-fn C._commit(fd int) int
+fn C._get_osfhandle(fd int) voidptr
+fn C.FlushFileBuffers(handle voidptr) int
 
 const chunk_store_writev_batch_size = 256
 
 pub fn chunk_store_fsync_fd(fd int) ! {
-	if C._commit(fd) != 0 {
-		return error('file commit failed')
+	handle := C._get_osfhandle(fd)
+	if handle == voidptr(-1) {
+		return error('failed to resolve Windows file handle')
+	}
+	if C.FlushFileBuffers(handle) == 0 {
+		return error('failed to flush Windows file buffers')
 	}
 }
 

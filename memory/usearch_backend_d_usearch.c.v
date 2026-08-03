@@ -8,7 +8,7 @@ module memory
 #flag linux -lusearch_c
 #flag linux -Wl,-rpath,@VMODROOT/thirdparty/native/lib
 #flag linux -lm
-#flag windows @VMODROOT/thirdparty/native/lib/usearch_c.lib
+#flag windows @VMODROOT/thirdparty/native/lib/libusearch_static_c.lib
 #include "usearch.h"
 
 struct C.usearch_init_options_t {
