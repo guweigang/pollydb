@@ -40,11 +40,45 @@ jobs:
       - name: Check out PollyTree
         uses: actions/checkout@v7
 
-      - name: Set up V
-        uses: vlang/setup-v@v1.7
+      - name: Set up V (Linux and macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/vlang/v.git "${RUNNER_TEMP}/v"
+          if ! make -C "${RUNNER_TEMP}/v"; then
+            echo "V make failed after bootstrap; checking whether the compiler binary was produced" >&2
+            test -x "${RUNNER_TEMP}/v/v"
+          fi
+          "${RUNNER_TEMP}/v/v" version
+          echo "${RUNNER_TEMP}/v" >> "${GITHUB_PATH}"
+
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          stable: true
-          check-latest: true
+          arch: amd64
+
+      - name: Set up V (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installRoot = Join-Path $env:RUNNER_TEMP 'vlang'
+          git clone --depth 1 https://github.com/vlang/v.git $installRoot
+          $makev = Join-Path $installRoot 'makev.bat'
+          $makevContent = Get-Content -Raw $makev
+          if ($makevContent -notmatch '-lbcrypt') {
+            $makevContent = $makevContent -replace '-ladvapi32 -lws2_32', '-ladvapi32 -lbcrypt -lws2_32'
+            Set-Content -NoNewline -Path $makev -Value $makevContent
+          }
+          Push-Location $installRoot
+          cmd /c makev.bat -msvc
+          $vBuildExitCode = $LASTEXITCODE
+          Pop-Location
+          if ($vBuildExitCode -ne 0) { exit $vBuildExitCode }
+          Add-Content -Path $env:GITHUB_PATH -Value $installRoot
+          & (Join-Path $installRoot 'v.exe') version
 
       - name: Check out vmarkdown
         uses: actions/checkout@v7
@@ -118,8 +152,8 @@ jobs:
             -DUSEARCH_USE_NUMKONG=OFF
           cmake --build .ci-deps/usearch-build --config Release
           Copy-Item .ci-deps/usearch/c/usearch.h thirdparty/native/include/
-          $usearchLib = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter libusearch_c.lib | Select-Object -First 1
-          $usearchDll = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter libusearch_c.dll | Select-Object -First 1
+          $usearchLib = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter *usearch_c.lib | Select-Object -First 1
+          $usearchDll = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter *usearch_c.dll | Select-Object -First 1
           if (-not $usearchLib -or -not $usearchDll) { throw "USearch C library artifacts were not produced" }
           Copy-Item $usearchLib.FullName thirdparty/native/lib/
           Copy-Item $usearchDll.FullName thirdparty/native/bin/
