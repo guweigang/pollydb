@@ -184,8 +184,8 @@ jobs:
           $usearchLib = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter *usearch_c.lib | Select-Object -First 1
           $usearchDll = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter *usearch_c.dll | Select-Object -First 1
           if (-not $usearchLib -or -not $usearchDll) { throw "USearch C library artifacts were not produced" }
-          Copy-Item $usearchLib.FullName thirdparty/native/lib/
-          Copy-Item $usearchDll.FullName thirdparty/native/bin/
+          Copy-Item $usearchLib.FullName thirdparty/native/lib/usearch_c.lib
+          Copy-Item $usearchDll.FullName thirdparty/native/bin/usearch_c.dll
 
       - name: Show toolchain versions
         shell: bash
