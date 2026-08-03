@@ -1,0 +1,142 @@
+---
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VMODULES: ${{ github.workspace }}/.ci-vmodules
+  USEARCH_VERSION: v2.26.0
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-latest
+            v_flags: ''
+          - name: macOS
+            os: macos-latest
+            v_flags: ''
+          - name: Windows x64
+            os: windows-latest
+            v_flags: -cc msvc
+
+    steps:
+      - name: Check out PollyTree
+        uses: actions/checkout@v7
+
+      - name: Set up V
+        uses: vlang/setup-v@v1.7
+        with:
+          stable: true
+          check-latest: true
+
+      - name: Check out vmarkdown
+        uses: actions/checkout@v7
+        with:
+          repository: guweigang/vmarkdown
+          path: .ci-vmodules/vmarkdown
+
+      - name: Check out USearch ${{ env.USEARCH_VERSION }}
+        uses: actions/checkout@v7
+        with:
+          repository: unum-cloud/usearch
+          ref: ${{ env.USEARCH_VERSION }}
+          path: .ci-deps/usearch
+          submodules: recursive
+
+      - name: Install native dependencies (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cmake ninja-build libsqlite3-dev libxxhash-dev
+
+      - name: Install native dependencies (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install ninja sqlite xxhash
+          echo "PKG_CONFIG_PATH=$(brew --prefix sqlite)/lib/pkgconfig:$(brew --prefix xxhash)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Install native dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install sqlite3:x64-windows xxhash:x64-windows
+          New-Item -ItemType Directory -Force thirdparty/native/include, thirdparty/native/lib, thirdparty/native/bin | Out-Null
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include\sqlite3.h" thirdparty/native/include/
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include\xxhash.h" thirdparty/native/include/
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib\sqlite3.lib" thirdparty/native/lib/
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib\xxhash.lib" thirdparty/native/lib/
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin\*.dll" thirdparty/native/bin/
+          Resolve-Path thirdparty/native/bin | ForEach-Object { $_.Path | Out-File -FilePath $env:GITHUB_PATH -Append }
+
+      - name: Build USearch C library (Linux and macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cmake -S .ci-deps/usearch -B .ci-deps/usearch-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSEARCH_BUILD_LIB_C=ON \
+            -DUSEARCH_BUILD_TEST_CPP=OFF \
+            -DUSEARCH_BUILD_BENCH_CPP=OFF \
+            -DUSEARCH_BUILD_TEST_C=OFF \
+            -DUSEARCH_USE_NUMKONG=OFF
+          cmake --build .ci-deps/usearch-build --config Release
+          mkdir -p thirdparty/native/include thirdparty/native/lib
+          cp .ci-deps/usearch/c/usearch.h thirdparty/native/include/
+          find .ci-deps/usearch-build -type f \( -name 'libusearch_c.so' -o -name 'libusearch_c.dylib' \) \
+            -exec cp {} thirdparty/native/lib/ \;
+          test -f thirdparty/native/lib/libusearch_c.so || test -f thirdparty/native/lib/libusearch_c.dylib
+
+      - name: Build USearch C library (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S .ci-deps/usearch -B .ci-deps/usearch-build -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DUSEARCH_BUILD_LIB_C=ON `
+            -DUSEARCH_BUILD_TEST_CPP=OFF `
+            -DUSEARCH_BUILD_BENCH_CPP=OFF `
+            -DUSEARCH_BUILD_TEST_C=OFF `
+            -DUSEARCH_USE_NUMKONG=OFF
+          cmake --build .ci-deps/usearch-build --config Release
+          Copy-Item .ci-deps/usearch/c/usearch.h thirdparty/native/include/
+          $usearchLib = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter libusearch_c.lib | Select-Object -First 1
+          $usearchDll = Get-ChildItem .ci-deps/usearch-build -Recurse -Filter libusearch_c.dll | Select-Object -First 1
+          if (-not $usearchLib -or -not $usearchDll) { throw "USearch C library artifacts were not produced" }
+          Copy-Item $usearchLib.FullName thirdparty/native/lib/
+          Copy-Item $usearchDll.FullName thirdparty/native/bin/
+
+      - name: Show toolchain versions
+        shell: bash
+        run: |
+          v version
+          cmake --version
+          pkg-config --version || true
+
+      - name: Build command-line tools
+        shell: bash
+        run: |
+          v ${{ matrix.v_flags }} -d usearch -o pollydb-ci cmd/pollydb
+          v ${{ matrix.v_flags }} -d usearch -o agentview-ci cmd/agentview_cli
+
+      - name: Run test suite with USearch enabled
+        shell: bash
+        run: v ${{ matrix.v_flags }} -d usearch test storage/ memory/ query/ agentview/ cmd/

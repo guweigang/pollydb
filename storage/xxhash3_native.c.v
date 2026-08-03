@@ -1,7 +1,15 @@
 module storage
 
-#flag darwin -I/opt/homebrew/include
-#flag darwin -L/opt/homebrew/lib -lxxhash
+$if windows {
+	#flag windows -I @VMODROOT/thirdparty/native/include
+	#flag windows @VMODROOT/thirdparty/native/lib/xxhash.lib
+} $else $if $pkgconfig('libxxhash') {
+	#pkgconfig --cflags --libs libxxhash
+} $else {
+	#flag darwin -I/opt/homebrew/include
+	#flag darwin -L/opt/homebrew/lib -lxxhash
+	#flag linux -lxxhash
+}
 
 #include <xxhash.h>
 

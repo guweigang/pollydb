@@ -2,6 +2,9 @@
 .omo/
 .pollydb/
 .qoder/
+.ci-deps/
+.ci-vmodules/
+thirdparty/native/
 
 # Local build outputs and copied binaries.
 bin/agentview

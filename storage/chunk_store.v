@@ -195,7 +195,7 @@ pub fn (mut store ChunkStore) checkpoint_timed_mode(mode CheckpointMode) !ChunkS
 fn (mut store ChunkStore) checkpoint_internal(persist_snapshot bool, sync_snapshot bool) ! {
 	if store.data_dirty {
 		store.file.flush()
-		$if darwin {
+		$if darwin || linux || windows {
 			chunk_store_fsync_fd(store.file.fd)!
 		}
 		store.data_dirty = false
@@ -217,7 +217,7 @@ fn (mut store ChunkStore) checkpoint_timed_internal(persist_snapshot bool, sync_
 	if store.data_dirty {
 		mut sw := time.new_stopwatch()
 		store.file.flush()
-		$if darwin {
+		$if darwin || linux || windows {
 			chunk_store_fsync_fd(store.file.fd)!
 		}
 		store.data_dirty = false
@@ -517,7 +517,7 @@ fn (store ChunkStore) persist_index_snapshot(sync_snapshot bool) ! {
 	_ = tmp_file.write(out)!
 	tmp_file.flush()
 	if sync_snapshot {
-		$if darwin {
+		$if darwin || linux || windows {
 			chunk_store_fsync_fd(tmp_file.fd)!
 		}
 	}
@@ -534,7 +534,7 @@ fn (store ChunkStore) sync_index_snapshot_file() ! {
 		index_file.close()
 	}
 	index_file.flush()
-	$if darwin {
+	$if darwin || linux || windows {
 		chunk_store_fsync_fd(index_file.fd)!
 	}
 }
@@ -639,7 +639,11 @@ fn (mut store ChunkStore) rebuild_index_from_file() ! {
 	store.index = map[u64][]ChunkStoreIndexEntry{}
 	store.index_snapshot_payload = []u8{}
 	store.index_snapshot_entries = 0
-	store.rebuild_index_from_file_reads()!
+	$if darwin || linux {
+		store.rebuild_index_from_mmap()!
+	} $else {
+		store.rebuild_index_from_file_reads()!
+	}
 	// A rebuilt in-memory index means the on-disk snapshot is stale or missing.
 	store.index_dirty = true
 	store.index_snapshot_sync_pending = false

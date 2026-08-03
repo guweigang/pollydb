@@ -1,11 +1,14 @@
 module memory
 
-#flag darwin -I @VMODROOT/thirdparty/usearch/macos_arm64/include
-#flag darwin -L @VMODROOT/thirdparty/usearch/macos_arm64/lib
+#flag -I @VMODROOT/thirdparty/native/include
+#flag darwin -L @VMODROOT/thirdparty/native/lib
 #flag darwin -lusearch_c
-#flag darwin -Wl,-rpath,@VMODROOT/thirdparty/usearch/macos_arm64/lib
-#flag linux -I @VMODROOT/thirdparty
+#flag darwin -Wl,-rpath,@VMODROOT/thirdparty/native/lib
+#flag linux -L @VMODROOT/thirdparty/native/lib
+#flag linux -lusearch_c
+#flag linux -Wl,-rpath,@VMODROOT/thirdparty/native/lib
 #flag linux -lm
+#flag windows @VMODROOT/thirdparty/native/lib/libusearch_c.lib
 #include "usearch.h"
 
 struct C.usearch_init_options_t {

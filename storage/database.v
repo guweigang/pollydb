@@ -2480,7 +2480,7 @@ pub fn (mut database PersistentDatabase) root_cid_at_branch(branch_name string) 
 pub fn (mut database PersistentDatabase) checkpoint() ! {
 	if database.catalog_dirty {
 		database.persist_catalog()!
-		$if darwin {
+		$if darwin || linux || windows {
 			catalog_path := database_catalog_path(database.root_dir)
 			mut catalog_file := os.open_file(catalog_path, 'rb', 0o666)!
 			defer {
@@ -2612,7 +2612,7 @@ pub fn (mut database PersistentDatabase) refresh_aggregate_projections_async_wit
 pub fn (mut database PersistentDatabase) checkpoint_mode(mode CheckpointMode) ! {
 	if database.catalog_dirty {
 		database.persist_catalog()!
-		$if darwin {
+		$if darwin || linux || windows {
 			catalog_path := database_catalog_path(database.root_dir)
 			mut catalog_file := os.open_file(catalog_path, 'rb', 0o666)!
 			defer {
@@ -2631,7 +2631,7 @@ pub fn (mut database PersistentDatabase) checkpoint_timed() !PersistentDatabaseC
 	if database.catalog_dirty {
 		mut sw := time.new_stopwatch()
 		database.persist_catalog()!
-		$if darwin {
+		$if darwin || linux || windows {
 			catalog_path := database_catalog_path(database.root_dir)
 			mut catalog_file := os.open_file(catalog_path, 'rb', 0o666)!
 			defer {
@@ -2656,7 +2656,7 @@ pub fn (mut database PersistentDatabase) checkpoint_timed_mode(mode CheckpointMo
 	if database.catalog_dirty {
 		mut sw := time.new_stopwatch()
 		database.persist_catalog()!
-		$if darwin {
+		$if darwin || linux || windows {
 			catalog_path := database_catalog_path(database.root_dir)
 			mut catalog_file := os.open_file(catalog_path, 'rb', 0o666)!
 			defer {

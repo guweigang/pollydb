@@ -284,7 +284,7 @@ fn write_checkpoint_journal_with_branch(root_dir string, node_records []u8, comm
 		write_repository_field(mut file, new_commit_cid.bytes())!
 	}
 	file.flush()
-	$if darwin {
+	$if darwin || linux || windows {
 		chunk_store_fsync_fd(file.fd)!
 	}
 	file.close()
@@ -381,7 +381,7 @@ fn write_branch_head_journal(root_dir string, branch_name string, old_commit_cid
 	mut file := open_repository_append_file(path)!
 	_ = file.write(data)!
 	file.flush()
-	$if darwin {
+	$if darwin || linux || windows {
 		chunk_store_fsync_fd(file.fd)!
 	}
 	file.close()
@@ -632,7 +632,7 @@ pub fn (repo Repository) persist(path string) ! {
 	data := repo.data()
 	tmp_file.write(data)!
 	tmp_file.flush()
-	$if darwin {
+	$if darwin || linux || windows {
 		chunk_store_fsync_fd(tmp_file.fd)!
 	}
 	os.mv(tmp_path, path) or {
@@ -819,7 +819,7 @@ fn (mut persistent PersistentRepository) persist_pending_records_and_branch_to_j
 }
 
 fn fsync_repository_meta(path string) ! {
-	$if darwin {
+	$if darwin || linux || windows {
 		mut repo_file := os.open_file(path, 'rb', 0o666)!
 		defer {
 			repo_file.close()

@@ -6,7 +6,12 @@ import time
 import vmarkdown
 
 $if windows {
-	#flag windows -lsqlite3
+	#flag windows -I @VMODROOT/thirdparty/native/include
+	#flag windows @VMODROOT/thirdparty/native/lib/sqlite3.lib
+	#include "sqlite3.h"
+} $else $if $pkgconfig('sqlite3') {
+	#pkgconfig --cflags --libs sqlite3
+	#include "sqlite3.h"
 } $else {
 	#flag -lsqlite3
 	#include "sqlite3.h"
