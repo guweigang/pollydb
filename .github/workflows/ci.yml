@@ -103,6 +103,18 @@ jobs:
           New-Item -ItemType Directory -Force $env:VMODULES | Out-Null
           Copy-Item -Recurse -Force .ci-deps/vmarkdown/* $env:VMODULES
 
+      - name: Patch vmarkdown callback exports (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bridgeHeader = Join-Path $env:VMODULES 'vmarkdown\c\md4c_bridge.h'
+          $bridgeContent = Get-Content -Raw $bridgeHeader
+          $exportFallback = "#include `"md4c.h`"`r`n`r`n#ifndef VV_EXP`r`n#define VV_EXP`r`n#endif"
+          $bridgeContent = $bridgeContent.Replace('#include "md4c.h"', $exportFallback)
+          $bridgeContent = $bridgeContent.Replace('int vmarkdown_', 'VV_EXP int vmarkdown_')
+          $bridgeContent = $bridgeContent.Replace('void vmarkdown_debug_log', 'VV_EXP void vmarkdown_debug_log')
+          Set-Content -NoNewline -Path $bridgeHeader -Value $bridgeContent
+
       - name: Check out USearch ${{ env.USEARCH_VERSION }}
         uses: actions/checkout@v7
         with:
