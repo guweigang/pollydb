@@ -58,9 +58,9 @@ jobs:
 
       - name: Set up MSVC
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: TheMrMilchmann/setup-msvc-dev@v4
         with:
-          arch: amd64
+          arch: x64
 
       - name: Set up V (Windows)
         if: runner.os == 'Windows'
