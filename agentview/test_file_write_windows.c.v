@@ -21,7 +21,7 @@ fn write_agentview_test_file_platform(path string, content string) ! {
 		chunk_size := u32(remaining)
 		mut written := u32(0)
 		start := unsafe { &u8(voidptr(usize(data.data) + usize(cursor))) }
-		if C.WriteFile(handle, start, chunk_size, &written, unsafe { nil }) == 0 {
+		if !C.WriteFile(handle, start, chunk_size, &written, unsafe { nil }) {
 			return error('failed to write AgentView test fixture `${path}`: ${C.GetLastError()}')
 		}
 		if written == 0 {
