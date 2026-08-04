@@ -4,7 +4,6 @@ import memory
 import os
 import storage
 import term.ui as tui
-import time
 
 struct AgentViewTestEmbeddingEngine {
 pub:
@@ -13,21 +12,7 @@ pub:
 }
 
 fn write_agentview_test_file(path string, content string) {
-	$if windows {
-		for attempt in 0 .. 200 {
-			os.write_file(path, content) or {
-				if err.msg() == '0 bytes written' && attempt < 199 {
-					time.sleep(2 * time.millisecond)
-					continue
-				}
-				panic(err)
-			}
-			return
-		}
-		panic('failed to write AgentView test fixture: ${path}')
-	} $else {
-		os.write_file(path, content) or { panic(err) }
-	}
+	write_agentview_test_file_platform(path, content) or { panic(err) }
 }
 
 fn (engine AgentViewTestEmbeddingEngine) model_name() string {
