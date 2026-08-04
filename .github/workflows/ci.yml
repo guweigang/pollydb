@@ -13,6 +13,7 @@ on:
         options:
           - full
           - windows-agentview
+          - windows-full
 
 permissions:
   contents: read
@@ -32,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.scope == 'windows-agentview' && '[{"name":"Windows x64","os":"windows-latest","v_flags":"-cc msvc"}]' || '[{"name":"Linux x64","os":"ubuntu-latest","v_flags":""},{"name":"macOS","os":"macos-latest","v_flags":""},{"name":"Windows x64","os":"windows-latest","v_flags":"-cc msvc"}]') }}
+        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && (inputs.scope == 'windows-agentview' || inputs.scope == 'windows-full') && '[{"name":"Windows x64","os":"windows-latest","v_flags":"-cc msvc"}]' || '[{"name":"Linux x64","os":"ubuntu-latest","v_flags":""},{"name":"macOS","os":"macos-latest","v_flags":""},{"name":"Windows x64","os":"windows-latest","v_flags":"-cc msvc"}]') }}
 
     steps:
       - name: Check out PollyTree
@@ -192,7 +193,7 @@ jobs:
           pkg-config --version || true
 
       - name: Build command-line tools
-        if: github.event_name != 'workflow_dispatch' || inputs.scope == 'full'
+        if: github.event_name != 'workflow_dispatch' || inputs.scope != 'windows-agentview'
         shell: bash
         run: |
           v ${{ matrix.v_flags }} -d usearch -o pollydb-ci cmd/pollydb
@@ -204,7 +205,7 @@ jobs:
         run: v ${{ matrix.v_flags }} -d usearch test storage/ memory/ query/ agentview/ cmd/
 
       - name: Run test suite with USearch enabled (Windows)
-        if: runner.os == 'Windows' && (github.event_name != 'workflow_dispatch' || inputs.scope == 'full')
+        if: runner.os == 'Windows' && (github.event_name != 'workflow_dispatch' || inputs.scope != 'windows-agentview')
         shell: pwsh
         run: |
           $env:VTMP = 'D:\vtmp'
